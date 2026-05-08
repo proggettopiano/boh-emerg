@@ -437,8 +437,7 @@ async def upload_pdfs(
                 await log_event("pdf.invalid", f"File non valido: {f.filename}", user_id=user_id, level="warn")
                 continue
             original_size = len(data)
-            compressed_data, was_compressed = compress_pdf(data)
-            data = compressed_data
+            # hash on ORIGINAL bytes (deterministic)
             content_hash = hashlib.sha256(data).hexdigest()
             # duplicate detector for this user
             dup = await db.pdfs.find_one({"owner_id": user_id, "content_hash": content_hash}, {"_id": 0, "id": 1, "title": 1})
@@ -446,6 +445,8 @@ async def upload_pdfs(
                 results.append({"name": f.filename, "ok": False, "duplicate": True, "existing_id": dup["id"], "existing_title": dup.get("title", ""), "error": "Questo PDF esiste già nella tua libreria"})
                 await log_event("pdf.duplicate", f"Duplicato rilevato: {f.filename}", user_id=user_id, level="warn")
                 continue
+            compressed_data, was_compressed = compress_pdf(data)
+            data = compressed_data
             # extract text + OCR
             try:
                 pages_text, total_pages, used_ocr = extract_pages(data)

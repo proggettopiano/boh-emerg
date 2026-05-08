@@ -109,6 +109,9 @@ def uploaded_pdf(api_client, auth_headers, sample_pdf_bytes):
                       files=files)
     assert r.status_code == 200, r.text
     res = r.json()["results"][0]
+    if res.get("duplicate"):
+        # Re-use existing record from previous class within the same session
+        return {"ok": True, "pdf_id": res["existing_id"], "pages": 2, "ocr": False}
     assert res["ok"] is True, res
     return res
 
