@@ -66,3 +66,21 @@ Vedi `/app/memory/test_credentials.md`.
 - Email validator rifiuta TLD `.local`/`.test`/`.example` → admin email è `admin@scorelib.app`
 - OCR sincrono dentro la request di upload (può essere lento su PDF grandi)
 - Search regex non scala oltre ~10k pagine
+
+## Iteration 2 (2026-05-08, evening) — Google OAuth + Drive Backup
+- **Native Google OAuth** (replaces Emergent flow): uses real client credentials, scopes `openid+profile+email+drive.file`
+- New endpoints: `POST /api/auth/google/url`, `POST /api/auth/google` (exchange code), `POST /api/auth/google/connect` (link Drive to existing account)
+- New module `/app/backend/google_integration.py`: ensure_user_folder, upload_to_drive, download_from_drive, delete_from_drive, list_drive_files (lazy env loading)
+- **Drive backup**: when backup_enabled + google_refresh_token, every PDF upload also uploaded to user's `/ScoreLib/{user_id}/` Drive folder; drive_file_id stored in DB
+- **Auto-restore**: GET /api/pdfs/{id}/file falls back to Drive download if local file missing (writes back to local cache)
+- New endpoints: `GET /api/backup/status`, `POST /api/backup/run` (backfill missing), `POST /api/backup/test` (admin-only smoke test)
+- `POST /api/settings/backup` now rejects enabling without Drive connection
+- `user_public` exposes `has_google_drive`, `is_admin`
+- Frontend Settings: full Backup·Google Drive section with stats, Connect button, Run/Test buttons
+- New page `/auth/google/callback` handles both login and connect flows via sessionStorage flag
+- 37/37 backend tests pass · all frontend flows verified by testing agent
+
+## Known Caveats
+- **Google Console authorized redirect URIs**: must include the current preview hostname (`window.location.origin + "/auth/google/callback"`). Currently authorized: `score-vault-4.preview.emergentagent.com` and `localhost:3000`. If running on a different preview, add it in Google Cloud Console.
+- OAuth `state` is generated server-side but not validated on callback (low risk because Google validates redirect_uri whitelist; can be added in next iteration)
+- `/api/backup/run` is synchronous — for libraries >50 PDFs consider moving to background job
