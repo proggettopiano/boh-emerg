@@ -709,6 +709,7 @@ async def get_pdf(pdf_id: str, user_id: str = Depends(get_current_user_id)):
         accessible = await _user_can_access_pdf(user_id, pdf_id)
         if not accessible:
             raise HTTPException(status_code=403, detail="Accesso negato")
+    await log_event("pdf.open", f"Apertura PDF: {p.get('title')}", user_id=user_id)
     return _serialize_pdf(p)
 
 
@@ -1051,6 +1052,71 @@ async def admin_logs(
     items = await cursor.to_list(1000)
     types = await db.app_logs.distinct("event_type")
     return {"items": items, "types": sorted(types)}
+
+
+# ---------------- Admin panel (admin user only) ----------------
+ADMIN_EMAIL = "admin@scorelib.app"
+
+
+async def require_admin(user_id: str = Depends(get_current_user_id)) -> str:
+    u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not u:
+        raise HTTPException(status_code=404, detail="Utente non trovato")
+    if u.get("email", "").lower() != ADMIN_EMAIL and not u.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Accesso solo amministratore")
+    return user_id
+
+
+@api.get("/admin/users")
+async def admin_users(_: str = Depends(require_admin)):
+    out = []
+    async for u in db.users.find({}, {"_id": 0, "password_hash": 0, "google_refresh_token": 0}):
+        pdf_count = await db.pdfs.count_documents({"owner_id": u["user_id"]})
+        backed = await db.pdfs.count_documents({"owner_id": u["user_id"], "drive_file_id": {"$nin": [None, ""]}})
+        is_google = bool(u.get("auth_provider") == "google" or u.get("google_email"))
+        out.append({
+            "user_id": u["user_id"],
+            "email": u["email"],
+            "name": u.get("name", ""),
+            "auth_provider": u.get("auth_provider", "password"),
+            "is_admin": u.get("is_admin", False) or u.get("email", "").lower() == ADMIN_EMAIL,
+            "backup_enabled": u.get("backup_enabled", False),
+            "drive_connected": is_google,
+            "storage_type": "google_drive" if is_google else "local_only",
+            "pdf_count": pdf_count,
+            "backed_up_pdfs": backed,
+            "last_backup_at": u.get("last_backup_at"),
+            "created_at": u.get("created_at"),
+        })
+    out.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+    return {"users": out, "total": len(out)}
+
+
+@api.get("/admin/stats")
+async def admin_stats(_: str = Depends(require_admin)):
+    users_total = await db.users.count_documents({})
+    pdfs_total = await db.pdfs.count_documents({})
+    google_users = await db.users.count_documents({"auth_provider": "google"})
+    backed_pdfs = await db.pdfs.count_documents({"drive_file_id": {"$nin": [None, ""]}})
+    libs = await db.shared_libraries.count_documents({})
+    logs_24h = await db.app_logs.count_documents({"created_at": {"$gte": (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()}})
+    errors_24h = await db.app_logs.count_documents({
+        "created_at": {"$gte": (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()},
+        "level": "error",
+    })
+    return {
+        "users_total": users_total,
+        "google_users": google_users,
+        "local_users": users_total - google_users,
+        "pdfs_total": pdfs_total,
+        "backed_up_pdfs": backed_pdfs,
+        "shared_libraries": libs,
+        "events_24h": logs_24h,
+        "errors_24h": errors_24h,
+    }
+
+
+# ----- end admin panel -----
 
 
 # ----------------- Health -----------------

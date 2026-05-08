@@ -1,35 +1,81 @@
-import React, { useState } from "react";
-import { Lock, RefreshCw, Search } from "lucide-react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { Lock, RefreshCw, Search, Pause, Play } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
+
+const ADMIN_PWD_BYPASS = "admin@scorelib.app";
+
+function levelColor(level) {
+  if (level === "error") return "text-red-600 border-red-300 bg-red-50";
+  if (level === "warn") return "text-amber-700 border-amber-300 bg-amber-50";
+  return "text-muted2 border-rule bg-white";
+}
 
 export default function AdminLogs() {
+  const { user } = useAuth();
+  const isAdmin = user?.email?.toLowerCase() === ADMIN_PWD_BYPASS || user?.is_admin;
   const [pwd, setPwd] = useState("");
+  const [adminPwd, setAdminPwd] = useState("");
   const [authed, setAuthed] = useState(false);
   const [items, setItems] = useState([]);
   const [types, setTypes] = useState([]);
   const [filterType, setFilterType] = useState("all");
+  const [filterLevel, setFilterLevel] = useState("all");
   const [q, setQ] = useState("");
   const [sort, setSort] = useState("date_desc");
   const [busy, setBusy] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const tref = useRef(null);
 
-  const fetchLogs = async (password = pwd) => {
+  const fetchLogs = useCallback(async (password) => {
+    const p = password ?? adminPwd;
+    if (!p) return;
     setBusy(true);
     try {
-      const r = await api.post("/admin/logs", { password }, { params: { event_type: filterType, q, sort, limit: 500 } });
-      setItems(r.data.items); setTypes(r.data.types); setAuthed(true);
+      const r = await api.post("/admin/logs", { password: p }, { params: { event_type: filterType, q, sort, limit: 500 } });
+      let list = r.data.items;
+      if (filterLevel !== "all") list = list.filter((x) => (x.level || "info") === filterLevel);
+      setItems(list);
+      setTypes(r.data.types);
+      setAuthed(true);
+      setAdminPwd(p);
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Errore"); setAuthed(false);
+      if (e.response?.status === 401) {
+        toast.error("Password errata");
+        setAuthed(false);
+      } else { toast.error("Errore"); }
     } finally { setBusy(false); }
-  };
+  }, [adminPwd, filterType, filterLevel, q, sort]);
+
+  // Auto-refresh every 5s when authed and toggle on
+  useEffect(() => {
+    if (!authed || !autoRefresh) return;
+    tref.current = setInterval(() => fetchLogs(), 5000);
+    return () => clearInterval(tref.current);
+  }, [authed, autoRefresh, fetchLogs]);
+
+  // Re-apply filters when changed
+  useEffect(() => { if (authed) fetchLogs(); /* eslint-disable-next-line */ }, [filterType, filterLevel, q, sort]);
+
+  // Auto-bypass for admin email — fetch with the well-known admin pwd silently
+  useEffect(() => {
+    if (isAdmin && !authed) {
+      // We still need the admin "logs password" to call backend; admin user knows it (Rome02009)
+      // Auto-fill it for convenience
+      const ADMIN_LOG_PWD = "Rome02009";
+      fetchLogs(ADMIN_LOG_PWD);
+    }
+    // eslint-disable-next-line
+  }, [isAdmin]);
 
   if (!authed) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-6 bg-canvas">
-        <form onSubmit={(e) => { e.preventDefault(); fetchLogs(pwd); }} className="w-full max-w-sm" data-testid="admin-login">
+      <div className="min-h-[70vh] flex items-center justify-center p-6">
+        <form onSubmit={(e) => { e.preventDefault(); fetchLogs(pwd); }} className="w-full max-w-sm border border-rule rounded-md p-8 bg-white" data-testid="admin-login">
           <Lock size={28} strokeWidth={1.5} className="mb-3" />
-          <h1 className="font-display font-black text-3xl tracking-tighter mb-2">Log del sito</h1>
-          <p className="text-[#525252] mb-6 text-sm">Accesso protetto. Inserisci la password admin.</p>
+          <h1 className="font-display font-black text-3xl tracking-tighter mb-2">Logs di sistema</h1>
+          <p className="text-[#525252] mb-6 text-sm">Inserisci la password admin per visualizzare i log.</p>
           <input type="password" required value={pwd} onChange={(e) => setPwd(e.target.value)} placeholder="Password admin" className="input-base mb-3" data-testid="admin-pwd-input" />
           <button type="submit" disabled={busy} className="btn-primary w-full disabled:opacity-50" data-testid="admin-pwd-submit">{busy ? "Verifica…" : "Accedi"}</button>
         </form>
@@ -41,18 +87,31 @@ export default function AdminLogs() {
     <div className="max-w-7xl mx-auto px-6 md:px-12 py-12" data-testid="admin-logs-page">
       <div className="flex items-end justify-between flex-wrap gap-4 mb-8">
         <div>
-          <p className="overline mb-2">AMMINISTRAZIONE</p>
-          <h1 className="font-display font-black text-4xl md:text-5xl tracking-tighter">Log del sito</h1>
-          <p className="text-mono text-sm text-muted2 mt-1">{items.length} eventi</p>
+          <p className="overline mb-2">SISTEMA</p>
+          <h1 className="font-display font-black text-4xl md:text-5xl tracking-tighter">Logs</h1>
+          <p className="text-mono text-sm text-muted2 mt-1"><span data-testid="logs-count">{items.length}</span> eventi {autoRefresh ? "· auto-refresh ogni 5s" : "· refresh manuale"}</p>
         </div>
-        <button onClick={() => fetchLogs()} className="btn-primary" data-testid="admin-refresh-btn"><RefreshCw size={14} /> Aggiorna</button>
+        <div className="flex gap-2">
+          <button onClick={() => setAutoRefresh((v) => !v)} className="btn-ghost border border-rule rounded-sm px-3 py-2 text-sm" data-testid="toggle-autorefresh">
+            {autoRefresh ? <><Pause size={14} /> Pausa</> : <><Play size={14} /> Auto</>}
+          </button>
+          <button onClick={() => fetchLogs()} disabled={busy} className="btn-primary disabled:opacity-50" data-testid="admin-refresh-btn">
+            <RefreshCw size={14} className={busy ? "animate-spin" : ""} /> Aggiorna
+          </button>
+        </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 mb-4 border border-rule rounded-sm p-3 bg-canvas2">
+      <div className="flex flex-wrap items-center gap-2 mb-4 border border-rule rounded-sm p-3 bg-canvas2">
         <div className="flex items-center gap-2 flex-1 min-w-[200px]">
           <Search size={14} className="text-muted2" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cerca nei log…" className="bg-transparent outline-none text-sm w-full" data-testid="admin-search-input" />
         </div>
+        <select value={filterLevel} onChange={(e) => setFilterLevel(e.target.value)} className="border border-rule rounded-sm px-2 py-1.5 text-sm bg-white" data-testid="admin-filter-level">
+          <option value="all">Tutti i livelli</option>
+          <option value="info">Info</option>
+          <option value="warn">Warning</option>
+          <option value="error">Error</option>
+        </select>
         <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="border border-rule rounded-sm px-2 py-1.5 text-sm bg-white" data-testid="admin-filter-type">
           <option value="all">Tutti gli eventi</option>
           {types.map((t) => <option key={t} value={t}>{t}</option>)}
@@ -61,37 +120,22 @@ export default function AdminLogs() {
           <option value="date_desc">Più recenti</option>
           <option value="date_asc">Meno recenti</option>
         </select>
-        <button onClick={() => fetchLogs()} className="btn-ghost border border-rule rounded-sm px-3 py-1.5 text-sm" data-testid="admin-apply-btn">Applica</button>
       </div>
 
-      <div className="overflow-x-auto border-t border-rule">
-        <table className="w-full text-sm" data-testid="admin-logs-table">
-          <thead>
-            <tr className="border-b border-rule text-left">
-              <th className="overline py-2 pr-3">Quando</th>
-              <th className="overline py-2 pr-3">Evento</th>
-              <th className="overline py-2 pr-3">Utente</th>
-              <th className="overline py-2 pr-3">Descrizione</th>
-              <th className="overline py-2 pr-3">Liv.</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.length === 0 && <tr><td colSpan="5" className="py-12 text-center text-muted2 text-sm">Nessun log</td></tr>}
-            {items.map((l) => (
-              <tr key={l.id} className="border-b border-rule hover:bg-canvas2">
-                <td className="py-2 pr-3 text-mono text-xs text-muted2 whitespace-nowrap">{l.created_at?.slice(0, 19).replace("T", " ")}</td>
-                <td className="py-2 pr-3 text-mono text-xs">{l.event_type}</td>
-                <td className="py-2 pr-3 text-mono text-xs text-muted2">{l.user_id || "—"}</td>
-                <td className="py-2 pr-3">{l.description}</td>
-                <td className="py-2 pr-3 text-xs">
-                  <span className={`px-2 py-0.5 rounded-sm border ${l.level === "error" ? "border-red-500 text-red-600" : l.level === "warn" ? "border-amber-500 text-amber-700" : "border-rule text-muted2"}`}>
-                    {l.level || "info"}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {/* Console-style scrollable list */}
+      <div className="border border-rule rounded-md bg-white max-h-[70vh] overflow-y-auto font-mono text-xs" data-testid="admin-logs-list">
+        {items.length === 0 && <div className="py-12 text-center text-muted2 text-sm">Nessun log</div>}
+        {items.map((l) => (
+          <div key={l.id} className="border-b border-rule px-4 py-2 flex flex-wrap gap-3 items-baseline hover:bg-canvas2" data-testid={`log-row-${l.id}`}>
+            <span className="text-muted3 shrink-0">{l.created_at?.slice(0, 19).replace("T", " ")}</span>
+            <span className={`px-2 py-0.5 rounded-sm border ${levelColor(l.level)} shrink-0 text-[10px] uppercase tracking-wider`}>
+              {l.level || "info"}
+            </span>
+            <span className="text-ink shrink-0">{l.event_type}</span>
+            {l.user_id && <span className="text-muted3 shrink-0">[{l.user_id.slice(0, 16)}]</span>}
+            <span className="text-[#525252] flex-1 break-words font-sans">{l.description}</span>
+          </div>
+        ))}
       </div>
     </div>
   );

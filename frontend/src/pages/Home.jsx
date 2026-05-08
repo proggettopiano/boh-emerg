@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Search as SearchIcon, Upload as UploadIcon } from "lucide-react";
 import api from "@/lib/api";
 import UploadModal from "@/components/UploadModal";
+import TrebleClef from "@/components/TrebleClef";
 
 function highlight(text, q) {
   if (!text || !q) return text;
@@ -48,7 +49,7 @@ export default function Home() {
   return (
     <div className="max-w-4xl mx-auto px-6 md:px-12 py-12 md:py-20">
       <div className="text-center mb-10" data-testid="home-hero">
-        <div className="inline-block w-10 h-10 piano-bars mb-6" />
+        <div className="inline-block mb-6"><TrebleClef size={44} /></div>
         <h1 className="font-display font-black text-4xl sm:text-5xl lg:text-6xl tracking-tighter mb-3">
           Trova ogni spartito.<br />In un battito.
         </h1>
