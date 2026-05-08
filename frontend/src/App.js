@@ -1,54 +1,77 @@
-import { useEffect } from "react";
+import React from "react";
 import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
+import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
+import { Toaster } from "sonner";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+import { AuthProvider, useAuth } from "@/context/AuthContext";
+import ProtectedRoute from "@/components/ProtectedRoute";
+import Header from "@/components/Header";
+import BackupBanner from "@/components/BackupBanner";
 
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
+import Login from "@/pages/Login";
+import Register from "@/pages/Register";
+import ForgotPassword from "@/pages/ForgotPassword";
+import ResetPassword from "@/pages/ResetPassword";
+import ProfileSetup from "@/pages/ProfileSetup";
+import Home from "@/pages/Home";
+import Library from "@/pages/Library";
+import SharedLibraries from "@/pages/SharedLibraries";
+import SharedLibraryDetail from "@/pages/SharedLibraryDetail";
+import SharedView from "@/pages/SharedView";
+import PdfViewer from "@/pages/PdfViewer";
+import Settings from "@/pages/Settings";
+import AdminLogs from "@/pages/AdminLogs";
+import AuthCallback from "@/pages/AuthCallback";
 
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
-
+function ChromeWrapper({ children }) {
+  const { user } = useAuth();
+  const location = useLocation();
+  const noChrome = ["/login", "/register", "/forgot", "/reset", "/profile-setup", "/admin/logs", "/auth/callback"].some((p) => location.pathname.startsWith(p));
   return (
-    <div>
-      <header className="App-header">
-        <a
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
-  );
-};
-
-function App() {
-  return (
-    <div className="App">
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-    </div>
+    <>
+      {user && !noChrome && <BackupBanner />}
+      {user && !noChrome && <Header />}
+      {children}
+    </>
   );
 }
 
-export default App;
+function AppShell() {
+  const location = useLocation();
+  // Process Google session_id from URL fragment first
+  if (location.hash?.includes("session_id=")) return <AuthCallback />;
+  return (
+    <ChromeWrapper>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
+        <Route path="/forgot" element={<ForgotPassword />} />
+        <Route path="/reset" element={<ResetPassword />} />
+        <Route path="/auth/callback" element={<AuthCallback />} />
+        <Route path="/admin/logs" element={<AdminLogs />} />
+
+        <Route path="/profile-setup" element={<ProtectedRoute requireProfile={false}><ProfileSetup /></ProtectedRoute>} />
+        <Route path="/" element={<ProtectedRoute><Home /></ProtectedRoute>} />
+        <Route path="/library" element={<ProtectedRoute><Library /></ProtectedRoute>} />
+        <Route path="/libraries" element={<ProtectedRoute><SharedLibraries /></ProtectedRoute>} />
+        <Route path="/libraries/:id" element={<ProtectedRoute><SharedLibraryDetail /></ProtectedRoute>} />
+        <Route path="/shared/:token" element={<ProtectedRoute requireProfile={false}><SharedView /></ProtectedRoute>} />
+        <Route path="/viewer/:id" element={<ProtectedRoute><PdfViewer /></ProtectedRoute>} />
+        <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+      </Routes>
+    </ChromeWrapper>
+  );
+}
+
+export default function App() {
+  return (
+    <div className="App">
+      <AuthProvider>
+        <BrowserRouter>
+          <AppShell />
+          <Toaster position="bottom-right" theme="light" richColors closeButton />
+        </BrowserRouter>
+      </AuthProvider>
+    </div>
+  );
+}
