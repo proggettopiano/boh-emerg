@@ -83,9 +83,11 @@ class TestProfileSettings:
                             json={"enabled": False}, headers=auth_headers)
         assert r.status_code == 200
         assert r.json()["backup_enabled"] is False
+        # Activating requires Drive connection; admin seed has no refresh_token.
         r2 = api_client.post(f"{BASE_URL}/api/settings/backup",
                              json={"enabled": True}, headers=auth_headers)
-        assert r2.json()["backup_enabled"] is True
+        assert r2.status_code == 400  # Drive non connesso
+        assert "Drive" in r2.json().get("detail", "")
 
     def test_change_password_wrong_current(self, api_client, auth_headers):
         r = api_client.post(f"{BASE_URL}/api/settings/password",

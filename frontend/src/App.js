@@ -21,12 +21,13 @@ import SharedView from "@/pages/SharedView";
 import PdfViewer from "@/pages/PdfViewer";
 import Settings from "@/pages/Settings";
 import AdminLogs from "@/pages/AdminLogs";
+import GoogleCallback from "@/pages/GoogleCallback";
 import AuthCallback from "@/pages/AuthCallback";
 
 function ChromeWrapper({ children }) {
   const { user } = useAuth();
   const location = useLocation();
-  const noChrome = ["/login", "/register", "/forgot", "/reset", "/profile-setup", "/admin/logs", "/auth/callback"].some((p) => location.pathname.startsWith(p));
+  const noChrome = ["/login", "/register", "/forgot", "/reset", "/profile-setup", "/admin/logs", "/auth/callback", "/auth/google/callback"].some((p) => location.pathname.startsWith(p));
   return (
     <>
       {user && !noChrome && <BackupBanner />}
@@ -48,6 +49,7 @@ function AppShell() {
         <Route path="/forgot" element={<ForgotPassword />} />
         <Route path="/reset" element={<ResetPassword />} />
         <Route path="/auth/callback" element={<AuthCallback />} />
+        <Route path="/auth/google/callback" element={<GoogleCallback />} />
         <Route path="/admin/logs" element={<AdminLogs />} />
 
         <Route path="/profile-setup" element={<ProtectedRoute requireProfile={false}><ProfileSetup /></ProtectedRoute>} />

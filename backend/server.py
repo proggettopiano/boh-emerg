@@ -26,6 +26,7 @@ from auth_utils import (
 )
 from pdf_processor import extract_pages, compress_pdf, make_snippet
 from email_service import send_password_reset_email
+import google_integration as gi
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -164,7 +165,12 @@ class AddPdfsIn(BaseModel):
 
 
 class GoogleAuthIn(BaseModel):
-    session_id: str
+    code: str
+    redirect_uri: str
+
+
+class GoogleAuthUrlIn(BaseModel):
+    redirect_uri: str
 
 
 class AdminPwdIn(BaseModel):
@@ -188,6 +194,8 @@ def user_public(u: dict) -> dict:
         "backup_enabled": u.get("backup_enabled", False),
         "profile_completed": u.get("profile_completed", False),
         "auth_provider": u.get("auth_provider", "password"),
+        "has_google_drive": bool(u.get("google_refresh_token")),
+        "is_admin": u.get("is_admin", False),
         "created_at": u.get("created_at"),
     }
 
@@ -290,27 +298,35 @@ async def reset_password(payload: ResetIn):
     return {"token": token, "user": user_public(u)}
 
 
-@api.post("/auth/google")
-async def google_auth(payload: GoogleAuthIn, request: Request):
-    """Exchange emergent session_id for our JWT."""
-    try:
-        async with httpx.AsyncClient(timeout=10) as cli:
-            r = await cli.get(
-                "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
-                headers={"X-Session-ID": payload.session_id},
-            )
-        if r.status_code != 200:
-            raise HTTPException(status_code=401, detail="Sessione Google non valida")
-        data = r.json()
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Google auth error: {e}")
-        raise HTTPException(status_code=502, detail="Servizio Google non raggiungibile")
+@api.post("/auth/google/url")
+async def google_auth_url(payload: GoogleAuthUrlIn):
+    if not gi.google_configured():
+        raise HTTPException(status_code=503, detail="Google OAuth non configurato")
+    state = secrets.token_urlsafe(16)
+    url = gi.build_auth_url(payload.redirect_uri, state)
+    return {"url": url, "state": state}
 
-    email = (data.get("email") or "").lower().strip()
-    name = data.get("name", "")
-    picture = data.get("picture", "")
+
+@api.post("/auth/google")
+async def google_auth(payload: GoogleAuthIn):
+    """Exchange authorization code for our JWT and store refresh token for Drive."""
+    if not gi.google_configured():
+        raise HTTPException(status_code=503, detail="Google OAuth non configurato")
+    try:
+        tokens = await gi.exchange_code(payload.code, payload.redirect_uri)
+    except Exception as e:
+        logger.error(f"Google token exchange error: {e}")
+        await log_event("auth.google.fail", f"Code exchange failed: {e}", level="error")
+        raise HTTPException(status_code=401, detail="Codice Google non valido")
+    access_token = tokens.get("access_token")
+    refresh_token = tokens.get("refresh_token")
+    try:
+        info = await gi.fetch_userinfo(access_token)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"userinfo failed: {e}")
+    email = (info.get("email") or "").lower().strip()
+    name = info.get("name", "")
+    picture = info.get("picture", "")
     if not email:
         raise HTTPException(status_code=400, detail="Email mancante da Google")
 
@@ -326,16 +342,20 @@ async def google_auth(payload: GoogleAuthIn, request: Request):
             "backup_enabled": False,
             "profile_completed": False,
             "auth_provider": "google",
+            "google_refresh_token": refresh_token or "",
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         await db.users.insert_one(u)
         await log_event("auth.google.new", f"Nuovo utente Google: {email}", user_id=user_id)
     else:
-        await db.users.update_one({"user_id": u["user_id"]}, {"$set": {
+        upd = {
             "auth_provider": u.get("auth_provider", "google"),
             "picture": picture or u.get("picture", ""),
             "name": u.get("name") or name,
-        }})
+        }
+        if refresh_token:
+            upd["google_refresh_token"] = refresh_token
+        await db.users.update_one({"user_id": u["user_id"]}, {"$set": upd})
         await log_event("auth.google.login", f"Login Google: {email}", user_id=u["user_id"])
         u = await db.users.find_one({"user_id": u["user_id"]}, {"_id": 0})
 
@@ -393,8 +413,116 @@ async def change_password(payload: ChangePasswordIn, user_id: str = Depends(get_
     return {"ok": True}
 
 
+@api.post("/auth/google/connect")
+async def google_connect(payload: GoogleAuthIn, user_id: str = Depends(get_current_user_id)):
+    """Connect Google Drive to an existing logged-in account."""
+    if not gi.google_configured():
+        raise HTTPException(status_code=503, detail="Google OAuth non configurato")
+    try:
+        tokens = await gi.exchange_code(payload.code, payload.redirect_uri)
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Codice Google non valido: {e}")
+    refresh_token = tokens.get("refresh_token")
+    if not refresh_token:
+        raise HTTPException(status_code=400, detail="Nessun refresh token ricevuto. Riprova autorizzando l'app.")
+    info = await gi.fetch_userinfo(tokens.get("access_token"))
+    email = (info.get("email") or "").lower().strip()
+    u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not u:
+        raise HTTPException(status_code=404, detail="Utente non trovato")
+    if u["email"].lower() != email:
+        raise HTTPException(status_code=400, detail=f"L'account Google ({email}) non corrisponde all'email del profilo ({u['email']})")
+    await db.users.update_one({"user_id": user_id}, {"$set": {"google_refresh_token": refresh_token, "google_email": email}})
+    await log_event("drive.connect", f"Drive connesso per {email}", user_id=user_id)
+    u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    return user_public(u)
+
+
+@api.post("/backup/run")
+async def backup_run(user_id: str = Depends(get_current_user_id)):
+    """Backup all user PDFs missing a drive_file_id to Drive. Requires connected Drive."""
+    u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not u or not u.get("google_refresh_token"):
+        raise HTTPException(status_code=400, detail="Drive non connesso. Connetti Google Drive prima.")
+    refresh = u["google_refresh_token"]
+    folder_id = u.get("drive_folder_id")
+    try:
+        if not folder_id:
+            folder_id = await asyncio.to_thread(gi.ensure_user_folder, refresh, user_id)
+            await db.users.update_one({"user_id": user_id}, {"$set": {"drive_folder_id": folder_id}})
+    except Exception as e:
+        await log_event("backup.drive.error", f"Folder error: {e}", user_id=user_id, level="error")
+        raise HTTPException(status_code=502, detail=f"Errore Drive: {e}")
+    pending = await db.pdfs.find({"owner_id": user_id, "drive_file_id": {"$in": [None, ""]}}, {"_id": 0}).to_list(10000)
+    uploaded = 0
+    errors = 0
+    for p in pending:
+        fpath = UPLOAD_DIR / user_id / f"{p['id']}.pdf"
+        if not fpath.exists():
+            continue
+        try:
+            data = fpath.read_bytes()
+            drive_id = await asyncio.to_thread(gi.upload_to_drive, refresh, folder_id, f"{p['id']}.pdf", data)
+            await db.pdfs.update_one({"id": p["id"]}, {"$set": {"drive_file_id": drive_id}})
+            uploaded += 1
+        except Exception as e:
+            errors += 1
+            await log_event("backup.drive.error", f"Upload {p.get('title')}: {e}", user_id=user_id, level="error")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.users.update_one({"user_id": user_id}, {"$set": {"last_backup_at": now_iso}})
+    await log_event("backup.run", f"Backup completato: {uploaded} file caricati, {errors} errori", user_id=user_id)
+    return {"ok": True, "uploaded": uploaded, "errors": errors, "last_backup_at": now_iso}
+
+
+@api.get("/backup/status")
+async def backup_status(user_id: str = Depends(get_current_user_id)):
+    u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not u:
+        raise HTTPException(status_code=404, detail="Utente non trovato")
+    total = await db.pdfs.count_documents({"owner_id": user_id})
+    backed = await db.pdfs.count_documents({"owner_id": user_id, "drive_file_id": {"$nin": [None, ""]}})
+    return {
+        "backup_enabled": u.get("backup_enabled", False),
+        "drive_connected": bool(u.get("google_refresh_token")),
+        "drive_email": u.get("google_email", ""),
+        "drive_folder_id": u.get("drive_folder_id"),
+        "last_backup_at": u.get("last_backup_at"),
+        "total_pdfs": total,
+        "backed_up_pdfs": backed,
+        "pending_pdfs": max(0, total - backed),
+    }
+
+
+@api.post("/backup/test")
+async def backup_test(user_id: str = Depends(get_current_user_id)):
+    """Admin-style smoke test: uploads a tiny test file, lists folder, deletes the test file."""
+    u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not u or not u.get("google_refresh_token"):
+        raise HTTPException(status_code=400, detail="Drive non connesso")
+    if not u.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Solo admin")
+    refresh = u["google_refresh_token"]
+    try:
+        folder_id = u.get("drive_folder_id") or await asyncio.to_thread(gi.ensure_user_folder, refresh, user_id)
+        if folder_id != u.get("drive_folder_id"):
+            await db.users.update_one({"user_id": user_id}, {"$set": {"drive_folder_id": folder_id}})
+        test_data = b"%PDF-1.4\n%scorelib backup test\n1 0 obj<<>>endobj\ntrailer<</Size 1>>\n%%EOF\n"
+        drive_id = await asyncio.to_thread(gi.upload_to_drive, refresh, folder_id, f"_scorelib_test_{uuid.uuid4().hex[:6]}.pdf", test_data)
+        files = await asyncio.to_thread(gi.list_drive_files, refresh, folder_id)
+        await asyncio.to_thread(gi.delete_from_drive, refresh, drive_id)
+        await log_event("backup.test", f"Test backup OK · folder={folder_id} · {len(files)} file(s)", user_id=user_id)
+        return {"ok": True, "folder_id": folder_id, "files_count": len(files), "test_file_id": drive_id}
+    except Exception as e:
+        await log_event("backup.test.fail", f"Test backup fallito: {e}", user_id=user_id, level="error")
+        raise HTTPException(status_code=502, detail=f"Test fallito: {e}")
+
+
 @api.post("/settings/backup")
 async def set_backup(payload: BackupToggleIn, user_id: str = Depends(get_current_user_id)):
+    if payload.enabled:
+        u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+        if not u or not u.get("google_refresh_token"):
+            raise HTTPException(status_code=400, detail="Per attivare il backup, connetti prima Google Drive.")
     await db.users.update_one({"user_id": user_id}, {"$set": {"backup_enabled": payload.enabled}})
     await log_event("settings.backup", f"Backup {'attivato' if payload.enabled else 'disattivato'}", user_id=user_id)
     u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
@@ -470,6 +598,7 @@ async def upload_pdfs(
                 "pages": total_pages,
                 "used_ocr": used_ocr,
                 "content_hash": content_hash,
+                "drive_file_id": None,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
             await db.pdfs.insert_one(doc)
@@ -481,16 +610,32 @@ async def upload_pdfs(
             } for i, t in enumerate(pages_text)]
             if page_docs:
                 await db.pdf_pages.insert_many(page_docs)
+            # Drive backup if enabled
+            user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+            drive_uploaded = False
+            if user_doc and user_doc.get("backup_enabled") and user_doc.get("google_refresh_token"):
+                try:
+                    folder_id = user_doc.get("drive_folder_id")
+                    if not folder_id:
+                        folder_id = await asyncio.to_thread(gi.ensure_user_folder, user_doc["google_refresh_token"], user_id)
+                        await db.users.update_one({"user_id": user_id}, {"$set": {"drive_folder_id": folder_id}})
+                    drive_id = await asyncio.to_thread(gi.upload_to_drive, user_doc["google_refresh_token"], folder_id, f"{pdf_id}.pdf", data)
+                    await db.pdfs.update_one({"id": pdf_id}, {"$set": {"drive_file_id": drive_id}})
+                    drive_uploaded = True
+                    await log_event("backup.drive.upload", f"Backup su Drive: {f.filename} → {drive_id}", user_id=user_id)
+                except Exception as e:
+                    logger.error(f"Drive backup failed: {e}")
+                    await log_event("backup.drive.error", f"Errore backup Drive {f.filename}: {e}", user_id=user_id, level="error")
             await log_event(
                 "pdf.upload",
-                f"Caricato: {f.filename} ({total_pages}pp{', OCR' if used_ocr else ''}{', compresso' if was_compressed else ''})",
+                f"Caricato: {f.filename} ({total_pages}pp{', OCR' if used_ocr else ''}{', compresso' if was_compressed else ''}{', Drive' if drive_uploaded else ''})",
                 user_id=user_id,
             )
             if was_compressed:
                 await log_event("pdf.compress", f"PDF compresso: {f.filename} ({original_size}→{len(data)} bytes)", user_id=user_id)
             if used_ocr:
                 await log_event("pdf.ocr", f"OCR eseguito su: {f.filename}", user_id=user_id)
-            results.append({"name": f.filename, "ok": True, "pdf_id": pdf_id, "pages": total_pages, "ocr": used_ocr, "compressed": was_compressed})
+            results.append({"name": f.filename, "ok": True, "pdf_id": pdf_id, "pages": total_pages, "ocr": used_ocr, "compressed": was_compressed, "drive": drive_uploaded})
         except Exception as e:
             logger.exception("upload failed")
             results.append({"name": f.filename, "ok": False, "error": str(e)})
@@ -577,9 +722,23 @@ async def get_pdf_file(pdf_id: str, user_id: str = Depends(get_current_user_id))
         if not accessible:
             raise HTTPException(status_code=403, detail="Accesso negato")
     fpath = UPLOAD_DIR / p["owner_id"] / f"{pdf_id}.pdf"
-    if not fpath.exists():
-        raise HTTPException(status_code=404, detail="File mancante")
-    return FileResponse(fpath, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{p.get("filename", pdf_id)}"'})
+    if fpath.exists():
+        return FileResponse(fpath, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{p.get("filename", pdf_id)}"'})
+    # local missing — fall back to Drive if available
+    if p.get("drive_file_id"):
+        owner = await db.users.find_one({"user_id": p["owner_id"]}, {"_id": 0})
+        if owner and owner.get("google_refresh_token"):
+            try:
+                data = await asyncio.to_thread(gi.download_from_drive, owner["google_refresh_token"], p["drive_file_id"])
+                # restore to local cache
+                fpath.parent.mkdir(parents=True, exist_ok=True)
+                fpath.write_bytes(data)
+                await log_event("backup.drive.restore", f"Restore Drive → locale: {p.get('title')}", user_id=p["owner_id"])
+                return Response(content=data, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{p.get("filename", pdf_id)}"'})
+            except Exception as e:
+                logger.error(f"Drive restore failed: {e}")
+                await log_event("backup.drive.error", f"Restore fallito: {e}", user_id=p["owner_id"], level="error")
+    raise HTTPException(status_code=404, detail="File mancante")
 
 
 @api.delete("/pdfs/{pdf_id}")
@@ -593,9 +752,16 @@ async def delete_pdf(pdf_id: str, user_id: str = Depends(get_current_user_id)):
             fpath.unlink()
         except Exception:
             pass
+    # delete from Drive if exists
+    if p.get("drive_file_id"):
+        u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+        if u and u.get("google_refresh_token"):
+            try:
+                await asyncio.to_thread(gi.delete_from_drive, u["google_refresh_token"], p["drive_file_id"])
+            except Exception as e:
+                logger.warning(f"Drive delete failed: {e}")
     await db.pdfs.delete_one({"id": pdf_id})
     await db.pdf_pages.delete_many({"pdf_id": pdf_id})
-    # remove from any libraries
     await db.shared_libraries.update_many({"owner_id": user_id}, {"$pull": {"pdf_ids": pdf_id}})
     await log_event("pdf.delete", f"Eliminato PDF: {p.get('title')}", user_id=user_id)
     return {"ok": True}

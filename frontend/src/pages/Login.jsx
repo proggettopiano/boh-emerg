@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import AuthShell from "@/components/AuthShell";
+import { startGoogleOAuth } from "@/lib/google";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -28,10 +29,9 @@ export default function Login() {
     }
   };
 
-  const googleLogin = () => {
-    // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
-    const redirectUrl = window.location.origin + "/auth/callback";
-    window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
+  const googleLogin = async () => {
+    try { await startGoogleOAuth("login"); }
+    catch (e) { toast.error("Google OAuth non disponibile"); }
   };
 
   return (
