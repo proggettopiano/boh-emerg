@@ -84,3 +84,17 @@ Vedi `/app/memory/test_credentials.md`.
 - **Google Console authorized redirect URIs**: must include the current preview hostname (`window.location.origin + "/auth/google/callback"`). Currently authorized: `score-vault-4.preview.emergentagent.com` and `localhost:3000`. If running on a different preview, add it in Google Cloud Console.
 - OAuth `state` is generated server-side but not validated on callback (low risk because Google validates redirect_uri whitelist; can be added in next iteration)
 - `/api/backup/run` is synchronous — for libraries >50 PDFs consider moving to background job
+
+## Iteration 3 (2026-05-08, late) — Admin section + Logs page + TrebleClef logo
+- **Treble Clef logo** (chiave di violino): minimal SVG, replaces piano-bars in Header, AuthShell, Home hero; SVG inline favicon; title=Scorelib
+- **Header nav** ora include `Logs` per tutti e `Admin` solo se `email===admin@scorelib.app || is_admin`
+- **/admin page (admin-only via JWT)**: dashboard con 8 stat box (utenti totali, google, locali, pdf, su drive, librerie, eventi 24h, errori 24h) + tabella utenti con storage_type (DRIVE/LOCALE), backup status, conteggi PDF
+- **/logs page (auto-bypass for admin)**: console-style listing, auto-refresh 5s con toggle Pausa, filtro livello (info/warn/error), filtro tipo evento, ricerca, sort, badge livelli colorati
+- Backend nuovi endpoint `GET /api/admin/users`, `GET /api/admin/stats` con dependency `require_admin`
+- Backend logga `pdf.open` su `GET /api/pdfs/{id}` (apertura nel viewer)
+- 45/45 backend test pass (8 nuovi)
+
+## User Types (chiarito)
+- **Utenti Google**: login OAuth → file su Google Drive → backup cloud reale → persistenti
+- **Utenti email/password**: file solo locali sul server → niente Drive → uso test/temporaneo
+- **Persistenza in entrambi i casi**: file legati all'account in DB (collezione `pdfs`), no cookie/localStorage; logout/login non cancella nulla
