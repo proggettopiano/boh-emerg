@@ -19,7 +19,9 @@ export default function GoogleCallback() {
     const err = params.get("error");
     if (err) { toast.error("Google: " + err); navigate("/login"); return; }
     if (!code) { navigate("/login"); return; }
-    const redirectUri = window.location.origin + "/auth/google/callback";
+    const redirectUri =
+      process.env.REACT_APP_GOOGLE_REDIRECT_URI ||
+      window.location.origin + "/auth/google/callback";
     const mode = sessionStorage.getItem("google_oauth_mode") || "login";
     sessionStorage.removeItem("google_oauth_mode");
 
