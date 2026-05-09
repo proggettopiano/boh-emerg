@@ -73,5 +73,18 @@
     color: #854D0E;
     padding: 0 2px;
     border-radius: 2px;
+    transition: background 120ms ease;
+  }
+  mark.hl.hl-active {
+    background: #F97316;
+    color: #FFFFFF;
+    box-shadow: 0 0 0 2px #F97316;
+  }
+  /* When highlights are hidden, render mark as plain text without losing layout */
+  .hl-off mark.hl,
+  .hl-off mark.hl.hl-active {
+    background: transparent !important;
+    color: inherit !important;
+    box-shadow: none !important;
   }
 }

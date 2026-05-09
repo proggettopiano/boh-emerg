@@ -99,6 +99,9 @@ export default function Library() {
                     <span className="text-mono text-xs text-muted2">
                       {p.created_at?.slice(0, 10)} · {p.pages}pp · {(p.size / 1024).toFixed(0)} KB{p.used_ocr ? " · OCR" : ""}
                     </span>
+                    <span className={`text-mono text-[10px] px-1.5 py-0.5 rounded-sm ${p.storage_type === "google_drive" ? "bg-ink text-white" : "bg-canvas3 text-muted2"}`} title={p.storage_type === "google_drive" ? `Drive · ${p.drive_file_id}` : `Locale · ${p.file_path}`}>
+                      {p.storage_type === "google_drive" ? "☁ DRIVE" : "▣ LOCALE"}
+                    </span>
                     {(p.tags || []).map((t) => (
                       <span key={t} className="text-mono text-[10px] px-1.5 py-0.5 bg-canvas3 rounded-sm">{t}</span>
                     ))}

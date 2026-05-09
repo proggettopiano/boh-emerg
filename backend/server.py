@@ -103,10 +103,26 @@ async def seed_admin():
     logger.info(f"Seeded admin user: {email}")
 
 
+async def migrate_storage_fields():
+    """Backfill storage_type / file_path on existing PDFs."""
+    n = 0
+    async for p in db.pdfs.find({"$or": [{"storage_type": {"$exists": False}}, {"file_path": {"$exists": False}}]}, {"_id": 0}):
+        st = "google_drive" if p.get("drive_file_id") else "local"
+        fpath = UPLOAD_DIR / p["owner_id"] / f"{p['id']}.pdf"
+        await db.pdfs.update_one({"id": p["id"]}, {"$set": {
+            "storage_type": st,
+            "file_path": str(fpath.resolve()),
+        }})
+        n += 1
+    if n:
+        logger.info(f"Migrated storage fields on {n} PDFs")
+
+
 @app.on_event("startup")
 async def on_start():
     await ensure_indexes()
     await seed_admin()
+    await migrate_storage_fields()
     logger.info("Startup complete")
 
 
@@ -580,12 +596,24 @@ async def upload_pdfs(
                 pages_text, total_pages, used_ocr = extract_pages(data)
             except Exception as e:
                 results.append({"name": f.filename, "ok": False, "error": "PDF non leggibile"})
-                await log_event("pdf.error", f"Errore estrazione: {f.filename} - {e}", user_id=user_id, level="error")
+                await log_event(
+                    "pdf.error",
+                    f"Errore estrazione testo da {f.filename}: {e}",
+                    user_id=user_id, level="error",
+                    meta={"filename": f.filename, "error": str(e), "stage": "extract"},
+                )
                 continue
             pdf_id = str(uuid.uuid4())
             fpath = user_dir / f"{pdf_id}.pdf"
             with open(fpath, "wb") as out:
                 out.write(data)
+            file_path_str = str(fpath.resolve())
+            await log_event(
+                "pdf.save",
+                f"File scritto su disco: {file_path_str} ({len(data)} bytes)",
+                user_id=user_id,
+                meta={"pdf_id": pdf_id, "filename": f.filename, "path": file_path_str, "size": len(data)},
+            )
             title = (f.filename or "untitled.pdf").rsplit(".", 1)[0]
             doc = {
                 "id": pdf_id,
@@ -599,6 +627,9 @@ async def upload_pdfs(
                 "used_ocr": used_ocr,
                 "content_hash": content_hash,
                 "drive_file_id": None,
+                "storage_type": "local",
+                "file_path": file_path_str,
+                "synced_at": None,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
             await db.pdfs.insert_one(doc)
@@ -613,6 +644,7 @@ async def upload_pdfs(
             # Drive backup if enabled
             user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
             drive_uploaded = False
+            drive_id = None
             if user_doc and user_doc.get("backup_enabled") and user_doc.get("google_refresh_token"):
                 try:
                     folder_id = user_doc.get("drive_folder_id")
@@ -620,22 +652,64 @@ async def upload_pdfs(
                         folder_id = await asyncio.to_thread(gi.ensure_user_folder, user_doc["google_refresh_token"], user_id)
                         await db.users.update_one({"user_id": user_id}, {"$set": {"drive_folder_id": folder_id}})
                     drive_id = await asyncio.to_thread(gi.upload_to_drive, user_doc["google_refresh_token"], folder_id, f"{pdf_id}.pdf", data)
-                    await db.pdfs.update_one({"id": pdf_id}, {"$set": {"drive_file_id": drive_id}})
+                    sync_iso = datetime.now(timezone.utc).isoformat()
+                    await db.pdfs.update_one({"id": pdf_id}, {"$set": {
+                        "drive_file_id": drive_id,
+                        "storage_type": "google_drive",
+                        "synced_at": sync_iso,
+                    }})
                     drive_uploaded = True
-                    await log_event("backup.drive.upload", f"Backup su Drive: {f.filename} → {drive_id}", user_id=user_id)
+                    await log_event(
+                        "pdf.sync",
+                        f"Sincronizzato su Google Drive · fileId={drive_id} · folder={folder_id}",
+                        user_id=user_id,
+                        meta={"pdf_id": pdf_id, "drive_file_id": drive_id, "folder_id": folder_id, "filename": f.filename},
+                    )
                 except Exception as e:
                     logger.error(f"Drive backup failed: {e}")
-                    await log_event("backup.drive.error", f"Errore backup Drive {f.filename}: {e}", user_id=user_id, level="error")
+                    await log_event(
+                        "pdf.error",
+                        f"Sync Drive fallito per {f.filename}: {e}",
+                        user_id=user_id,
+                        level="error",
+                        meta={"pdf_id": pdf_id, "filename": f.filename, "error": str(e), "stage": "drive_sync"},
+                    )
+            # storage decision log
+            if drive_uploaded:
+                await log_event(
+                    "pdf.storage",
+                    f"Storage finale: GOOGLE_DRIVE · driveFileId={drive_id} · localCache={file_path_str}",
+                    user_id=user_id,
+                    meta={"pdf_id": pdf_id, "storage_type": "google_drive", "drive_file_id": drive_id, "file_path": file_path_str},
+                )
+            else:
+                await log_event(
+                    "pdf.storage",
+                    f"Storage finale: LOCAL · path={file_path_str}",
+                    user_id=user_id,
+                    meta={"pdf_id": pdf_id, "storage_type": "local", "file_path": file_path_str},
+                )
             await log_event(
                 "pdf.upload",
-                f"Caricato: {f.filename} ({total_pages}pp{', OCR' if used_ocr else ''}{', compresso' if was_compressed else ''}{', Drive' if drive_uploaded else ''})",
+                f"Caricato: {f.filename} ({total_pages}pp{', OCR' if used_ocr else ''}{', compresso' if was_compressed else ''}) → {('GOOGLE_DRIVE' if drive_uploaded else 'LOCAL')}",
                 user_id=user_id,
+                meta={
+                    "pdf_id": pdf_id, "filename": f.filename, "pages": total_pages,
+                    "ocr": used_ocr, "compressed": was_compressed,
+                    "storage_type": "google_drive" if drive_uploaded else "local",
+                    "drive_file_id": drive_id, "file_path": file_path_str,
+                },
             )
             if was_compressed:
-                await log_event("pdf.compress", f"PDF compresso: {f.filename} ({original_size}→{len(data)} bytes)", user_id=user_id)
+                await log_event("pdf.compress", f"PDF compresso: {f.filename} ({original_size}→{len(data)} bytes)", user_id=user_id, meta={"pdf_id": pdf_id})
             if used_ocr:
-                await log_event("pdf.ocr", f"OCR eseguito su: {f.filename}", user_id=user_id)
-            results.append({"name": f.filename, "ok": True, "pdf_id": pdf_id, "pages": total_pages, "ocr": used_ocr, "compressed": was_compressed, "drive": drive_uploaded})
+                await log_event("pdf.ocr", f"OCR eseguito su: {f.filename}", user_id=user_id, meta={"pdf_id": pdf_id})
+            results.append({
+                "name": f.filename, "ok": True, "pdf_id": pdf_id, "pages": total_pages,
+                "ocr": used_ocr, "compressed": was_compressed, "drive": drive_uploaded,
+                "storage_type": "google_drive" if drive_uploaded else "local",
+                "file_path": file_path_str, "drive_file_id": drive_id,
+            })
         except Exception as e:
             logger.exception("upload failed")
             results.append({"name": f.filename, "ok": False, "error": str(e)})
@@ -654,6 +728,10 @@ def _serialize_pdf(p: dict) -> dict:
         "compressed": p.get("compressed", False),
         "is_favorite": p.get("is_favorite", False),
         "tags": p.get("tags", []),
+        "storage_type": p.get("storage_type", "local"),
+        "file_path": p.get("file_path", ""),
+        "drive_file_id": p.get("drive_file_id"),
+        "synced_at": p.get("synced_at"),
         "created_at": p.get("created_at"),
     }
 
