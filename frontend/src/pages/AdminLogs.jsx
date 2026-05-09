@@ -55,8 +55,7 @@ export default function AdminLogs() {
     return () => clearInterval(tref.current);
   }, [authed, autoRefresh, fetchLogs]);
 
-  // Re-apply filters when changed
-useEffect(() => {
+  useEffect(() => {
   if (authed) fetchLogs();
 }, [authed, fetchLogs, filterType, filterLevel, q, sort]);
 
