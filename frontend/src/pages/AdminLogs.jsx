@@ -56,7 +56,9 @@ export default function AdminLogs() {
   }, [authed, autoRefresh, fetchLogs]);
 
   // Re-apply filters when changed
-  useEffect(() => { if (authed) fetchLogs(); /* eslint-disable-next-line */ }, [filterType, filterLevel, q, sort]);
+useEffect(() => {
+  if (authed) fetchLogs();
+}, [authed, fetchLogs, filterType, filterLevel, q, sort]);
 
   // Auto-bypass for admin email — fetch with the well-known admin pwd silently
   useEffect(() => {
