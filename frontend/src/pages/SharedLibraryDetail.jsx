@@ -35,11 +35,12 @@ export default function SharedLibraryDetail() {
 
   useEffect(() => {
     if (!q.trim()) { setSearchResults(null); return; }
+    const ctrl = new AbortController();
     const t = setTimeout(async () => {
-      try { const r = await api.get("/search", { params: { q, library_id: id } }); setSearchResults(r.data.results); }
-      catch { setSearchResults([]); }
-    }, 220);
-    return () => clearTimeout(t);
+      try { const r = await api.get("/search", { params: { q, library_id: id }, signal: ctrl.signal }); setSearchResults(r.data.results); }
+      catch (e) { if (e.name !== "CanceledError" && e.name !== "AbortError") setSearchResults([]); }
+    }, 350);
+    return () => { clearTimeout(t); ctrl.abort(); };
   }, [q, id]);
 
   if (!lib) return <div className="p-12 text-mono text-sm text-muted2">Caricamento…</div>;

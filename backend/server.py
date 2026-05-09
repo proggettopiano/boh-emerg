@@ -79,6 +79,32 @@ async def ensure_indexes():
     await db.password_resets.create_index("token", unique=True)
     await db.password_resets.create_index("expires_at", expireAfterSeconds=0)
     await db.app_logs.create_index([("created_at", -1)])
+    await db.system_settings.create_index("key", unique=True)
+
+
+async def get_master_drive() -> Optional[dict]:
+    """Return master drive settings doc {refresh_token, email, folder_root_id} or None."""
+    doc = await db.system_settings.find_one({"key": "master_drive"}, {"_id": 0})
+    if not doc:
+        return None
+    return doc.get("value") or None
+
+
+async def set_master_drive(value: Optional[dict]):
+    if value is None:
+        await db.system_settings.delete_one({"key": "master_drive"})
+        return
+    await db.system_settings.update_one({"key": "master_drive"}, {"$set": {"key": "master_drive", "value": value}}, upsert=True)
+
+
+async def resolve_backup_credentials(user: dict) -> Optional[dict]:
+    """Decide where backups go. Returns dict {refresh_token, owner: 'master'|'user', folder_root_id} or None."""
+    master = await get_master_drive()
+    if master and master.get("refresh_token"):
+        return {"refresh_token": master["refresh_token"], "owner": "master", "folder_root_id": master.get("folder_root_id"), "email": master.get("email")}
+    if user.get("google_refresh_token"):
+        return {"refresh_token": user["google_refresh_token"], "owner": "user", "folder_root_id": user.get("drive_folder_id")}
+    return None
 
 
 async def seed_admin():
@@ -537,8 +563,9 @@ async def backup_test(user_id: str = Depends(get_current_user_id)):
 async def set_backup(payload: BackupToggleIn, user_id: str = Depends(get_current_user_id)):
     if payload.enabled:
         u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-        if not u or not u.get("google_refresh_token"):
-            raise HTTPException(status_code=400, detail="Per attivare il backup, connetti prima Google Drive.")
+        creds = await resolve_backup_credentials(u or {})
+        if not creds:
+            raise HTTPException(status_code=400, detail="Per attivare il backup, l'admin deve connettere il Master Drive oppure tu devi connettere il tuo Google Drive.")
     await db.users.update_one({"user_id": user_id}, {"$set": {"backup_enabled": payload.enabled}})
     await log_event("settings.backup", f"Backup {'attivato' if payload.enabled else 'disattivato'}", user_id=user_id)
     u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
@@ -645,35 +672,52 @@ async def upload_pdfs(
             user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
             drive_uploaded = False
             drive_id = None
-            if user_doc and user_doc.get("backup_enabled") and user_doc.get("google_refresh_token"):
-                try:
-                    folder_id = user_doc.get("drive_folder_id")
-                    if not folder_id:
-                        folder_id = await asyncio.to_thread(gi.ensure_user_folder, user_doc["google_refresh_token"], user_id)
-                        await db.users.update_one({"user_id": user_id}, {"$set": {"drive_folder_id": folder_id}})
-                    drive_id = await asyncio.to_thread(gi.upload_to_drive, user_doc["google_refresh_token"], folder_id, f"{pdf_id}.pdf", data)
-                    sync_iso = datetime.now(timezone.utc).isoformat()
-                    await db.pdfs.update_one({"id": pdf_id}, {"$set": {
-                        "drive_file_id": drive_id,
-                        "storage_type": "google_drive",
-                        "synced_at": sync_iso,
-                    }})
-                    drive_uploaded = True
-                    await log_event(
-                        "pdf.sync",
-                        f"Sincronizzato su Google Drive · fileId={drive_id} · folder={folder_id}",
-                        user_id=user_id,
-                        meta={"pdf_id": pdf_id, "drive_file_id": drive_id, "folder_id": folder_id, "filename": f.filename},
-                    )
-                except Exception as e:
-                    logger.error(f"Drive backup failed: {e}")
-                    await log_event(
-                        "pdf.error",
-                        f"Sync Drive fallito per {f.filename}: {e}",
-                        user_id=user_id,
-                        level="error",
-                        meta={"pdf_id": pdf_id, "filename": f.filename, "error": str(e), "stage": "drive_sync"},
-                    )
+            drive_owner = None
+            if user_doc and user_doc.get("backup_enabled"):
+                creds = await resolve_backup_credentials(user_doc)
+                if creds:
+                    try:
+                        refresh = creds["refresh_token"]
+                        # ensure folder for this user_id under either master or user's root
+                        if creds["owner"] == "master":
+                            # master drive: cache root folder id in system_settings; subfolder per user
+                            master = await get_master_drive() or {}
+                            master_root = master.get("folder_root_id")
+                            if not master_root:
+                                master_root = await asyncio.to_thread(gi.ensure_master_root, refresh)
+                                master["folder_root_id"] = master_root
+                                master["refresh_token"] = refresh
+                                await set_master_drive(master)
+                            user_folder = await asyncio.to_thread(gi.ensure_subfolder, refresh, master_root, user_id)
+                        else:
+                            user_folder = creds.get("folder_root_id")
+                            if not user_folder:
+                                user_folder = await asyncio.to_thread(gi.ensure_user_folder, refresh, user_id)
+                                await db.users.update_one({"user_id": user_id}, {"$set": {"drive_folder_id": user_folder}})
+                        drive_id = await asyncio.to_thread(gi.upload_to_drive, refresh, user_folder, f"{pdf_id}.pdf", data)
+                        drive_owner = creds["owner"]
+                        sync_iso = datetime.now(timezone.utc).isoformat()
+                        await db.pdfs.update_one({"id": pdf_id}, {"$set": {
+                            "drive_file_id": drive_id,
+                            "drive_owner": drive_owner,
+                            "storage_type": "google_drive",
+                            "synced_at": sync_iso,
+                        }})
+                        drive_uploaded = True
+                        await log_event(
+                            "pdf.sync",
+                            f"Sincronizzato su Google Drive ({drive_owner.upper()}) · fileId={drive_id} · folder={user_folder}",
+                            user_id=user_id,
+                            meta={"pdf_id": pdf_id, "drive_file_id": drive_id, "folder_id": user_folder, "drive_owner": drive_owner, "filename": f.filename},
+                        )
+                    except Exception as e:
+                        logger.error(f"Drive backup failed: {e}")
+                        await log_event(
+                            "pdf.error",
+                            f"Sync Drive fallito per {f.filename}: {e}",
+                            user_id=user_id, level="error",
+                            meta={"pdf_id": pdf_id, "filename": f.filename, "error": str(e), "stage": "drive_sync"},
+                        )
             # storage decision log
             if drive_uploaded:
                 await log_event(
@@ -803,20 +847,25 @@ async def get_pdf_file(pdf_id: str, user_id: str = Depends(get_current_user_id))
     fpath = UPLOAD_DIR / p["owner_id"] / f"{pdf_id}.pdf"
     if fpath.exists():
         return FileResponse(fpath, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{p.get("filename", pdf_id)}"'})
-    # local missing — fall back to Drive if available
+    # local missing — fall back to Drive (master or user)
     if p.get("drive_file_id"):
-        owner = await db.users.find_one({"user_id": p["owner_id"]}, {"_id": 0})
-        if owner and owner.get("google_refresh_token"):
+        refresh = None
+        if p.get("drive_owner") == "master":
+            master = await get_master_drive()
+            refresh = master.get("refresh_token") if master else None
+        else:
+            owner = await db.users.find_one({"user_id": p["owner_id"]}, {"_id": 0})
+            refresh = (owner or {}).get("google_refresh_token")
+        if refresh:
             try:
-                data = await asyncio.to_thread(gi.download_from_drive, owner["google_refresh_token"], p["drive_file_id"])
-                # restore to local cache
+                data = await asyncio.to_thread(gi.download_from_drive, refresh, p["drive_file_id"])
                 fpath.parent.mkdir(parents=True, exist_ok=True)
                 fpath.write_bytes(data)
-                await log_event("backup.drive.restore", f"Restore Drive → locale: {p.get('title')}", user_id=p["owner_id"])
+                await log_event("pdf.sync", f"Restore Drive → cache locale: {p.get('title')}", user_id=p["owner_id"], meta={"pdf_id": pdf_id, "drive_file_id": p["drive_file_id"]})
                 return Response(content=data, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{p.get("filename", pdf_id)}"'})
             except Exception as e:
                 logger.error(f"Drive restore failed: {e}")
-                await log_event("backup.drive.error", f"Restore fallito: {e}", user_id=p["owner_id"], level="error")
+                await log_event("pdf.error", f"Restore Drive fallito: {e}", user_id=p["owner_id"], level="error", meta={"pdf_id": pdf_id, "stage": "drive_restore"})
     raise HTTPException(status_code=404, detail="File mancante")
 
 
@@ -1194,7 +1243,89 @@ async def admin_stats(_: str = Depends(require_admin)):
     }
 
 
-# ----- end admin panel -----
+# -------- Master Drive (system-wide backup account) --------
+
+@api.get("/admin/master-drive/status")
+async def master_drive_status(_: str = Depends(require_admin)):
+    m = await get_master_drive()
+    if not m:
+        return {"connected": False}
+    return {
+        "connected": True,
+        "email": m.get("email", ""),
+        "folder_root_id": m.get("folder_root_id", ""),
+    }
+
+
+@api.post("/admin/master-drive/url")
+async def master_drive_url(payload: GoogleAuthUrlIn, _: str = Depends(require_admin)):
+    if not gi.google_configured():
+        raise HTTPException(status_code=503, detail="Google OAuth non configurato")
+    state = secrets.token_urlsafe(16)
+    return {"url": gi.build_auth_url(payload.redirect_uri, state), "state": state}
+
+
+@api.post("/admin/master-drive/connect")
+async def master_drive_connect(payload: GoogleAuthIn, _: str = Depends(require_admin)):
+    if not gi.google_configured():
+        raise HTTPException(status_code=503, detail="Google OAuth non configurato")
+    try:
+        tokens = await gi.exchange_code(payload.code, payload.redirect_uri)
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Codice Google non valido: {e}")
+    refresh_token = tokens.get("refresh_token")
+    if not refresh_token:
+        raise HTTPException(status_code=400, detail="Nessun refresh token ricevuto")
+    info = await gi.fetch_userinfo(tokens.get("access_token"))
+    email = (info.get("email") or "").lower().strip()
+    folder_root_id = await asyncio.to_thread(gi.ensure_master_root, refresh_token)
+    await set_master_drive({"refresh_token": refresh_token, "email": email, "folder_root_id": folder_root_id})
+    await log_event("admin.master_drive.connect", f"Master Drive connesso: {email} · root={folder_root_id}", level="info")
+    return {"connected": True, "email": email, "folder_root_id": folder_root_id}
+
+
+@api.post("/admin/master-drive/disconnect")
+async def master_drive_disconnect(_: str = Depends(require_admin)):
+    await set_master_drive(None)
+    await log_event("admin.master_drive.disconnect", "Master Drive disconnesso", level="warn")
+    return {"connected": False}
+
+
+@api.post("/admin/master-drive/test")
+async def master_drive_test(_: str = Depends(require_admin)):
+    m = await get_master_drive()
+    if not m:
+        raise HTTPException(status_code=400, detail="Master Drive non connesso")
+    refresh = m["refresh_token"]
+    try:
+        root = m.get("folder_root_id") or await asyncio.to_thread(gi.ensure_master_root, refresh)
+        test_data = b"%PDF-1.4\n%scorelib master test\n1 0 obj<<>>endobj\ntrailer<</Size 1>>\n%%EOF\n"
+        drive_id = await asyncio.to_thread(gi.upload_to_drive, refresh, root, f"_master_test_{uuid.uuid4().hex[:6]}.pdf", test_data)
+        files = await asyncio.to_thread(gi.list_drive_files, refresh, root)
+        await asyncio.to_thread(gi.delete_from_drive, refresh, drive_id)
+        await log_event("admin.master_drive.test", f"Test OK · root={root} · {len(files)} file totali", level="info")
+        return {"ok": True, "folder_root_id": root, "files_in_root": len(files)}
+    except Exception as e:
+        await log_event("admin.master_drive.test.fail", f"Test fallito: {e}", level="error")
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# -------- end master drive --------
+
+
+@api.post("/logs/client-error")
+async def client_error(payload: dict, request: Request, user_id: Optional[str] = Depends(get_optional_user_id)):
+    msg = (payload.get("message") or "")[:500]
+    url = (payload.get("url") or "")[:300]
+    stack = (payload.get("stack") or "")[:2000]
+    cstack = (payload.get("component_stack") or "")[:2000]
+    await log_event(
+        "ui.error",
+        f"Crash UI: {msg} @ {url}",
+        user_id=user_id, level="error",
+        meta={"stack": stack, "component_stack": cstack, "url": url},
+    )
+    return {"ok": True}
 
 
 # ----------------- Health -----------------

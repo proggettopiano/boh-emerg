@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Shield, Cloud, HardDrive, Users, FileText, AlertTriangle, RefreshCw, ScrollText } from "lucide-react";
+import { Shield, Cloud, HardDrive, Users, FileText, AlertTriangle, RefreshCw, ScrollText, FlaskConical, Unlink, HardDriveUpload } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import { startGoogleOAuth } from "@/lib/google";
 
 export default function Admin() {
   const { user } = useAuth();
@@ -11,18 +12,36 @@ export default function Admin() {
   const [stats, setStats] = useState(null);
   const [users, setUsers] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [master, setMaster] = useState(null);
 
   const isAdmin = user?.email?.toLowerCase() === "admin@scorelib.app" || user?.is_admin;
 
   const load = async () => {
     setBusy(true);
     try {
-      const [s, u] = await Promise.all([api.get("/admin/stats"), api.get("/admin/users")]);
-      setStats(s.data); setUsers(u.data.users);
+      const [s, u, m] = await Promise.all([
+        api.get("/admin/stats"),
+        api.get("/admin/users"),
+        api.get("/admin/master-drive/status"),
+      ]);
+      setStats(s.data); setUsers(u.data.users); setMaster(m.data);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Accesso negato");
       if (e.response?.status === 403) navigate("/");
     } finally { setBusy(false); }
+  };
+
+  const connectMaster = async () => { try { await startGoogleOAuth("master"); } catch { toast.error("Errore OAuth"); } };
+  const disconnectMaster = async () => {
+    if (!window.confirm("Scollegare il Master Drive? I backup futuri si fermeranno (per gli utenti che dipendono da questo).")) return;
+    try { await api.post("/admin/master-drive/disconnect"); toast.success("Disconnesso"); load(); }
+    catch (e) { toast.error("Errore"); }
+  };
+  const testMaster = async () => {
+    setBusy(true);
+    try { const r = await api.post("/admin/master-drive/test"); toast.success(`Test OK · ${r.data.files_in_root} file in root`); load(); }
+    catch (e) { toast.error(e.response?.data?.detail || "Test fallito"); }
+    finally { setBusy(false); }
   };
   useEffect(() => { if (isAdmin) load(); }, [isAdmin]); // eslint-disable-line
 
@@ -66,6 +85,38 @@ export default function Admin() {
           <Stat icon={<AlertTriangle size={16} className="text-red-500" />} label="Errori 24h" value={stats.errors_24h} accent={stats.errors_24h > 0} />
         </div>
       )}
+
+      {/* Master Drive panel */}
+      <div className="border border-rule rounded-md p-5 mb-10 bg-white" data-testid="master-drive-panel">
+        <div className="flex items-start justify-between flex-wrap gap-4 mb-3">
+          <div>
+            <h2 className="font-display font-bold text-xl tracking-tight flex items-center gap-2"><Cloud size={18} /> Master Drive (backup di sistema)</h2>
+            <p className="text-sm text-muted2 mt-1 max-w-2xl">Account Google master che riceve i backup di tutti gli utenti che hanno il backup attivo. Struttura: <span className="text-mono">/ScoreLib/&#123;user_id&#125;/&lt;file&gt;.pdf</span></p>
+          </div>
+          <div className="flex gap-2">
+            {!master?.connected ? (
+              <button onClick={connectMaster} className="btn-primary !py-2 !px-3 text-sm" data-testid="master-connect-btn"><HardDriveUpload size={14} /> Connetti master</button>
+            ) : (
+              <>
+                <button onClick={testMaster} disabled={busy} className="btn-ghost border border-rule rounded-sm px-3 py-1.5 text-sm" data-testid="master-test-btn"><FlaskConical size={14} /> Testa</button>
+                <button onClick={disconnectMaster} className="btn-ghost border border-red-300 text-red-600 hover:bg-red-50 rounded-sm px-3 py-1.5 text-sm" data-testid="master-disconnect-btn"><Unlink size={14} /> Disconnetti</button>
+              </>
+            )}
+          </div>
+        </div>
+        {master?.connected && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 border-t border-rule pt-4">
+            <div><div className="overline mb-1">Email master</div><div className="text-mono text-sm truncate" data-testid="master-email">{master.email}</div></div>
+            <div><div className="overline mb-1">Folder root ID</div><div className="text-mono text-xs truncate" title={master.folder_root_id}>{master.folder_root_id}</div></div>
+            <div><div className="overline mb-1">Stato</div><div className="text-emerald-700 text-sm font-medium">● Operativo</div></div>
+          </div>
+        )}
+        {!master?.connected && (
+          <div className="border-t border-rule pt-4 text-sm text-amber-700 bg-amber-50 rounded-sm p-3 border border-amber-200 mt-2">
+            <AlertTriangle size={14} className="inline mr-1" /> Master Drive NON connesso. Solo gli utenti con il proprio Drive personale potranno attivare il backup.
+          </div>
+        )}
+      </div>
 
       <div className="border border-rule rounded-md overflow-hidden">
         <div className="px-5 py-3 border-b border-rule flex items-center justify-between bg-canvas2">

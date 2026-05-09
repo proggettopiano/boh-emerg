@@ -36,7 +36,9 @@ export default function PdfViewer() {
   const fileObj = React.useMemo(() => ({ url: fileUrl }), [fileUrl]);
 
   useEffect(() => {
-    api.get(`/pdfs/${id}`).then((r) => setMeta(r.data)).catch((e) => setError(e.response?.data?.detail || "PDF non trovato"));
+    let alive = true;
+    api.get(`/pdfs/${id}`).then((r) => { if (alive) setMeta(r.data); }).catch((e) => { if (alive) setError(e.response?.data?.detail || "PDF non trovato"); });
+    return () => { alive = false; };
   }, [id]);
 
   useEffect(() => {
@@ -120,13 +122,13 @@ export default function PdfViewer() {
   useEffect(() => {
     const onKey = (e) => {
       if (document.activeElement?.tagName === "INPUT") return;
-      if (e.key === "n" || e.key === "ArrowDown" && e.altKey) { e.preventDefault(); goNext(); }
-      if (e.key === "N" || e.key === "ArrowUp" && e.altKey) { e.preventDefault(); goPrev(); }
-      if (e.key === "Escape") setHighlightsHidden((v) => !v);
+      if (e.key === "n") { e.preventDefault(); goNext(); }
+      else if (e.key === "N") { e.preventDefault(); goPrev(); }
+      else if (e.key === "Escape" && queryStr) { setHighlightsHidden((v) => !v); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [matches, matchIndex]); // eslint-disable-line
+  }, [matches, matchIndex, queryStr]); // eslint-disable-line
 
   // Track current page on scroll
   useEffect(() => {

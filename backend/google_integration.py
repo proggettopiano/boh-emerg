@@ -102,6 +102,29 @@ def _drive_service(refresh_token: str):
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 
+def ensure_master_root(refresh_token: str) -> str:
+    """Get or create top-level 'ScoreLib' folder in master drive root."""
+    svc = _drive_service(refresh_token)
+    q = "mimeType='application/vnd.google-apps.folder' and name='ScoreLib' and trashed=false and 'root' in parents"
+    res = svc.files().list(q=q, fields="files(id,name)", spaces="drive").execute()
+    if res.get("files"):
+        return res["files"][0]["id"]
+    meta = {"name": "ScoreLib", "mimeType": "application/vnd.google-apps.folder", "parents": ["root"]}
+    return svc.files().create(body=meta, fields="id").execute()["id"]
+
+
+def ensure_subfolder(refresh_token: str, parent_id: str, name: str) -> str:
+    """Get or create subfolder by name under parent_id."""
+    svc = _drive_service(refresh_token)
+    safe = name.replace("'", "")
+    q = f"mimeType='application/vnd.google-apps.folder' and name='{safe}' and trashed=false and '{parent_id}' in parents"
+    res = svc.files().list(q=q, fields="files(id,name)", spaces="drive").execute()
+    if res.get("files"):
+        return res["files"][0]["id"]
+    meta = {"name": name, "mimeType": "application/vnd.google-apps.folder", "parents": [parent_id]}
+    return svc.files().create(body=meta, fields="id").execute()["id"]
+
+
 def ensure_user_folder(refresh_token: str, user_id: str) -> str:
     """Get or create /ScoreLib/{user_id} folder in user's Drive. Returns folder ID."""
     svc = _drive_service(refresh_token)

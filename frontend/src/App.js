@@ -24,6 +24,7 @@ import AdminLogs from "@/pages/AdminLogs";
 import Admin from "@/pages/Admin";
 import GoogleCallback from "@/pages/GoogleCallback";
 import AuthCallback from "@/pages/AuthCallback";
+import ErrorBoundary from "@/components/ErrorBoundary";
 
 function ChromeWrapper({ children }) {
   const { user } = useAuth();
@@ -71,12 +72,14 @@ function AppShell() {
 export default function App() {
   return (
     <div className="App">
-      <AuthProvider>
-        <BrowserRouter>
-          <AppShell />
-          <Toaster position="bottom-right" theme="light" richColors closeButton />
-        </BrowserRouter>
-      </AuthProvider>
+      <ErrorBoundary>
+        <AuthProvider>
+          <BrowserRouter>
+            <AppShell />
+            <Toaster position="bottom-right" theme="light" richColors closeButton />
+          </BrowserRouter>
+        </AuthProvider>
+      </ErrorBoundary>
     </div>
   );
 }

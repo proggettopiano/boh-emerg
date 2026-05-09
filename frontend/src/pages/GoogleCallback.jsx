@@ -25,7 +25,11 @@ export default function GoogleCallback() {
 
     (async () => {
       try {
-        if (mode === "connect") {
+        if (mode === "master") {
+          const r = await api.post("/admin/master-drive/connect", { code, redirect_uri: redirectUri });
+          toast.success(`Master Drive connesso: ${r.data.email}`);
+          navigate("/admin", { replace: true });
+        } else if (mode === "connect") {
           // Connect Drive to existing logged-in user
           const r = await api.post("/auth/google/connect", { code, redirect_uri: redirectUri });
           setUser(r.data);
@@ -41,7 +45,7 @@ export default function GoogleCallback() {
         const msg = e.response?.data?.detail || "Errore Google";
         setStatus(msg);
         toast.error(msg);
-        setTimeout(() => navigate(currentUser ? "/settings" : "/login"), 2500);
+        setTimeout(() => navigate(currentUser ? (mode === "master" ? "/admin" : "/settings") : "/login"), 2500);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps

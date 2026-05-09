@@ -24,7 +24,8 @@ export default function Home() {
   const inputRef = useRef(null);
 
   useEffect(() => {
-    api.get("/pdfs").then((r) => setCount(r.data.items.length)).catch(() => {});
+    let alive = true;
+    api.get("/pdfs").then((r) => { if (alive) setCount(r.data.items.length); }).catch(() => {});
     const onKey = (e) => {
       if ((e.key === "k" && (e.metaKey || e.ctrlKey)) || e.key === "/") {
         if (document.activeElement?.tagName === "INPUT") return;
@@ -32,18 +33,22 @@ export default function Home() {
       }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => { alive = false; window.removeEventListener("keydown", onKey); };
   }, []);
 
   useEffect(() => {
     if (tref.current) clearTimeout(tref.current);
     if (!q.trim()) { setResults(null); return; }
+    const ctrl = new AbortController();
     tref.current = setTimeout(async () => {
       try {
-        const r = await api.get(`/search`, { params: { q } });
+        const r = await api.get(`/search`, { params: { q }, signal: ctrl.signal });
         setResults(r.data.results);
-      } catch { setResults([]); }
-    }, 220);
+      } catch (e) {
+        if (e.name !== "CanceledError" && e.name !== "AbortError") setResults([]);
+      }
+    }, 350);
+    return () => { clearTimeout(tref.current); ctrl.abort(); };
   }, [q]);
 
   return (
