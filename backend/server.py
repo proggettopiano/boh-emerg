@@ -42,6 +42,22 @@ ADMIN_LOG_PASSWORD = os.environ.get("ADMIN_LOG_PASSWORD", "Rome02009")
 APP_NAME = os.environ.get("APP_NAME", "Scorelib")
 
 app = FastAPI(title=f"{APP_NAME} API")
+
+DEFAULT_CORS_ORIGINS = "https://boh-emerg-wzsa.vercel.app,http://localhost:3000"
+allowed_origins = [
+    origin.strip()
+    for origin in os.environ.get("BACKEND_CORS_ORIGINS", DEFAULT_CORS_ORIGINS).split(",")
+    if origin.strip()
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 api = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")

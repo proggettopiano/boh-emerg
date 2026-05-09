@@ -1,7 +1,13 @@
 import axios from "axios";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-export const API = `${BACKEND_URL}/api`;
+const BACKEND_URL = process.env.REACT_APP_API_URL || process.env.REACT_APP_BACKEND_URL;
+if (!BACKEND_URL) {
+  throw new Error(
+    "Environment variable REACT_APP_API_URL must be defined for frontend API requests"
+  );
+}
+
+export const API = `${BACKEND_URL.replace(/\/+$|\s+$/g, "")}/api`;
 
 const api = axios.create({ baseURL: API });
 
