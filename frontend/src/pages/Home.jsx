@@ -11,7 +11,10 @@ function highlight(text, q) {
     const re = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "ig");
     const parts = text.split(re);
     return parts.map((p, i) => (re.test(p) ? <mark key={i} className="hl">{p}</mark> : <span key={i}>{p}</span>));
-  } catch { return text; }
+  } catch (err) {
+    console.error("[Home] Search highlight failed:", { query: q, error: err.message });
+    return text;
+  }
 }
 
 export default function Home() {

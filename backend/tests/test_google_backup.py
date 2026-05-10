@@ -3,8 +3,15 @@ import os
 import requests
 import pytest
 
+# Try to load .env.test if available
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(__file__), "../../.env.test"), verbose=False)
+except Exception:
+    pass
+
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://sheet-music-hub-4.preview.emergentagent.com").rstrip("/")
-EXPECTED_CLIENT_ID = "239524592693-qhl4tacfd7t1ids24bq9tq5dj31a8mlk.apps.googleusercontent.com"
+EXPECTED_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "239524592693-qhl4tacfd7t1ids24bq9tq5dj31a8mlk.apps.googleusercontent.com")
 
 
 # -------- Google OAuth URL --------

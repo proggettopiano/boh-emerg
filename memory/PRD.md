@@ -1,4 +1,4 @@
-# Scorelib — Product Requirements Document
+# ScoreLib — Product Requirements Document
 
 ## Original Problem
 Web app professionale italiana per pianisti per gestire libreria PDF musicali. Esperienza ricerca tipo Google Search, interfaccia minimal tipo Notion. Solo tema chiaro.

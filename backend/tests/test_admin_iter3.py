@@ -6,6 +6,13 @@ import uuid
 import requests
 import pytest
 
+# Ensure env vars are loaded for test credentials
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(__file__), "../../.env.test"), verbose=False)
+except Exception:
+    pass
+
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://sheet-music-hub-4.preview.emergentagent.com").rstrip("/")
 
 
@@ -100,7 +107,7 @@ class TestPdfOpenLog:
         time.sleep(0.5)
         # query admin logs and look for pdf.open
         rl = api_client.post(f"{BASE_URL}/api/admin/logs",
-                             json={"password": "Rome02009"},
+                             json={"password": os.environ.get("ADMIN_LOG_PASSWORD", "Rome02009")},
                              params={"event_type": "pdf.open", "limit": 50})
         assert rl.status_code == 200
         types = [it.get("event_type") for it in rl.json().get("items", [])]
