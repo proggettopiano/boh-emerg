@@ -61,7 +61,10 @@ export default function PdfViewer() {
     try {
       const re = new RegExp(`(${queryStr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "ig");
       return str.replace(re, (m) => `<mark class="hl">${m}</mark>`);
-    } catch { return str; }
+    } catch (err) {
+      console.error("[PdfViewer] Regex highlight failed:", { query: queryStr, error: err.message });
+      return str;
+    }
   }, [queryStr]);
 
   // Re-collect all matches whenever every page is rendered or query changes
@@ -149,8 +152,15 @@ export default function PdfViewer() {
 
   const toggleFavorite = async () => {
     if (!meta) return;
-    try { const r = await api.patch(`/pdfs/${id}`, { is_favorite: !meta.is_favorite }); setMeta(r.data); toast.success(r.data.is_favorite ? "Aggiunto ai preferiti" : "Rimosso dai preferiti"); }
-    catch { toast.error("Errore"); }
+    try { 
+      const r = await api.patch(`/pdfs/${id}`, { is_favorite: !meta.is_favorite }); 
+      setMeta(r.data); 
+      toast.success(r.data.is_favorite ? "Aggiunto ai preferiti" : "Rimosso dai preferiti"); 
+    }
+    catch (err) { 
+      console.error("[PdfViewer] Failed to toggle favorite:", { pdf_id: id, error: err.message });
+      toast.error("Errore nel salvataggio del preferito"); 
+    }
   };
 
   const clearQuery = () => { setQueryStr(""); setMatches([]); setMatchIndex(0); };

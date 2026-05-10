@@ -38,8 +38,8 @@ mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
-ADMIN_LOG_PASSWORD = os.environ.get("ADMIN_LOG_PASSWORD", "Rome02009")
-APP_NAME = os.environ.get("APP_NAME", "Scorelib")
+ADMIN_LOG_PASSWORD = os.environ.get("ADMIN_LOG_PASSWORD", "Rome02009")  # fallback for dev
+APP_NAME = os.environ.get("APP_NAME", "ScoreLib")
 
 app = FastAPI(title=f"{APP_NAME} API")
 
@@ -62,6 +62,11 @@ api = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+# Check ADMIN_LOG_PASSWORD and warn if not set
+if not os.environ.get("ADMIN_LOG_PASSWORD"):
+    logger.warning("⚠️ ADMIN_LOG_PASSWORD not set - using default fallback 'Rome02009' (dev mode). Set ADMIN_LOG_PASSWORD env var for production.")
+ADMIN_LOG_PASSWORD_CONFIGURED = bool(os.environ.get("ADMIN_LOG_PASSWORD"))
 
 
 # ----------------- Helpers -----------------
