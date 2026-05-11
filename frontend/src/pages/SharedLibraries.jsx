@@ -1,17 +1,32 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Plus, Users, Trash2 } from "lucide-react";
+import { Plus, Users, Trash2, EyeOff, Eye } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 
 export default function SharedLibraries() {
+  const { user } = useAuth();
   const [items, setItems] = useState([]);
+  const [hiddenItems, setHiddenItems] = useState([]);
   const [show, setShow] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
 
-  const load = async () => { try { const r = await api.get("/libraries"); setItems(r.data.items); } catch {} };
-  useEffect(() => { load(); }, []);
+  const load = async () => { 
+    try { 
+      const r = await api.get("/libraries"); 
+      setItems(r.data.items); 
+    } catch {} 
+  };
+  const loadHidden = async () => { 
+    try { 
+      const r = await api.get("/libraries/hidden"); 
+      setHiddenItems(r.data.items); 
+    } catch {} 
+  };
+  useEffect(() => { load(); loadHidden(); }, []);
 
   const create = async (e) => {
     e.preventDefault();
@@ -19,6 +34,8 @@ export default function SharedLibraries() {
     catch (e) { toast.error(e.response?.data?.detail || "Errore"); }
   };
   const del = async (id) => { if (!window.confirm("Eliminare la libreria condivisa?")) return; await api.delete(`/libraries/${id}`); load(); };
+  const hide = async (id) => { await api.post(`/libraries/${id}/hide`); toast.success("Libreria nascosta"); load(); loadHidden(); };
+  const unhide = async (id) => { await api.delete(`/libraries/${id}/hide`); toast.success("Libreria ripristinata"); load(); loadHidden(); };
 
   return (
     <div className="max-w-6xl mx-auto px-6 md:px-12 py-12">
@@ -46,7 +63,11 @@ export default function SharedLibraries() {
                   <h3 className="font-display text-xl font-bold tracking-tight hover:underline">{l.name}</h3>
                   {l.description && <p className="text-sm text-muted2 mt-1 line-clamp-2">{l.description}</p>}
                 </Link>
-                <button onClick={() => del(l.id)} className="btn-ghost" data-testid={`shared-lib-delete-${l.id}`}><Trash2 size={14} /></button>
+                {l.owner_id === user?.user_id ? (
+                  <button onClick={() => del(l.id)} className="btn-ghost" data-testid={`shared-lib-delete-${l.id}`}><Trash2 size={14} /></button>
+                ) : (
+                  <button onClick={() => hide(l.id)} className="btn-ghost" data-testid={`shared-lib-hide-${l.id}`}><EyeOff size={14} /></button>
+                )}
               </div>
               <div className="flex items-center justify-between text-mono text-xs text-muted2 mt-3 pt-3 border-t border-rule">
                 <span>{(l.pdf_ids || []).length} PDF</span>
@@ -55,6 +76,33 @@ export default function SharedLibraries() {
             </li>
           ))}
         </ul>
+      )}
+
+      {hiddenItems.length > 0 && (
+        <div className="mt-12">
+          <button onClick={() => setShowHidden(!showHidden)} className="btn-ghost border border-rule rounded-sm px-4 py-2 mb-4">
+            {showHidden ? <><Eye size={16} /> Nascondi sezione nascoste</> : <><EyeOff size={16} /> Mostra nascoste ({hiddenItems.length})</>}
+          </button>
+          {showHidden && (
+            <ul className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 opacity-60">
+              {hiddenItems.map((l) => (
+                <li key={l.id} className="border border-rule rounded-md p-5 hover:border-ink transition-colors">
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="block">
+                      <h3 className="font-display text-xl font-bold tracking-tight">{l.name}</h3>
+                      {l.description && <p className="text-sm text-muted2 mt-1 line-clamp-2">{l.description}</p>}
+                    </div>
+                    <button onClick={() => unhide(l.id)} className="btn-ghost" data-testid={`shared-lib-unhide-${l.id}`}><Eye size={14} /></button>
+                  </div>
+                  <div className="flex items-center justify-between text-mono text-xs text-muted2 mt-3 pt-3 border-t border-rule">
+                    <span>{(l.pdf_ids || []).length} PDF</span>
+                    <span>{(l.members || []).length + 1} membri</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
 
       {show && (
