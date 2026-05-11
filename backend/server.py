@@ -165,11 +165,22 @@ async def migrate_storage_fields():
         logger.info(f"Migrated storage fields on {n} PDFs")
 
 
+async def migrate_email_verified():
+    """Backfill email_verified: true for existing users without the field."""
+    n = 0
+    async for u in db.users.find({"email_verified": {"$exists": False}}, {"_id": 0, "user_id": 1}):
+        await db.users.update_one({"user_id": u["user_id"]}, {"$set": {"email_verified": True}})
+        n += 1
+    if n:
+        logger.info(f"Migrated email_verified on {n} users")
+
+
 @app.on_event("startup")
 async def on_start():
     await ensure_indexes()
     await seed_admin()
     await migrate_storage_fields()
+    await migrate_email_verified()
     logger.info("Startup complete")
 
 
@@ -186,6 +197,14 @@ class LoginIn(BaseModel):
 
 class ForgotIn(BaseModel):
     email: EmailStr
+
+
+class ResendVerificationIn(BaseModel):
+    email: EmailStr
+
+
+class VerifyEmailIn(BaseModel):
+    token: str
 
 
 class ResetIn(BaseModel):
@@ -259,6 +278,7 @@ def user_public(u: dict) -> dict:
         "auth_provider": u.get("auth_provider", "password"),
         "has_google_drive": bool(u.get("google_refresh_token")),
         "is_admin": u.get("is_admin", False),
+        "email_verified": u.get("email_verified", True),  # default true for backward compatibility
         "created_at": u.get("created_at"),
     }
 
@@ -278,6 +298,10 @@ async def register(payload: RegisterIn, request: Request):
         raise HTTPException(status_code=409, detail="Email già registrata. Usa il recupero password.")
 
     user_id = f"user_{uuid.uuid4().hex[:12]}"
+    # Generate verification token
+    verification_token = secrets.token_urlsafe(32)
+    verification_token_hash = hashlib.sha256(verification_token.encode()).hexdigest()
+    verification_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
     doc = {
         "user_id": user_id,
         "email": email,
@@ -288,12 +312,27 @@ async def register(payload: RegisterIn, request: Request):
         "backup_enabled": False,
         "profile_completed": False,
         "auth_provider": "password",
+        "email_verified": False,
+        "verification_token_hash": verification_token_hash,
+        "verification_expires_at": verification_expires_at.isoformat(),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.users.insert_one(doc)
-    token = create_jwt(user_id)
     await log_event("auth.register", f"Nuovo account creato: {email}", user_id=user_id)
-    return {"token": token, "user": user_public(doc)}
+
+    # Try to send verification email
+    frontend_url = request.headers.get("origin") or request.headers.get("referer", "").rstrip("/")
+    if not frontend_url:
+        frontend_url = ""
+    verification_link = f"{frontend_url}/verify-email?token={verification_token}"
+    from email_service import send_verification_email
+    email_sent = await send_verification_email(email, verification_link, "")
+    if email_sent:
+        await log_event("verification_email_sent", f"Email verifica inviata a {email}", user_id=user_id)
+        return {"status": "verification_email_sent", "message": "Account creato. Controlla la tua email per verificare l'account."}
+    else:
+        await log_event("verification_email_failed", f"Invio email verifica fallito per {email}", user_id=user_id, level="error")
+        return {"status": "verification_pending", "message": "Account creato. Non siamo riusciti a inviare l'email di verifica. Usa 'Reinvia email'."}
 
 
 @api.post("/auth/login")
@@ -308,9 +347,68 @@ async def login(payload: LoginIn, request: Request):
     if not u or not u.get("password_hash") or not verify_password(payload.password, u["password_hash"]):
         await log_event("auth.login.fail", f"Login fallito per {email}", level="warn", meta={"ip": ip})
         raise HTTPException(status_code=401, detail="Email o password errati")
+    if u.get("email_verified") is False:
+        await log_event("auth.login.unverified", f"Tentativo login email non verificata: {email}", user_id=u["user_id"], level="warn")
+        raise HTTPException(status_code=403, detail="Verifica prima la tua email per accedere.")
     token = create_jwt(u["user_id"])
     await log_event("auth.login", f"Login: {email}", user_id=u["user_id"])
     return {"token": token, "user": user_public(u)}
+
+
+@api.post("/auth/resend-verification")
+async def resend_verification(payload: ResendVerificationIn, request: Request):
+    email = payload.email.lower().strip()
+    u = await db.users.find_one({"email": email}, {"_id": 0})
+    if not u:
+        # Don't reveal if email exists
+        return {"ok": True, "message": "Se l'email esiste, riceverai un link di verifica."}
+    if u.get("email_verified"):
+        return {"ok": True, "message": "Email già verificata."}
+
+    # Generate new token
+    verification_token = secrets.token_urlsafe(32)
+    verification_token_hash = hashlib.sha256(verification_token.encode()).hexdigest()
+    verification_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+    await db.users.update_one({"user_id": u["user_id"]}, {"$set": {
+        "verification_token_hash": verification_token_hash,
+        "verification_expires_at": verification_expires_at.isoformat(),
+    }})
+
+    frontend_url = request.headers.get("origin") or request.headers.get("referer", "").rstrip("/")
+    if not frontend_url:
+        frontend_url = ""
+    verification_link = f"{frontend_url}/verify-email?token={verification_token}"
+    from email_service import send_verification_email
+    email_sent = await send_verification_email(email, verification_link, u.get("name", ""))
+    if email_sent:
+        await log_event("verification_email_sent", f"Email verifica reinviata a {email}", user_id=u["user_id"])
+        return {"ok": True, "message": "Email di verifica reinviata."}
+    else:
+        await log_event("verification_email_failed", f"Reinvio email verifica fallito per {email}", user_id=u["user_id"], level="error")
+        return {"ok": False, "message": "Errore nell'invio dell'email. Riprova più tardi."}
+
+
+@api.get("/auth/verify-email")
+async def verify_email(token: str = Query(...)):
+    if not token:
+        raise HTTPException(status_code=400, detail="Token mancante")
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    u = await db.users.find_one({"verification_token_hash": token_hash}, {"_id": 0})
+    if not u:
+        await log_event("email_verification_failed", f"Token verifica non trovato: {token[:10]}...", level="warn")
+        raise HTTPException(status_code=400, detail="Link non valido o già usato")
+    exp_str = u.get("verification_expires_at")
+    if not exp_str:
+        raise HTTPException(status_code=400, detail="Token scaduto")
+    exp = datetime.fromisoformat(exp_str)
+    if datetime.now(timezone.utc) > exp:
+        await log_event("email_verification_expired", f"Token verifica scaduto per {u['email']}", user_id=u["user_id"], level="warn")
+        raise HTTPException(status_code=400, detail="Link scaduto. Richiedi un nuovo link di verifica.")
+    # Verify
+    await db.users.update_one({"user_id": u["user_id"]}, {"$set": {"email_verified": True}, "$unset": {"verification_token_hash": "", "verification_expires_at": ""}})
+    jwt_token = create_jwt(u["user_id"])
+    await log_event("email_verified", f"Email verificata per {u['email']}", user_id=u["user_id"])
+    return {"token": jwt_token, "user": user_public({**u, "email_verified": True})}
 
 
 @api.post("/auth/forgot")
