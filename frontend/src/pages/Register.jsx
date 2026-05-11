@@ -9,6 +9,7 @@ export default function Register() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
   const navigate = useNavigate();
   const { loginWithToken } = useAuth();
 
@@ -16,13 +17,29 @@ export default function Register() {
     e.preventDefault();
     setBusy(true);
     try {
+      const start = Date.now();
       const r = await api.post("/auth/register", { email, password });
-      loginWithToken(r.data.token, r.data.user);
-      navigate("/profile-setup", { replace: true });
+      console.log(`Register took ${Date.now() - start}ms`);
+      if (r.data.status === "verification_email_sent") {
+        toast.success("Account creato! Controlla la tua email per verificare.");
+        navigate("/login", { replace: true });
+      } else if (r.data.status === "verification_pending") {
+        toast.success("Account creato! Usa 'Reinvia email' per ricevere il link.");
+        navigate("/resend-verification", { replace: true, state: { email } });
+      }
+      setRetryCount(0); // success, reset
     } catch (e) {
       const msg = e.response?.data?.detail || "Errore di registrazione";
+      console.error("Register failed:", e);
+      if (retryCount < 2 && (e.code === 'NETWORK_ERROR' || e.response?.status >= 500)) {
+        setRetryCount(c => c + 1);
+        toast.error(`${msg}. Riprovo (${retryCount + 1}/2)...`);
+        setTimeout(() => submit(e), 2000); // retry after 2s
+        return;
+      }
       toast.error(msg);
       if (e.response?.status === 409) navigate("/forgot?email=" + encodeURIComponent(email));
+      setRetryCount(0);
     } finally {
       setBusy(false);
     }
@@ -40,11 +57,13 @@ export default function Register() {
           <input data-testid="register-password-input" type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} className="input-base" placeholder="••••••••" />
         </div>
         <button type="submit" disabled={busy} className="btn-primary w-full disabled:opacity-50" data-testid="register-submit-btn">
-          {busy ? "Creazione…" : "Crea account"}
+          {busy ? (retryCount > 0 ? `Riprovo (${retryCount}/2)…` : "Creazione…") : "Crea account"}
         </button>
       </form>
       <div className="mt-6 text-sm text-[#525252]">
         Hai già un account? <Link to="/login" className="underline hover:text-ink" data-testid="goto-login-link">Accedi</Link>
+        <br />
+        <Link to="/resend-verification" className="underline hover:text-ink">Reinvia email verifica</Link>
       </div>
     </AuthShell>
   );
