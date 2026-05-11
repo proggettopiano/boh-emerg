@@ -1177,7 +1177,7 @@ async def create_library(payload: CreateLibraryIn, user_id: str = Depends(get_cu
 @api.get("/libraries")
 async def list_libraries(user_id: str = Depends(get_current_user_id)):
     cursor = db.shared_libraries.find(
-        {"$or": [{"owner_id": user_id}, {"members": user_id}]},
+        {"$or": [{"owner_id": user_id}, {"members": user_id}], "hidden_by_users": {"$ne": user_id}},
         {"_id": 0},
     ).sort("created_at", -1)
     items = await cursor.to_list(1000)
@@ -1226,6 +1226,40 @@ async def delete_library(lib_id: str, user_id: str = Depends(get_current_user_id
         raise HTTPException(status_code=404, detail="Libreria non trovata")
     await log_event("library.delete", f"Libreria cancellata: {lib_id}", user_id=user_id)
     return {"ok": True}
+
+
+@api.post("/libraries/{lib_id}/hide")
+async def hide_library(lib_id: str, user_id: str = Depends(get_current_user_id)):
+    lib = await db.shared_libraries.find_one({"id": lib_id}, {"_id": 0})
+    if not lib:
+        raise HTTPException(status_code=404, detail="Libreria non trovata")
+    if lib["owner_id"] == user_id:
+        raise HTTPException(status_code=403, detail="Il proprietario non può nascondere la propria libreria")
+    if user_id not in lib.get("members", []):
+        raise HTTPException(status_code=403, detail="Solo membri possono nascondere la libreria")
+    await db.shared_libraries.update_one({"id": lib_id}, {"$addToSet": {"hidden_by_users": user_id}})
+    await log_event("shared_library_hidden", f"Libreria nascosta: {lib['name']}", user_id=user_id)
+    return {"ok": True}
+
+
+@api.delete("/libraries/{lib_id}/hide")
+async def unhide_library(lib_id: str, user_id: str = Depends(get_current_user_id)):
+    lib = await db.shared_libraries.find_one({"id": lib_id}, {"_id": 0})
+    if not lib:
+        raise HTTPException(status_code=404, detail="Libreria non trovata")
+    await db.shared_libraries.update_one({"id": lib_id}, {"$pull": {"hidden_by_users": user_id}})
+    await log_event("shared_library_restored", f"Libreria ripristinata: {lib['name']}", user_id=user_id)
+    return {"ok": True}
+
+
+@api.get("/libraries/hidden")
+async def list_hidden_libraries(user_id: str = Depends(get_current_user_id)):
+    cursor = db.shared_libraries.find(
+        {"hidden_by_users": user_id},
+        {"_id": 0},
+    ).sort("created_at", -1)
+    items = await cursor.to_list(1000)
+    return {"items": items}
 
 
 @api.get("/shared/{share_token}")
