@@ -207,9 +207,9 @@ export default function PdfViewer() {
         </div>
       </div>
 
-      {/* Search/match bar (sticky just below toolbar) */}
+      {/* Search/match bar (fixed just below toolbar) */}
       {queryStr && (
-        <div className="sticky top-[57px] z-20 bg-highlight/90 backdrop-blur border-b border-[#FDE047] px-4 md:px-6 py-2 flex items-center gap-2 flex-wrap" data-testid="viewer-search-bar">
+        <div className="fixed top-[57px] left-0 right-0 z-20 bg-highlight/90 backdrop-blur border-b border-[#FDE047] px-4 md:px-6 py-2 flex items-center gap-2 flex-wrap" data-testid="viewer-search-bar">
           <span className="text-mono text-xs text-highlightFg uppercase tracking-wider shrink-0">Cerca</span>
           <span className="font-medium text-highlightFg truncate max-w-xs">"{queryStr}"</span>
           <span className="text-mono text-xs text-highlightFg shrink-0" data-testid="match-counter">
@@ -232,7 +232,7 @@ export default function PdfViewer() {
         </div>
       )}
 
-      <div ref={containerRef} className="flex-1 flex flex-col items-center py-8 px-2 md:px-4">
+      <div ref={containerRef} className="flex-1 flex flex-col items-center py-8 px-2 md:px-4" style={{ paddingTop: queryStr ? '60px' : '32px' }}>
         {busy && <div className="text-mono text-sm text-muted2 py-12" data-testid="pdf-loading">Caricamento PDF…</div>}
         <Document
           file={fileObj}
