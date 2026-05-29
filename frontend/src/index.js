@@ -9,3 +9,11 @@ root.render(
     <App />
   </React.StrictMode>,
 );
+
+if ("serviceWorker" in navigator && process.env.NODE_ENV === "production") {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/service-worker.js").catch((err) => {
+      console.error("[ScoreLib] Service worker registration failed", err);
+    });
+  });
+}

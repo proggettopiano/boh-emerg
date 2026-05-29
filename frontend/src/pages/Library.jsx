@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Trash2, FileText, Upload as UploadIcon, Star, Tag as TagIcon } from "lucide-react";
+import { Trash2, FileText, Upload as UploadIcon, Star, Tag as TagIcon, Plus } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import UploadModal from "@/components/UploadModal";
@@ -14,32 +14,81 @@ export default function Library() {
   const [tagFilter, setTagFilter] = useState("");
   const [openUpload, setOpenUpload] = useState(false);
   const [editTagsFor, setEditTagsFor] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const loadSeq = useRef(0);
+  const mountedRef = useRef(false);
   const navigate = useNavigate();
 
-  const load = async () => {
+  const load = useCallback(async () => {
+    const seq = loadSeq.current + 1;
+    loadSeq.current = seq;
+    setLoading(true);
     try {
       const params = { sort };
       if (favOnly) params.favorite = true;
       if (tagFilter) params.tag = tagFilter;
       const r = await api.get("/pdfs", { params });
-      setItems(r.data.items);
-      setTags(r.data.tags || []);
-    } catch {}
-  };
-  useEffect(() => { load(); }, [sort, favOnly, tagFilter]); // eslint-disable-line
+      if (mountedRef.current && seq === loadSeq.current) {
+        setItems(r.data.items || []);
+        setTags(r.data.tags || []);
+      }
+    } catch (e) {
+      if (mountedRef.current && seq === loadSeq.current) toast.error(e.response?.data?.detail || "Libreria non caricata");
+    } finally {
+      if (mountedRef.current && seq === loadSeq.current) setLoading(false);
+    }
+  }, [sort, favOnly, tagFilter]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      loadSeq.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const remove = async (id, title) => {
     if (!window.confirm(`Eliminare definitivamente "${title}"?`)) return;
-    try { await api.delete(`/pdfs/${id}`); toast.success("Eliminato"); load(); }
-    catch (e) { toast.error("Errore"); }
+    try {
+      await api.delete(`/pdfs/${id}`);
+      toast.success("Eliminato");
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Errore eliminazione");
+    }
+  };
+
+  const createBlankPdf = async () => {
+    const title = window.prompt("Nome del nuovo PDF");
+    if (!title?.trim()) return;
+    try {
+      const r = await api.post("/pdfs/create", { title: title.trim() });
+      toast.success("PDF creato");
+      await load();
+      navigate(`/viewer/${r.data.id}`);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Impossibile creare il PDF");
+    }
   };
 
   const toggleFav = async (p) => {
-    try { const r = await api.patch(`/pdfs/${p.id}`, { is_favorite: !p.is_favorite }); setItems((arr) => arr.map((x) => x.id === p.id ? r.data : x)); }
-    catch { toast.error("Errore"); }
+    try {
+      const r = await api.patch(`/pdfs/${p.id}`, { is_favorite: !p.is_favorite });
+      setItems((arr) => arr.map((x) => (x.id === p.id ? r.data : x)));
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Errore preferito");
+    }
   };
 
-  const updateItem = (updated) => setItems((arr) => arr.map((x) => x.id === updated.id ? updated : x));
+  const updateItem = (updated) => setItems((arr) => arr.map((x) => (x.id === updated.id ? updated : x)));
+
+  const countText = loading
+    ? "Caricamento PDF..."
+    : `${items.length} PDF${favOnly ? " preferiti" : tagFilter ? ` con tag "${tagFilter}"` : " indicizzati"}`;
 
   return (
     <div className="max-w-6xl mx-auto px-6 md:px-12 py-12">
@@ -47,9 +96,12 @@ export default function Library() {
         <div>
           <p className="overline mb-2">IL TUO ARCHIVIO</p>
           <h1 className="font-display font-black text-4xl md:text-5xl tracking-tighter">Libreria</h1>
-          <p className="text-mono text-sm text-muted2 mt-2"><span data-testid="library-count">{items.length}</span> PDF{favOnly ? " preferiti" : tagFilter ? ` con tag "${tagFilter}"` : " indicizzati"}</p>
+          <p className="text-mono text-sm text-muted2 mt-2"><span data-testid="library-count">{countText}</span></p>
         </div>
-        <button onClick={() => setOpenUpload(true)} className="btn-primary" data-testid="library-upload-btn"><UploadIcon size={16} /> Carica PDF</button>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={createBlankPdf} className="btn-ghost border border-rule rounded-sm px-4 py-3" data-testid="library-create-pdf-btn"><Plus size={16} /> Crea PDF</button>
+          <button onClick={() => setOpenUpload(true)} className="btn-primary" data-testid="library-upload-btn"><UploadIcon size={16} /> Carica PDF</button>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 mb-4 pb-4 border-b border-rule">
@@ -69,15 +121,17 @@ export default function Library() {
         <div className="ml-auto flex items-center gap-2">
           <span className="overline">ORDINA</span>
           <select value={sort} onChange={(e) => setSort(e.target.value)} className="border border-rule rounded-sm px-3 py-1.5 text-sm bg-white" data-testid="library-sort">
-            <option value="date_desc">Più recenti</option>
+            <option value="date_desc">Piu recenti</option>
             <option value="date_asc">Meno recenti</option>
-            <option value="name_asc">Nome A→Z</option>
-            <option value="name_desc">Nome Z→A</option>
+            <option value="name_asc">Nome A-Z</option>
+            <option value="name_desc">Nome Z-A</option>
           </select>
         </div>
       </div>
 
-      {items.length === 0 ? (
+      {loading ? (
+        <div className="border border-dashed border-rule rounded-md p-16 text-center text-muted2 text-mono text-sm" data-testid="library-loading">Caricamento libreria...</div>
+      ) : items.length === 0 ? (
         <div className="border border-dashed border-rule rounded-md p-16 text-center" data-testid="library-empty">
           <FileText size={32} className="mx-auto mb-3 text-muted3" strokeWidth={1.5} />
           <h3 className="font-display text-xl font-bold mb-1">Nessun PDF</h3>
@@ -97,10 +151,10 @@ export default function Library() {
                   <div className="font-display text-lg font-medium group-hover:underline decoration-2 underline-offset-4 truncate">{p.title}</div>
                   <div className="flex items-center gap-2 flex-wrap mt-0.5">
                     <span className="text-mono text-xs text-muted2">
-                      {p.created_at?.slice(0, 10)} · {p.pages}pp · {(p.size / 1024).toFixed(0)} KB{p.used_ocr ? " · OCR" : ""}
+                      {p.created_at?.slice(0, 10)} - {p.pages}pp - {(p.size / 1024).toFixed(0)} KB{p.used_ocr ? " - OCR" : ""}
                     </span>
-                    <span className={`text-mono text-[10px] px-1.5 py-0.5 rounded-sm ${p.storage_type === "google_drive" ? "bg-ink text-white" : "bg-canvas3 text-muted2"}`} title={p.storage_type === "google_drive" ? `Drive · ${p.drive_file_id}` : `Locale · ${p.file_path}`}>
-                      {p.storage_type === "google_drive" ? "☁ DRIVE" : "▣ LOCALE"}
+                    <span className={`text-mono text-[10px] px-1.5 py-0.5 rounded-sm ${p.storage_type === "google_drive" ? "bg-ink text-white" : "bg-canvas3 text-muted2"}`} title={p.storage_type === "google_drive" ? `Drive - ${p.drive_file_id}` : `Locale - ${p.file_path}`}>
+                      {p.storage_type === "google_drive" ? "DRIVE" : "LOCALE"}
                     </span>
                     {(p.tags || []).map((t) => (
                       <span key={t} className="text-mono text-[10px] px-1.5 py-0.5 bg-canvas3 rounded-sm">{t}</span>

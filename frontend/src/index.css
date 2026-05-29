@@ -38,8 +38,16 @@
     font-family: "Satoshi", ui-sans-serif, system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    overscroll-behavior-y: none;
   }
   ::selection { background: #0A0A0A; color: #FFFFFF; }
+  .tracking-tight,
+  .tracking-tighter,
+  .tracking-wide,
+  .tracking-wider,
+  .tracking-widest {
+    letter-spacing: 0 !important;
+  }
 }
 
 @layer components {
@@ -47,7 +55,7 @@
   .overline {
     font-family: "JetBrains Mono", monospace;
     text-transform: uppercase;
-    letter-spacing: 0.2em;
+    letter-spacing: 0;
     font-size: 0.7rem;
     color: #0A0A0A;
   }
@@ -86,5 +94,10 @@
     background: transparent !important;
     color: inherit !important;
     box-shadow: none !important;
+  }
+  @supports (padding: max(0px)) {
+    .safe-bottom {
+      padding-bottom: max(1rem, env(safe-area-inset-bottom));
+    }
   }
 }
