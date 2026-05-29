@@ -54,7 +54,7 @@ export default function Settings() {
     catch (e) { toast.error(e.response?.data?.detail || "Errore"); }
   };
   const toggleBackup = async () => {
-    if (!user.backup_enabled && !bk?.drive_connected) { toast.error("Connetti Google Drive prima di attivare il backup"); return; }
+    if (!user.backup_enabled && !bk?.drive_connected) { toast.error("Connetti Google Drive o chiedi all'admin di collegare il Master Drive"); return; }
     try { const r = await api.post("/settings/backup", { enabled: !user.backup_enabled }); setUser(r.data); loadBackup(); toast.success(`Backup ${r.data.backup_enabled ? "attivato" : "disattivato"}`); }
     catch (e) { toast.error(e.response?.data?.detail || "Errore"); }
   };
@@ -131,7 +131,7 @@ export default function Settings() {
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="min-w-0">
               <p className="font-medium flex items-center gap-2">
-                {bk?.drive_connected ? <><CheckCircle2 size={16} className="text-emerald-600" /> Drive connesso</> : <><CloudOff size={16} className="text-muted2" /> Drive non connesso</>}
+                {bk?.drive_connected ? <><CheckCircle2 size={16} className="text-emerald-600" /> {bk?.master_drive_connected && !bk?.user_drive_connected ? "Master Drive connesso" : "Drive connesso"}</> : <><CloudOff size={16} className="text-muted2" /> Drive non connesso</>}
               </p>
               {bk?.drive_email && <p className="text-mono text-xs text-muted2 mt-1">{bk.drive_email}</p>}
             </div>

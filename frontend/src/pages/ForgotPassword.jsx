@@ -13,7 +13,11 @@ export default function ForgotPassword() {
     e.preventDefault();
     setBusy(true);
     try {
-      await api.post("/auth/forgot", { email });
+      const r = await api.post("/auth/forgot", { email });
+      if (r.data?.ok === false) {
+        toast.error(r.data?.message || "Non siamo riusciti a inviare l'email");
+        return;
+      }
       setSent(true);
       toast.success("Se l'email esiste, riceverai un link.");
     } catch (e) {

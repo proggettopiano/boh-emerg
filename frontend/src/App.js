@@ -58,7 +58,7 @@ function AppShell() {
         <Route path="/library" element={<ProtectedRoute><Library /></ProtectedRoute>} />
         <Route path="/libraries" element={<ProtectedRoute><SharedLibraries /></ProtectedRoute>} />
         <Route path="/libraries/:id" element={<ProtectedRoute><SharedLibraryDetail /></ProtectedRoute>} />
-        <Route path="/shared/:token" element={<ProtectedRoute requireProfile={false}><SharedView /></ProtectedRoute>} />
+        <Route path="/shared/:token" element={<SharedView />} />
         <Route path="/viewer/:id" element={<ProtectedRoute><PdfViewer /></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
         <Route path="/logs" element={<ProtectedRoute><AdminLogs /></ProtectedRoute>} />
