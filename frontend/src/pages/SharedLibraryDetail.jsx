@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Copy, FileText, Plus, Trash2, Search as SearchIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -12,42 +12,73 @@ export default function SharedLibraryDetail() {
   const [showAdd, setShowAdd] = useState(false);
   const [q, setQ] = useState("");
   const [searchResults, setSearchResults] = useState(null);
+  const mountedRef = useRef(false);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   const load = async () => {
-    try { const r = await api.get(`/libraries/${id}`); setLib(r.data); }
-    catch (e) { toast.error("Libreria non accessibile"); navigate("/libraries"); }
+    try {
+      const r = await api.get(`/libraries/${id}`);
+      if (mountedRef.current) setLib(r.data);
+    } catch (e) {
+      if (mountedRef.current) {
+        toast.error("Libreria non accessibile");
+        navigate("/libraries");
+      }
+    }
   };
+
   useEffect(() => { load(); }, [id]); // eslint-disable-line
 
-  const loadAll = async () => { const r = await api.get("/pdfs"); setAllPdfs(r.data.items); };
+  const loadAll = async () => {
+    const r = await api.get("/pdfs");
+    if (mountedRef.current) setAllPdfs(r.data.items);
+  };
   const openAdd = () => { loadAll(); setShowAdd(true); };
 
   const addPdfs = async (ids) => {
     await api.post(`/libraries/${id}/pdfs`, { pdf_ids: ids });
-    setShowAdd(false); load();
+    setShowAdd(false);
+    load();
   };
-  const removePdf = async (pdfId) => { await api.delete(`/libraries/${id}/pdfs/${pdfId}`); load(); };
+  const removePdf = async (pdfId) => {
+    await api.delete(`/libraries/${id}/pdfs/${pdfId}`);
+    load();
+  };
 
   const copyLink = () => {
     const url = `${window.location.origin}/shared/${lib.share_token}`;
-    navigator.clipboard.writeText(url); toast.success("Link copiato");
+    navigator.clipboard.writeText(url);
+    toast.success("Link copiato");
   };
 
   useEffect(() => {
-    if (!q.trim()) { setSearchResults(null); return; }
+    if (!q.trim()) { setSearchResults(null); return undefined; }
     const ctrl = new AbortController();
-    const t = setTimeout(async () => {
-      try { const r = await api.get("/search", { params: { q, library_id: id }, signal: ctrl.signal }); setSearchResults(r.data.results); }
-      catch (e) { if (e.name !== "CanceledError" && e.name !== "AbortError") setSearchResults([]); }
+    let alive = true;
+    const timer = setTimeout(async () => {
+      try {
+        const r = await api.get("/search", { params: { q, library_id: id }, signal: ctrl.signal });
+        if (alive && mountedRef.current) setSearchResults(r.data.results);
+      } catch (e) {
+        if (alive && mountedRef.current && e.name !== "CanceledError" && e.name !== "AbortError" && e.code !== "ERR_CANCELED") setSearchResults([]);
+      }
     }, 350);
-    return () => { clearTimeout(t); ctrl.abort(); };
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+      ctrl.abort();
+    };
   }, [q, id]);
 
-  if (!lib) return <div className="p-12 text-mono text-sm text-muted2">Caricamento…</div>;
+  if (!lib) return <div className="p-12 text-mono text-sm text-muted2">Caricamento...</div>;
 
   return (
     <div className="max-w-6xl mx-auto px-6 md:px-12 py-12" data-testid="shared-library-detail">
-      <button onClick={() => navigate("/libraries")} className="text-mono text-xs text-muted2 hover:text-ink mb-3">← TUTTE LE LIBRERIE</button>
+      <button onClick={() => navigate("/libraries")} className="text-mono text-xs text-muted2 hover:text-ink mb-3">TUTTE LE LIBRERIE</button>
       <div className="flex items-end justify-between flex-wrap gap-4 mb-8">
         <div>
           <p className="overline mb-2">LIBRERIA CONDIVISA</p>
@@ -63,7 +94,7 @@ export default function SharedLibraryDetail() {
       <div className="border-2 border-ink rounded-md mb-6" style={{ boxShadow: "0 4px 0 0 #0A0A0A" }}>
         <div className="flex items-center gap-3 px-4">
           <SearchIcon size={16} className="text-muted2" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cerca in questa libreria + nei tuoi PDF…" className="w-full py-3 outline-none bg-transparent" data-testid="library-search-input" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cerca in questa libreria + nei tuoi PDF..." className="w-full py-3 outline-none bg-transparent" data-testid="library-search-input" />
         </div>
       </div>
 
@@ -71,7 +102,7 @@ export default function SharedLibraryDetail() {
         <ul className="border-t border-rule mb-8" data-testid="library-search-results">
           {searchResults.length === 0 && <li className="py-6 text-center text-muted2 text-sm">Nessun risultato</li>}
           {searchResults.map((r) => (
-            <li key={r.pdf_id + ":" + r.page} className="py-3 border-b border-rule">
+            <li key={`${r.pdf_id}:${r.page}:${r.source}:${r.match_in}`} className="py-3 border-b border-rule">
               <button onClick={() => navigate(`/viewer/${r.pdf_id}?page=${r.page}&q=${encodeURIComponent(q)}`)} className="text-left w-full">
                 <div className="font-display font-medium hover:underline">{r.title} <span className="text-mono text-xs text-muted2">PAG {r.page}</span></div>
                 {r.snippet && <p className="text-sm text-[#525252] mt-1">{r.snippet}</p>}
@@ -89,7 +120,7 @@ export default function SharedLibraryDetail() {
               <FileText size={16} strokeWidth={1.5} />
               <div className="min-w-0">
                 <div className="font-medium hover:underline truncate">{p.title}</div>
-                <div className="text-mono text-xs text-muted2">{p.created_at?.slice(0, 10)} · {p.pages}pp</div>
+                <div className="text-mono text-xs text-muted2">{p.created_at?.slice(0, 10)} - {p.pages}pp</div>
               </div>
             </button>
             {lib.is_owner && <button onClick={() => removePdf(p.id)} className="btn-ghost opacity-0 group-hover:opacity-100"><Trash2 size={14} /></button>}
@@ -106,21 +137,21 @@ export default function SharedLibraryDetail() {
 
 function AddPdfsModal({ allPdfs, existing, onClose, onAdd }) {
   const [picked, setPicked] = useState([]);
-  const toggle = (id) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
-  const candidates = allPdfs.filter((p) => !existing.includes(p.id));
+  const toggle = (pdfId) => setPicked((current) => (current.includes(pdfId) ? current.filter((id) => id !== pdfId) : [...current, pdfId]));
+  const candidates = allPdfs.filter((pdf) => !existing.includes(pdf.id));
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose} data-testid="add-pdfs-modal">
       <div className="bg-white border border-rule rounded-md w-full max-w-xl p-6" onClick={(e) => e.stopPropagation()}>
         <h2 className="font-display text-2xl font-bold mb-4">Aggiungi PDF</h2>
         {candidates.length === 0 ? (
-          <p className="text-muted2 text-sm py-6">Tutti i tuoi PDF sono già in questa libreria.</p>
+          <p className="text-muted2 text-sm py-6">Tutti i tuoi PDF sono gia in questa libreria.</p>
         ) : (
           <ul className="max-h-80 overflow-y-auto border-t border-rule">
-            {candidates.map((p) => (
-              <li key={p.id} className="flex items-center gap-3 py-2 border-b border-rule">
-                <input type="checkbox" checked={picked.includes(p.id)} onChange={() => toggle(p.id)} data-testid={`add-pick-${p.id}`} />
-                <span className="flex-1 truncate text-sm">{p.title}</span>
-                <span className="text-mono text-xs text-muted2">{p.pages}pp</span>
+            {candidates.map((pdf) => (
+              <li key={pdf.id} className="flex items-center gap-3 py-2 border-b border-rule">
+                <input type="checkbox" checked={picked.includes(pdf.id)} onChange={() => toggle(pdf.id)} data-testid={`add-pick-${pdf.id}`} />
+                <span className="flex-1 truncate text-sm">{pdf.title}</span>
+                <span className="text-mono text-xs text-muted2">{pdf.pages}pp</span>
               </li>
             ))}
           </ul>

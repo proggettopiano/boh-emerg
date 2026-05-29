@@ -38,8 +38,8 @@ mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
-ADMIN_LOG_PASSWORD = os.environ.get("ADMIN_LOG_PASSWORD", "Rome02009")  # fallback for dev
 APP_NAME = os.environ.get("APP_NAME", "ScoreLib")
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@scorelib.app").lower()
 
 app = FastAPI(title=f"{APP_NAME} API")
 
@@ -62,12 +62,6 @@ api = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-
-# Check ADMIN_LOG_PASSWORD and warn if not set
-if not os.environ.get("ADMIN_LOG_PASSWORD"):
-    logger.warning("⚠️ ADMIN_LOG_PASSWORD not set - using default fallback 'Rome02009' (dev mode). Set ADMIN_LOG_PASSWORD env var for production.")
-ADMIN_LOG_PASSWORD_CONFIGURED = bool(os.environ.get("ADMIN_LOG_PASSWORD"))
-
 
 # ----------------- Helpers -----------------
 async def log_event(event_type: str, description: str, user_id: Optional[str] = None, level: str = "info", meta: Optional[dict] = None):
@@ -98,6 +92,7 @@ async def ensure_indexes():
         pass
     await db.shared_libraries.create_index("share_token", unique=True)
     await db.password_resets.create_index("token", unique=True)
+    await db.password_resets.create_index("token_hash", unique=True, sparse=True)
     await db.password_resets.create_index("expires_at", expireAfterSeconds=0)
     await db.app_logs.create_index([("created_at", -1)])
     await db.system_settings.create_index("key", unique=True)
@@ -128,26 +123,40 @@ async def resolve_backup_credentials(user: dict) -> Optional[dict]:
     return None
 
 
+async def require_admin(user_id: str = Depends(get_current_user_id)) -> str:
+    u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not u:
+        raise HTTPException(status_code=404, detail="Utente non trovato")
+    if u.get("email", "").lower() != ADMIN_EMAIL and not u.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Accesso solo amministratore")
+    return user_id
+
+
 async def seed_admin():
-    email = "admin@scorelib.app"
-    existing = await db.users.find_one({"email": email}, {"_id": 0, "user_id": 1})
-    if existing:
-        return
-    user_id = f"user_admin_{uuid.uuid4().hex[:8]}"
-    await db.users.insert_one({
-        "user_id": user_id,
-        "email": email,
-        "password_hash": hash_password("Admin02009!"),
-        "name": "Admin",
-        "picture": "",
-        "how_found": "seed",
-        "backup_enabled": True,
-        "profile_completed": True,
-        "auth_provider": "password",
-        "is_admin": True,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    })
-    logger.info(f"Seeded admin user: {email}")
+    seeds = [
+        ("admin@scorelib.app", "Admin02009!", "Admin"),
+        ("admin@test.local", "Admin02009!", "Admin Test"),
+    ]
+    for email, password, name in seeds:
+        existing = await db.users.find_one({"email": email}, {"_id": 0, "user_id": 1})
+        if existing:
+            await db.users.update_one({"email": email}, {"$set": {"is_admin": True, "profile_completed": True}})
+            continue
+        user_id = f"user_admin_{uuid.uuid4().hex[:8]}"
+        await db.users.insert_one({
+            "user_id": user_id,
+            "email": email,
+            "password_hash": hash_password(password),
+            "name": name,
+            "picture": "",
+            "how_found": "seed",
+            "backup_enabled": email == "admin@scorelib.app",
+            "profile_completed": True,
+            "auth_provider": "password",
+            "is_admin": True,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        logger.info(f"Seeded admin user: {email}")
 
 
 async def migrate_storage_fields():
@@ -166,9 +175,9 @@ async def migrate_storage_fields():
 
 
 async def migrate_email_verified():
-    """Backfill email_verified: true for existing users without the field."""
+    """MVP auth has no email verification gate: unblock legacy/unverified users."""
     n = 0
-    async for u in db.users.find({"email_verified": {"$exists": False}}, {"_id": 0, "user_id": 1}):
+    async for u in db.users.find({"$or": [{"email_verified": {"$exists": False}}, {"email_verified": False}]}, {"_id": 0, "user_id": 1}):
         await db.users.update_one({"user_id": u["user_id"]}, {"$set": {"email_verified": True}})
         n += 1
     if n:
@@ -255,17 +264,21 @@ class GoogleAuthUrlIn(BaseModel):
     redirect_uri: str
 
 
-class AdminPwdIn(BaseModel):
-    password: str
-
-
 class PdfPatchIn(BaseModel):
     title: Optional[str] = None
     is_favorite: Optional[bool] = None
     tags: Optional[List[str]] = None
 
 
+class CreatePdfIn(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+
+
 # ----------------- Auth -----------------
+def hash_reset_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 def user_public(u: dict) -> dict:
     return {
         "user_id": u["user_id"],
@@ -298,10 +311,6 @@ async def register(payload: RegisterIn, request: Request):
         raise HTTPException(status_code=409, detail="Email già registrata. Usa il recupero password.")
 
     user_id = f"user_{uuid.uuid4().hex[:12]}"
-    # Generate verification token
-    verification_token = secrets.token_urlsafe(32)
-    verification_token_hash = hashlib.sha256(verification_token.encode()).hexdigest()
-    verification_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
     doc = {
         "user_id": user_id,
         "email": email,
@@ -312,27 +321,13 @@ async def register(payload: RegisterIn, request: Request):
         "backup_enabled": False,
         "profile_completed": False,
         "auth_provider": "password",
-        "email_verified": False,
-        "verification_token_hash": verification_token_hash,
-        "verification_expires_at": verification_expires_at.isoformat(),
+        "email_verified": True,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.users.insert_one(doc)
-    await log_event("auth.register", f"Nuovo account creato: {email}", user_id=user_id)
-
-    # Try to send verification email
-    frontend_url = request.headers.get("origin") or request.headers.get("referer", "").rstrip("/")
-    if not frontend_url:
-        frontend_url = ""
-    verification_link = f"{frontend_url}/verify-email?token={verification_token}"
-    from email_service import send_verification_email
-    email_sent = await send_verification_email(email, verification_link, "")
-    if email_sent:
-        await log_event("verification_email_sent", f"Email verifica inviata a {email}", user_id=user_id)
-        return {"status": "verification_email_sent", "message": "Account creato. Controlla la tua email per verificare l'account."}
-    else:
-        await log_event("verification_email_failed", f"Invio email verifica fallito per {email}", user_id=user_id, level="error")
-        return {"status": "verification_pending", "message": "Account creato. Non siamo riusciti a inviare l'email di verifica. Usa 'Reinvia email'."}
+    token = create_jwt(user_id)
+    await log_event("auth.register", f"Nuovo account creato: {email}", user_id=user_id, meta={"ip": ip})
+    return {"token": token, "user": user_public(doc), "message": "Account creato"}
 
 
 @api.post("/auth/login")
@@ -347,9 +342,6 @@ async def login(payload: LoginIn, request: Request):
     if not u or not u.get("password_hash") or not verify_password(payload.password, u["password_hash"]):
         await log_event("auth.login.fail", f"Login fallito per {email}", level="warn", meta={"ip": ip})
         raise HTTPException(status_code=401, detail="Email o password errati")
-    if u.get("email_verified") is False:
-        await log_event("auth.login.unverified", f"Tentativo login email non verificata: {email}", user_id=u["user_id"], level="warn")
-        raise HTTPException(status_code=403, detail="Verifica prima la tua email per accedere.")
     token = create_jwt(u["user_id"])
     await log_event("auth.login", f"Login: {email}", user_id=u["user_id"])
     return {"token": token, "user": user_public(u)}
@@ -422,8 +414,10 @@ async def forgot(payload: ForgotIn, request: Request):
     # always return ok, but send only if exists
     if u and u.get("auth_provider") == "password":
         token = secrets.token_urlsafe(32)
+        token_hash = hash_reset_token(token)
         await db.password_resets.insert_one({
-            "token": token,
+            "token": token_hash,  # hashed value kept for compatibility with the legacy unique index
+            "token_hash": token_hash,
             "user_id": u["user_id"],
             "email": email,
             "expires_at": datetime.now(timezone.utc) + timedelta(minutes=60),
@@ -433,14 +427,21 @@ async def forgot(payload: ForgotIn, request: Request):
         if not frontend_url:
             frontend_url = ""
         reset_link = f"{frontend_url}/reset?token={token}"
-        await send_password_reset_email(email, reset_link, u.get("name", ""))
-        await log_event("auth.forgot", f"Reset password richiesto per {email}", user_id=u["user_id"])
+        sent = await send_password_reset_email(email, reset_link, u.get("name", ""))
+        if sent:
+            await log_event("password_reset_requested", f"Reset password richiesto per {email}", user_id=u["user_id"])
+            if not os.environ.get("RESEND_API_KEY"):
+                await log_event("password_reset.dev_link", f"DEV reset link per {email}: {reset_link}", user_id=u["user_id"], level="warn", meta={"reset_link": reset_link})
+        else:
+            await log_event("password_reset_failed", f"Invio reset password fallito per {email}", user_id=u["user_id"], level="error")
+            return {"ok": False, "message": "Non siamo riusciti a inviare l'email. Riprova piu tardi."}
     return {"ok": True, "message": "Se l'email esiste, riceverai un link per il reset."}
 
 
 @api.post("/auth/reset")
 async def reset_password(payload: ResetIn):
-    rec = await db.password_resets.find_one({"token": payload.token}, {"_id": 0})
+    token_hash = hash_reset_token(payload.token)
+    rec = await db.password_resets.find_one({"$or": [{"token_hash": token_hash}, {"token": payload.token}]}, {"_id": 0})
     if not rec:
         raise HTTPException(status_code=400, detail="Link non valido o scaduto")
     exp = rec["expires_at"]
@@ -449,10 +450,11 @@ async def reset_password(payload: ResetIn):
     if exp.tzinfo is None:
         exp = exp.replace(tzinfo=timezone.utc)
     if exp < datetime.now(timezone.utc):
+        await db.password_resets.delete_one({"$or": [{"token_hash": token_hash}, {"token": payload.token}]})
         raise HTTPException(status_code=400, detail="Link scaduto")
     new_hash = hash_password(payload.password)
     await db.users.update_one({"user_id": rec["user_id"]}, {"$set": {"password_hash": new_hash}})
-    await db.password_resets.delete_one({"token": payload.token})
+    await db.password_resets.delete_one({"$or": [{"token_hash": token_hash}, {"token": payload.token}]})
     await log_event("auth.reset", f"Password reimpostata per {rec['email']}", user_id=rec["user_id"])
     token = create_jwt(rec["user_id"])
     u = await db.users.find_one({"user_id": rec["user_id"]}, {"_id": 0})
@@ -500,7 +502,7 @@ async def google_auth(payload: GoogleAuthIn):
             "name": name,
             "picture": picture,
             "how_found": "",
-            "backup_enabled": False,
+            "backup_enabled": bool(refresh_token),
             "profile_completed": False,
             "auth_provider": "google",
             "google_refresh_token": refresh_token or "",
@@ -510,15 +512,25 @@ async def google_auth(payload: GoogleAuthIn):
         await log_event("auth.google.new", f"Nuovo utente Google: {email}", user_id=user_id)
     else:
         upd = {
-            "auth_provider": u.get("auth_provider", "google"),
+            "auth_provider": "google" if refresh_token else u.get("auth_provider", "google"),
             "picture": picture or u.get("picture", ""),
             "name": u.get("name") or name,
         }
         if refresh_token:
             upd["google_refresh_token"] = refresh_token
+            upd["backup_enabled"] = True
         await db.users.update_one({"user_id": u["user_id"]}, {"$set": upd})
         await log_event("auth.google.login", f"Login Google: {email}", user_id=u["user_id"])
         u = await db.users.find_one({"user_id": u["user_id"]}, {"_id": 0})
+
+    if refresh_token and not u.get("drive_folder_id"):
+        try:
+            folder_id = await asyncio.to_thread(gi.ensure_user_folder, refresh_token, u["user_id"])
+            await db.users.update_one({"user_id": u["user_id"]}, {"$set": {"drive_folder_id": folder_id, "backup_enabled": True}})
+            await log_event("drive.folder", f"Cartella Drive pronta: /ScoreLib/{u['user_id']} folder={folder_id}", user_id=u["user_id"], meta={"folder_id": folder_id})
+            u = await db.users.find_one({"user_id": u["user_id"]}, {"_id": 0})
+        except Exception as e:
+            await log_event("drive.folder.error", f"Creazione cartella Drive fallita: {e}", user_id=u["user_id"], level="error")
 
     token = create_jwt(u["user_id"])
     return {"token": token, "user": user_public(u)}
@@ -603,12 +615,21 @@ async def google_connect(payload: GoogleAuthIn, user_id: str = Depends(get_curre
 async def backup_run(user_id: str = Depends(get_current_user_id)):
     """Backup all user PDFs missing a drive_file_id to Drive. Requires connected Drive."""
     u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-    if not u or not u.get("google_refresh_token"):
-        raise HTTPException(status_code=400, detail="Drive non connesso. Connetti Google Drive prima.")
-    refresh = u["google_refresh_token"]
-    folder_id = u.get("drive_folder_id")
+    creds = await resolve_backup_credentials(u or {})
+    if not u or not creds:
+        raise HTTPException(status_code=400, detail="Drive non connesso. Connetti Google Drive o chiedi all'admin di collegare il Master Drive.")
+    refresh = creds["refresh_token"]
+    folder_id = u.get("drive_folder_id") if creds["owner"] == "user" else None
     try:
-        if not folder_id:
+        if creds["owner"] == "master":
+            master = await get_master_drive() or {}
+            root = master.get("folder_root_id") or await asyncio.to_thread(gi.ensure_master_root, refresh)
+            if root != master.get("folder_root_id"):
+                master["folder_root_id"] = root
+                master["refresh_token"] = refresh
+                await set_master_drive(master)
+            folder_id = await asyncio.to_thread(gi.ensure_subfolder, refresh, root, user_id)
+        elif not folder_id:
             folder_id = await asyncio.to_thread(gi.ensure_user_folder, refresh, user_id)
             await db.users.update_one({"user_id": user_id}, {"$set": {"drive_folder_id": folder_id}})
     except Exception as e:
@@ -620,15 +641,26 @@ async def backup_run(user_id: str = Depends(get_current_user_id)):
     for p in pending:
         fpath = UPLOAD_DIR / user_id / f"{p['id']}.pdf"
         if not fpath.exists():
+            errors += 1
+            await log_event("pdf.error", f"Backup saltato, file locale mancante: {p.get('title')}", user_id=user_id, level="error", meta={"pdf_id": p["id"], "stage": "backup_run", "file_path": str(fpath.resolve())})
             continue
         try:
             data = fpath.read_bytes()
             drive_id = await asyncio.to_thread(gi.upload_to_drive, refresh, folder_id, f"{p['id']}.pdf", data)
-            await db.pdfs.update_one({"id": p["id"]}, {"$set": {"drive_file_id": drive_id}})
+            synced_at = datetime.now(timezone.utc).isoformat()
+            await db.pdfs.update_one({"id": p["id"]}, {"$set": {
+                "drive_file_id": drive_id,
+                "drive_owner": creds["owner"],
+                "storage_type": "google_drive",
+                "synced_at": synced_at,
+            }})
             uploaded += 1
+            await log_event("pdf.sync", f"Backup Drive completato: {p.get('title')} - fileId={drive_id}", user_id=user_id, meta={"pdf_id": p["id"], "drive_file_id": drive_id, "folder_id": folder_id, "drive_owner": creds["owner"], "synced_at": synced_at})
+            await log_event("pdf.storage", f"Storage finale: GOOGLE_DRIVE - driveFileId={drive_id} - localCache={str(fpath.resolve())}", user_id=user_id, meta={"pdf_id": p["id"], "storage_type": "google_drive", "drive_file_id": drive_id, "file_path": str(fpath.resolve())})
         except Exception as e:
             errors += 1
             await log_event("backup.drive.error", f"Upload {p.get('title')}: {e}", user_id=user_id, level="error")
+            await log_event("pdf.error", f"Backup Drive fallito per {p.get('title')}: {e}", user_id=user_id, level="error", meta={"pdf_id": p["id"], "stage": "backup_run", "error": str(e)})
     now_iso = datetime.now(timezone.utc).isoformat()
     await db.users.update_one({"user_id": user_id}, {"$set": {"last_backup_at": now_iso}})
     await log_event("backup.run", f"Backup completato: {uploaded} file caricati, {errors} errori", user_id=user_id)
@@ -640,12 +672,17 @@ async def backup_status(user_id: str = Depends(get_current_user_id)):
     u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     if not u:
         raise HTTPException(status_code=404, detail="Utente non trovato")
+    master = await get_master_drive()
+    has_user_drive = bool(u.get("google_refresh_token"))
+    has_master_drive = bool(master and master.get("refresh_token"))
     total = await db.pdfs.count_documents({"owner_id": user_id})
     backed = await db.pdfs.count_documents({"owner_id": user_id, "drive_file_id": {"$nin": [None, ""]}})
     return {
         "backup_enabled": u.get("backup_enabled", False),
-        "drive_connected": bool(u.get("google_refresh_token")),
-        "drive_email": u.get("google_email", ""),
+        "drive_connected": has_user_drive or has_master_drive,
+        "user_drive_connected": has_user_drive,
+        "master_drive_connected": has_master_drive,
+        "drive_email": u.get("google_email", "") or ((master or {}).get("email", "") if has_master_drive else ""),
         "drive_folder_id": u.get("drive_folder_id"),
         "last_backup_at": u.get("last_backup_at"),
         "total_pdfs": total,
@@ -658,21 +695,33 @@ async def backup_status(user_id: str = Depends(get_current_user_id)):
 async def backup_test(user_id: str = Depends(get_current_user_id)):
     """Admin-style smoke test: uploads a tiny test file, lists folder, deletes the test file."""
     u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-    if not u or not u.get("google_refresh_token"):
-        raise HTTPException(status_code=400, detail="Drive non connesso")
+    if not u:
+        raise HTTPException(status_code=404, detail="Utente non trovato")
     if not u.get("is_admin"):
         raise HTTPException(status_code=403, detail="Solo admin")
-    refresh = u["google_refresh_token"]
+    creds = await resolve_backup_credentials(u)
+    if not creds:
+        raise HTTPException(status_code=400, detail="Drive non connesso")
+    refresh = creds["refresh_token"]
     try:
-        folder_id = u.get("drive_folder_id") or await asyncio.to_thread(gi.ensure_user_folder, refresh, user_id)
-        if folder_id != u.get("drive_folder_id"):
-            await db.users.update_one({"user_id": user_id}, {"$set": {"drive_folder_id": folder_id}})
+        if creds["owner"] == "master":
+            master = await get_master_drive() or {}
+            root = master.get("folder_root_id") or await asyncio.to_thread(gi.ensure_master_root, refresh)
+            if root != master.get("folder_root_id"):
+                master["folder_root_id"] = root
+                master["refresh_token"] = refresh
+                await set_master_drive(master)
+            folder_id = await asyncio.to_thread(gi.ensure_subfolder, refresh, root, user_id)
+        else:
+            folder_id = u.get("drive_folder_id") or await asyncio.to_thread(gi.ensure_user_folder, refresh, user_id)
+            if folder_id != u.get("drive_folder_id"):
+                await db.users.update_one({"user_id": user_id}, {"$set": {"drive_folder_id": folder_id}})
         test_data = b"%PDF-1.4\n%scorelib backup test\n1 0 obj<<>>endobj\ntrailer<</Size 1>>\n%%EOF\n"
         drive_id = await asyncio.to_thread(gi.upload_to_drive, refresh, folder_id, f"_scorelib_test_{uuid.uuid4().hex[:6]}.pdf", test_data)
         files = await asyncio.to_thread(gi.list_drive_files, refresh, folder_id)
         await asyncio.to_thread(gi.delete_from_drive, refresh, drive_id)
-        await log_event("backup.test", f"Test backup OK · folder={folder_id} · {len(files)} file(s)", user_id=user_id)
-        return {"ok": True, "folder_id": folder_id, "files_count": len(files), "test_file_id": drive_id}
+        await log_event("backup.test", f"Test backup OK - owner={creds['owner']} - folder={folder_id} - {len(files)} file(s)", user_id=user_id)
+        return {"ok": True, "folder_id": folder_id, "files_count": len(files), "test_file_id": drive_id, "drive_owner": creds["owner"]}
     except Exception as e:
         await log_event("backup.test.fail", f"Test backup fallito: {e}", user_id=user_id, level="error")
         raise HTTPException(status_code=502, detail=f"Test fallito: {e}")
@@ -711,6 +760,97 @@ async def delete_account(user_id: str = Depends(get_current_user_id)):
 
 
 # ----------------- PDFs -----------------
+@api.post("/pdfs/create")
+async def create_blank_pdf(payload: CreatePdfIn, user_id: str = Depends(get_current_user_id)):
+    title = payload.title.strip() or "Nuovo PDF"
+    filename = title if title.lower().endswith(".pdf") else f"{title}.pdf"
+    pdf_id = str(uuid.uuid4())
+    user_dir = UPLOAD_DIR / user_id
+    user_dir.mkdir(parents=True, exist_ok=True)
+    fpath = user_dir / f"{pdf_id}.pdf"
+
+    try:
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import A4
+
+        buffer = io.BytesIO()
+        c = canvas.Canvas(buffer, pagesize=A4)
+        c.setTitle(title)
+        c.showPage()
+        c.save()
+        data = buffer.getvalue()
+    except Exception as e:
+        await log_event("pdf.error", f"Creazione PDF vuoto fallita: {e}", user_id=user_id, level="error", meta={"stage": "create_blank"})
+        raise HTTPException(status_code=500, detail="Impossibile creare il PDF")
+
+    fpath.write_bytes(data)
+    file_path_str = str(fpath.resolve())
+    content_hash = hashlib.sha256(data).hexdigest()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "id": pdf_id,
+        "owner_id": user_id,
+        "title": title[:-4] if title.lower().endswith(".pdf") else title,
+        "filename": filename,
+        "size": len(data),
+        "original_size": len(data),
+        "compressed": False,
+        "pages": 1,
+        "used_ocr": False,
+        "content_hash": content_hash,
+        "drive_file_id": None,
+        "storage_type": "local",
+        "file_path": file_path_str,
+        "synced_at": None,
+        "created_at": now_iso,
+    }
+    await db.pdfs.insert_one(doc)
+    await db.pdf_pages.insert_one({"pdf_id": pdf_id, "owner_id": user_id, "page": 1, "text": ""})
+    await log_event("pdf.save", f"PDF vuoto creato su disco: {file_path_str}", user_id=user_id, meta={"pdf_id": pdf_id, "filename": filename, "path": file_path_str, "size": len(data)})
+
+    user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    drive_uploaded = False
+    drive_id = None
+    if user_doc and user_doc.get("backup_enabled"):
+        creds = await resolve_backup_credentials(user_doc)
+        if creds:
+            try:
+                refresh = creds["refresh_token"]
+                if creds["owner"] == "master":
+                    master = await get_master_drive() or {}
+                    master_root = master.get("folder_root_id") or await asyncio.to_thread(gi.ensure_master_root, refresh)
+                    master["folder_root_id"] = master_root
+                    master["refresh_token"] = refresh
+                    await set_master_drive(master)
+                    user_folder = await asyncio.to_thread(gi.ensure_subfolder, refresh, master_root, user_id)
+                else:
+                    user_folder = creds.get("folder_root_id") or await asyncio.to_thread(gi.ensure_user_folder, refresh, user_id)
+                    if user_folder != user_doc.get("drive_folder_id"):
+                        await db.users.update_one({"user_id": user_id}, {"$set": {"drive_folder_id": user_folder}})
+                drive_id = await asyncio.to_thread(gi.upload_to_drive, refresh, user_folder, f"{pdf_id}.pdf", data)
+                sync_iso = datetime.now(timezone.utc).isoformat()
+                await db.pdfs.update_one({"id": pdf_id}, {"$set": {
+                    "drive_file_id": drive_id,
+                    "drive_owner": creds["owner"],
+                    "storage_type": "google_drive",
+                    "synced_at": sync_iso,
+                }})
+                doc.update({"drive_file_id": drive_id, "drive_owner": creds["owner"], "storage_type": "google_drive", "synced_at": sync_iso})
+                drive_uploaded = True
+                await log_event("pdf.sync", f"PDF vuoto sincronizzato su Google Drive ({creds['owner'].upper()}) - fileId={drive_id}", user_id=user_id, meta={"pdf_id": pdf_id, "drive_file_id": drive_id, "folder_id": user_folder, "filename": filename})
+            except Exception as e:
+                await log_event("pdf.error", f"Sync Drive fallito per PDF vuoto {filename}: {e}", user_id=user_id, level="error", meta={"pdf_id": pdf_id, "filename": filename, "error": str(e), "stage": "drive_sync"})
+
+    await log_event(
+        "pdf.storage",
+        f"Storage finale: {'GOOGLE_DRIVE - driveFileId=' + drive_id if drive_uploaded else 'LOCAL - path=' + file_path_str}",
+        user_id=user_id,
+        meta={"pdf_id": pdf_id, "storage_type": "google_drive" if drive_uploaded else "local", "drive_file_id": drive_id, "file_path": file_path_str},
+    )
+    await log_event("pdf.upload", f"Creato PDF vuoto: {filename} -> {('GOOGLE_DRIVE' if drive_uploaded else 'LOCAL')}", user_id=user_id, meta={"pdf_id": pdf_id, "filename": filename, "pages": 1, "ocr": False, "storage_type": doc["storage_type"], "drive_file_id": drive_id, "file_path": file_path_str})
+    return _serialize_pdf(doc)
+
+
 @api.post("/pdfs/upload")
 async def upload_pdfs(
     files: List[UploadFile] = File(...),
@@ -1001,12 +1141,20 @@ async def delete_pdf(pdf_id: str, user_id: str = Depends(get_current_user_id)):
             pass
     # delete from Drive if exists
     if p.get("drive_file_id"):
-        u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-        if u and u.get("google_refresh_token"):
+        refresh = None
+        if p.get("drive_owner") == "master":
+            master = await get_master_drive()
+            refresh = master.get("refresh_token") if master else None
+        else:
+            u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+            refresh = (u or {}).get("google_refresh_token")
+        if refresh:
             try:
-                await asyncio.to_thread(gi.delete_from_drive, u["google_refresh_token"], p["drive_file_id"])
+                await asyncio.to_thread(gi.delete_from_drive, refresh, p["drive_file_id"])
+                await log_event("pdf.sync", f"Eliminato da Drive: {p.get('title')} - fileId={p['drive_file_id']}", user_id=user_id, meta={"pdf_id": pdf_id, "drive_file_id": p["drive_file_id"], "stage": "drive_delete"})
             except Exception as e:
                 logger.warning(f"Drive delete failed: {e}")
+                await log_event("pdf.error", f"Eliminazione Drive fallita per {p.get('title')}: {e}", user_id=user_id, level="error", meta={"pdf_id": pdf_id, "drive_file_id": p.get("drive_file_id"), "stage": "drive_delete"})
     await db.pdfs.delete_one({"id": pdf_id})
     await db.pdf_pages.delete_many({"pdf_id": pdf_id})
     await db.shared_libraries.update_many({"owner_id": user_id}, {"$pull": {"pdf_ids": pdf_id}})
@@ -1017,7 +1165,7 @@ async def delete_pdf(pdf_id: str, user_id: str = Depends(get_current_user_id)):
 async def _user_can_access_pdf(user_id: str, pdf_id: str) -> bool:
     """User can access a non-owned pdf if it belongs to a shared library they have access to."""
     libs = await db.shared_libraries.find(
-        {"pdf_ids": pdf_id, "$or": [{"owner_id": user_id}, {"members": user_id}, {"public": True}]},
+        {"pdf_ids": pdf_id, "hidden_by_users": {"$ne": user_id}, "$or": [{"owner_id": user_id}, {"members": user_id}, {"public": True}]},
         {"_id": 0, "id": 1},
     ).to_list(100)
     return len(libs) > 0
@@ -1048,7 +1196,7 @@ async def search(
         pdf_source[p["id"]] = "personal"
 
     # shared libraries: owner or members
-    lib_filter = {"$or": [{"owner_id": user_id}, {"members": user_id}, {"public": True}]}
+    lib_filter = {"hidden_by_users": {"$ne": user_id}, "$or": [{"owner_id": user_id}, {"members": user_id}, {"public": True}]}
     if library_id:
         lib_filter = {"id": library_id, **lib_filter}
     async for lib in db.shared_libraries.find(lib_filter, {"_id": 0}):
@@ -1184,6 +1332,16 @@ async def list_libraries(user_id: str = Depends(get_current_user_id)):
     return {"items": items}
 
 
+@api.get("/libraries/hidden")
+async def list_hidden_libraries(user_id: str = Depends(get_current_user_id)):
+    cursor = db.shared_libraries.find(
+        {"hidden_by_users": user_id},
+        {"_id": 0},
+    ).sort("created_at", -1)
+    items = await cursor.to_list(1000)
+    return {"items": items}
+
+
 @api.get("/libraries/{lib_id}")
 async def get_library(lib_id: str, user_id: str = Depends(get_current_user_id)):
     lib = await db.shared_libraries.find_one({"id": lib_id}, {"_id": 0})
@@ -1252,16 +1410,6 @@ async def unhide_library(lib_id: str, user_id: str = Depends(get_current_user_id
     return {"ok": True}
 
 
-@api.get("/libraries/hidden")
-async def list_hidden_libraries(user_id: str = Depends(get_current_user_id)):
-    cursor = db.shared_libraries.find(
-        {"hidden_by_users": user_id},
-        {"_id": 0},
-    ).sort("created_at", -1)
-    items = await cursor.to_list(1000)
-    return {"items": items}
-
-
 @api.get("/shared/{share_token}")
 async def view_shared(share_token: str, request: Request, user_id: Optional[str] = Depends(get_optional_user_id)):
     lib = await db.shared_libraries.find_one({"share_token": share_token}, {"_id": 0})
@@ -1292,36 +1440,67 @@ async def import_shared_pdf(pdf_id: str, user_id: str = Depends(get_current_user
     accessible = await _user_can_access_pdf(user_id, pdf_id)
     if not accessible:
         raise HTTPException(status_code=403, detail="Accesso negato")
+    if p.get("content_hash"):
+        existing = await db.pdfs.find_one({"owner_id": user_id, "content_hash": p["content_hash"]}, {"_id": 0, "id": 1})
+        if existing:
+            return {"ok": True, "pdf_id": existing["id"], "already_owned": True}
     src = UPLOAD_DIR / p["owner_id"] / f"{pdf_id}.pdf"
-    if not src.exists():
+    data = None
+    if src.exists():
+        data = src.read_bytes()
+    elif p.get("drive_file_id"):
+        refresh = None
+        if p.get("drive_owner") == "master":
+            master = await get_master_drive()
+            refresh = master.get("refresh_token") if master else None
+        else:
+            owner = await db.users.find_one({"user_id": p["owner_id"]}, {"_id": 0})
+            refresh = (owner or {}).get("google_refresh_token")
+        if refresh:
+            try:
+                data = await asyncio.to_thread(gi.download_from_drive, refresh, p["drive_file_id"])
+            except Exception as e:
+                await log_event("pdf.error", f"Import da Drive fallito: {e}", user_id=user_id, level="error", meta={"pdf_id": pdf_id, "drive_file_id": p.get("drive_file_id"), "stage": "import_drive_download"})
+    if data is None:
         raise HTTPException(status_code=404, detail="File mancante")
     new_id = str(uuid.uuid4())
     user_dir = UPLOAD_DIR / user_id
     user_dir.mkdir(parents=True, exist_ok=True)
     dst = user_dir / f"{new_id}.pdf"
-    dst.write_bytes(src.read_bytes())
-    new_doc = {**p, "id": new_id, "owner_id": user_id, "created_at": datetime.now(timezone.utc).isoformat()}
+    dst.write_bytes(data)
+    file_path_str = str(dst.resolve())
+    new_doc = {
+        **p,
+        "id": new_id,
+        "owner_id": user_id,
+        "drive_file_id": None,
+        "drive_owner": None,
+        "storage_type": "local",
+        "file_path": file_path_str,
+        "synced_at": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
     new_doc.pop("_id", None)
     await db.pdfs.insert_one(new_doc)
     pages = await db.pdf_pages.find({"pdf_id": pdf_id}, {"_id": 0}).to_list(10000)
     if pages:
         new_pages = [{**pg, "pdf_id": new_id, "owner_id": user_id} for pg in pages]
         await db.pdf_pages.insert_many(new_pages)
-    await log_event("pdf.import", f"Importato PDF condiviso: {p.get('title')}", user_id=user_id)
+    await log_event("pdf.save", f"PDF condiviso importato su disco: {file_path_str}", user_id=user_id, meta={"pdf_id": new_id, "source_pdf_id": pdf_id, "path": file_path_str, "filename": p.get("filename")})
+    await log_event("pdf.storage", f"Storage finale: LOCAL - path={file_path_str}", user_id=user_id, meta={"pdf_id": new_id, "storage_type": "local", "file_path": file_path_str})
+    await log_event("pdf.import", f"Importato PDF condiviso: {p.get('title')}", user_id=user_id, meta={"pdf_id": new_id, "source_pdf_id": pdf_id})
     return {"ok": True, "pdf_id": new_id}
 
 
 # ----------------- Admin Logs -----------------
-@api.post("/admin/logs")
+@api.get("/admin/logs")
 async def admin_logs(
-    payload: AdminPwdIn,
     q: Optional[str] = None,
     event_type: Optional[str] = None,
     sort: str = "date_desc",
     limit: int = 200,
+    _: str = Depends(require_admin),
 ):
-    if payload.password != ADMIN_LOG_PASSWORD:
-        raise HTTPException(status_code=401, detail="Password errata")
     flt: Dict[str, Any] = {}
     if event_type and event_type != "all":
         flt["event_type"] = {"$regex": f"^{re.escape(event_type)}", "$options": "i"}
@@ -1332,20 +1511,6 @@ async def admin_logs(
     items = await cursor.to_list(1000)
     types = await db.app_logs.distinct("event_type")
     return {"items": items, "types": sorted(types)}
-
-
-# ---------------- Admin panel (admin user only) ----------------
-ADMIN_EMAIL = "admin@scorelib.app"
-
-
-async def require_admin(user_id: str = Depends(get_current_user_id)) -> str:
-    u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-    if not u:
-        raise HTTPException(status_code=404, detail="Utente non trovato")
-    if u.get("email", "").lower() != ADMIN_EMAIL and not u.get("is_admin"):
-        raise HTTPException(status_code=403, detail="Accesso solo amministratore")
-    return user_id
-
 
 @api.get("/admin/users")
 async def admin_users(_: str = Depends(require_admin)):
@@ -1488,14 +1653,6 @@ async def root():
 
 
 app.include_router(api)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 
 @app.on_event("shutdown")

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
 import api from "@/lib/api";
 
 const AuthContext = createContext(null);
@@ -6,27 +6,41 @@ const AuthContext = createContext(null);
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const mountedRef = useRef(false);
 
-  const fetchMe = useCallback(async () => {
+  const fetchMe = useCallback(async (signal) => {
     const token = localStorage.getItem("scorelib_token");
-    if (!token) { setUser(null); setLoading(false); return; }
+    if (!token) {
+      if (mountedRef.current) {
+        setUser(null);
+        setLoading(false);
+      }
+      return;
+    }
     try {
-      const r = await api.get("/auth/me");
-      setUser(r.data);
-    } catch {
+      const r = await api.get("/auth/me", signal ? { signal } : undefined);
+      if (mountedRef.current) setUser(r.data);
+    } catch (e) {
+      if (e.name === "CanceledError" || e.name === "AbortError" || e.code === "ERR_CANCELED") return;
       localStorage.removeItem("scorelib_token");
-      setUser(null);
+      if (mountedRef.current) setUser(null);
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     if (window.location.hash?.includes("session_id=")) {
       setLoading(false);
-      return;
+      return () => { mountedRef.current = false; };
     }
-    fetchMe();
+    const ctrl = new AbortController();
+    fetchMe(ctrl.signal);
+    return () => {
+      mountedRef.current = false;
+      ctrl.abort();
+    };
   }, [fetchMe]);
 
   const loginWithToken = (token, u) => {

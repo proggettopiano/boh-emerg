@@ -7,8 +7,15 @@ import resend
 logger = logging.getLogger(__name__)
 
 resend.api_key = os.environ.get("RESEND_API_KEY", "")
-SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
+SENDER_EMAIL = os.environ.get("FROM_EMAIL") or os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
 APP_NAME = os.environ.get("APP_NAME", "Scorelib")
+
+
+def _send_resend_email(params: dict):
+    """Call the current Resend client shape, with legacy SDK compatibility."""
+    if hasattr(resend, "emails") and hasattr(resend.emails, "send"):
+        return resend.emails.send(params)
+    return resend.Emails.send(params)
 
 
 async def send_password_reset_email(to_email: str, reset_link: str, user_name: str = "") -> bool:
@@ -43,7 +50,7 @@ async def send_password_reset_email(to_email: str, reset_link: str, user_name: s
             "subject": f"Reimposta la tua password {APP_NAME}",
             "html": html,
         }
-        result = await asyncio.to_thread(resend.Emails.send, params)
+        result = await asyncio.to_thread(_send_resend_email, params)
         logger.info(f"Password reset email sent to {to_email}: {result.get('id') if isinstance(result, dict) else result}")
         return True
     except Exception as e:
@@ -83,7 +90,7 @@ async def send_verification_email(to_email: str, verification_link: str, user_na
             "subject": f"Verifica il tuo account {APP_NAME}",
             "html": html,
         }
-        result = await asyncio.to_thread(resend.Emails.send, params)
+        result = await asyncio.to_thread(_send_resend_email, params)
         logger.info(f"Verification email sent to {to_email}: {result.get('id') if isinstance(result, dict) else result}")
         return True
     except Exception as e:

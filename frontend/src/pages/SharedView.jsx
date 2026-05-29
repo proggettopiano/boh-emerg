@@ -13,11 +13,28 @@ export default function SharedView() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    if (loading) return;
-    if (!user) { navigate(`/login?next=${encodeURIComponent(`/shared/${token}`)}`); return; }
-    api.get(`/shared/${token}`).then((r) => setLib(r.data)).catch((e) => {
+    if (loading) return undefined;
+    if (!user) {
+      navigate("/login", { replace: true, state: { from: `/shared/${token}` } });
+      return undefined;
+    }
+
+    const ctrl = new AbortController();
+    let alive = true;
+    setLib(null);
+    setError(null);
+
+    api.get(`/shared/${token}`, { signal: ctrl.signal }).then((r) => {
+      if (alive) setLib(r.data);
+    }).catch((e) => {
+      if (!alive || e.name === "CanceledError" || e.name === "AbortError" || e.code === "ERR_CANCELED") return;
       setError(e.response?.data?.detail || "Errore");
     });
+
+    return () => {
+      alive = false;
+      ctrl.abort();
+    };
   }, [token, user, loading, navigate]);
 
   const importPdf = async (pdfId) => {
