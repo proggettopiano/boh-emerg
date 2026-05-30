@@ -9,12 +9,37 @@ import api, { API } from "@/lib/api";
 
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
+const PAGE_GAP = 24;
+const PAGE_FOOTER_H = 28;
+const PAGE_ASPECT = 297 / 210;
+const PAGE_BUFFER = 4;
+
+const estimatePageHeight = (width, scale) =>
+  Math.round(width * scale * PAGE_ASPECT + PAGE_FOOTER_H + PAGE_GAP);
+
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function isCanceled(error) {
   return error?.name === "CanceledError" || error?.name === "AbortError" || error?.code === "ERR_CANCELED";
+}
+
+function pageRangeAround(page, numPages, buffer = PAGE_BUFFER) {
+  const p = Math.max(1, Math.min(page, numPages));
+  return {
+    start: Math.max(1, p - buffer),
+    end: Math.min(numPages, p + buffer),
+  };
+}
+
+function rangeFromScroll(scrollY, viewportHeight, slotHeight, numPages) {
+  const top = scrollY + 120;
+  const bottom = top + viewportHeight;
+  return {
+    start: Math.max(1, Math.floor(top / slotHeight) - PAGE_BUFFER),
+    end: Math.min(numPages, Math.ceil(bottom / slotHeight) + PAGE_BUFFER),
+  };
 }
 
 export default function PdfViewer() {
@@ -35,15 +60,16 @@ export default function PdfViewer() {
   const [highlightsHidden, setHighlightsHidden] = useState(false);
   const [matches, setMatches] = useState([]);
   const [matchIndex, setMatchIndex] = useState(0);
-  const [renderedPages, setRenderedPages] = useState(0);
+  const [pageHeight, setPageHeight] = useState(null);
+  const [visibleRange, setVisibleRange] = useState({ start: 1, end: 12 });
 
   const containerRef = useRef(null);
   const pageRefs = useRef({});
   const mountedRef = useRef(false);
   const collectTimerRef = useRef(null);
   const scrollTimerRef = useRef(null);
-  const initialPageTimerRef = useRef(null);
-  const renderedPageSetRef = useRef(new Set());
+  const visibleRangeRef = useRef({ start: 1, end: 12 });
+  const initialScrollDoneRef = useRef(false);
   const renderGenerationRef = useRef(0);
   const [renderGeneration, setRenderGeneration] = useState(0);
 
@@ -51,32 +77,50 @@ export default function PdfViewer() {
   const fileUrl = `${API}/pdfs/${id}/file?token=${encodeURIComponent(token || "")}`;
   const fileObj = useMemo(() => ({ url: fileUrl }), [fileUrl]);
 
+  const slotHeight = pageHeight || estimatePageHeight(containerWidth, scale);
+  const totalHeight = numPages > 0 ? numPages * slotHeight : 0;
+  const mountedPageCount = numPages > 0 ? visibleRange.end - visibleRange.start + 1 : 0;
+
+  const applyVisibleRange = useCallback((start, end) => {
+    if (visibleRangeRef.current.start === start && visibleRangeRef.current.end === end) return;
+    visibleRangeRef.current = { start, end };
+    setVisibleRange({ start, end });
+  }, []);
+
+  const setRangeAround = useCallback(
+    (page, buffer = PAGE_BUFFER + 2) => {
+      if (numPages <= 0) return;
+      const { start, end } = pageRangeAround(page, numPages, buffer);
+      applyVisibleRange(start, end);
+    },
+    [numPages, applyVisibleRange],
+  );
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       clearTimeout(collectTimerRef.current);
       clearTimeout(scrollTimerRef.current);
-      clearTimeout(initialPageTimerRef.current);
       pageRefs.current = {};
-      renderedPageSetRef.current = new Set();
     };
   }, []);
 
   useEffect(() => {
     clearTimeout(collectTimerRef.current);
     clearTimeout(scrollTimerRef.current);
-    clearTimeout(initialPageTimerRef.current);
+    initialScrollDoneRef.current = false;
     setMeta(null);
     setNumPages(0);
     setBusy(true);
     setError(null);
     setMatches([]);
     setMatchIndex(0);
-    setRenderedPages(0);
+    setPageHeight(null);
     setCurrentPage(initialPage);
     pageRefs.current = {};
-    renderedPageSetRef.current = new Set();
+    visibleRangeRef.current = { start: 1, end: 12 };
+    setVisibleRange({ start: 1, end: 12 });
   }, [id, initialPage]);
 
   useEffect(() => {
@@ -105,18 +149,23 @@ export default function PdfViewer() {
   useEffect(() => {
     renderGenerationRef.current += 1;
     setRenderGeneration(renderGenerationRef.current);
-    setRenderedPages(0);
+    setPageHeight(null);
     setMatches([]);
     setMatchIndex(0);
-    renderedPageSetRef.current = new Set();
     clearTimeout(collectTimerRef.current);
-  }, [id, queryStr, scale, containerWidth]);
+    if (numPages > 0) setRangeAround(currentPage);
+  }, [id, queryStr, scale, containerWidth]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onDocumentLoad = useCallback(({ numPages: loadedPages }) => {
     if (!mountedRef.current) return;
+    const target = Math.max(1, Math.min(initialPage, loadedPages));
+    const { start, end } = pageRangeAround(target, loadedPages, PAGE_BUFFER + 3);
+    visibleRangeRef.current = { start, end };
+    setVisibleRange({ start, end });
+    setCurrentPage(target);
     setNumPages(loadedPages);
     setBusy(false);
-  }, []);
+  }, [initialPage]);
 
   const customTextRenderer = useCallback(({ str }) => {
     if (!queryStr || !str) return str;
@@ -138,7 +187,7 @@ export default function PdfViewer() {
   }, []);
 
   const collectMatches = useCallback(() => {
-    if (!mountedRef.current || !containerRef.current) return;
+    if (!mountedRef.current || !containerRef.current || !queryStr) return;
     const list = Array.from(containerRef.current.querySelectorAll("mark.hl"));
     setMatches(list);
     setMatchIndex(0);
@@ -146,35 +195,44 @@ export default function PdfViewer() {
     if (list.length > 0) {
       scrollTimerRef.current = setTimeout(() => scrollToMatch(list, 0, "smooth"), 50);
     }
-  }, [scrollToMatch]);
+  }, [queryStr, scrollToMatch]);
 
   const onPageRender = useCallback((pageNumber, generation) => {
     if (!mountedRef.current || generation !== renderGenerationRef.current) return;
-    renderedPageSetRef.current.add(pageNumber);
-    setRenderedPages(renderedPageSetRef.current.size);
-  }, []);
-
-  useEffect(() => {
-    if (numPages > 0 && renderedPages >= numPages) {
-      collectMatches();
+    const el = pageRefs.current[pageNumber];
+    if (el?.offsetHeight > 0) {
+      const measured = el.offsetHeight;
+      setPageHeight((prev) => (prev && Math.abs(prev - measured) < 4 ? prev : measured));
     }
-  }, [renderedPages, numPages, queryStr, collectMatches]);
+    if (queryStr) {
+      clearTimeout(collectTimerRef.current);
+      collectTimerRef.current = setTimeout(collectMatches, 120);
+    }
+  }, [collectMatches, queryStr]);
 
   useEffect(() => {
     if (!queryStr || numPages === 0) return undefined;
-    collectTimerRef.current = setTimeout(() => collectMatches(), 250);
+    collectTimerRef.current = setTimeout(collectMatches, 250);
     return () => clearTimeout(collectTimerRef.current);
-  }, [queryStr, numPages, collectMatches]);
+  }, [queryStr, numPages, visibleRange, collectMatches]);
+
+  const scrollToPage = useCallback(
+    (page, behavior = "auto") => {
+      const p = Math.max(1, Math.min(page, numPages || page));
+      setRangeAround(p);
+      requestAnimationFrame(() => {
+        window.scrollTo({ top: Math.max(0, (p - 1) * slotHeight), behavior });
+      });
+    },
+    [numPages, setRangeAround, slotHeight],
+  );
 
   useEffect(() => {
-    if (numPages > 0 && initialPage > 1) {
-      initialPageTimerRef.current = setTimeout(() => {
-        pageRefs.current[initialPage]?.scrollIntoView({ behavior: "auto", block: "start" });
-      }, 200);
-      return () => clearTimeout(initialPageTimerRef.current);
+    if (numPages > 0 && initialPage > 1 && !initialScrollDoneRef.current) {
+      initialScrollDoneRef.current = true;
+      scrollToPage(initialPage, "auto");
     }
-    return undefined;
-  }, [numPages, initialPage]);
+  }, [numPages, initialPage, scrollToPage]);
 
   const goPrev = useCallback(() => {
     if (matches.length === 0) return;
@@ -208,23 +266,30 @@ export default function PdfViewer() {
   }, [goNext, goPrev, queryStr]);
 
   useEffect(() => {
+    if (numPages <= 0) return undefined;
+    let raf = 0;
     const onScroll = () => {
-      const scrollY = window.scrollY + 120;
-      let nextPage = 1;
-      for (let pageNumber = 1; pageNumber <= numPages; pageNumber += 1) {
-        const el = pageRefs.current[pageNumber];
-        if (el && el.offsetTop <= scrollY) nextPage = pageNumber;
-        else break;
-      }
-      setCurrentPage((prev) => (prev === nextPage ? prev : nextPage));
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const scrollY = window.scrollY;
+        const { start, end } = rangeFromScroll(scrollY, window.innerHeight, slotHeight, numPages);
+        applyVisibleRange(start, end);
+        const cur = Math.min(numPages, Math.max(1, Math.floor((scrollY + 120) / slotHeight) + 1));
+        setCurrentPage((prev) => (prev === cur ? prev : cur));
+      });
     };
+    onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, [numPages]);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("scroll", onScroll);
+    };
+  }, [numPages, slotHeight, applyVisibleRange]);
 
   const goToPage = (pageNumber) => {
     const clamped = Math.max(1, Math.min(pageNumber, numPages || 1));
-    pageRefs.current[clamped]?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setCurrentPage(clamped);
+    scrollToPage(clamped, "smooth");
   };
 
   const toggleFavorite = async () => {
@@ -246,6 +311,14 @@ export default function PdfViewer() {
     setMatches([]);
     setMatchIndex(0);
   };
+
+  const visiblePageNumbers = useMemo(() => {
+    if (numPages <= 0) return [];
+    return Array.from(
+      { length: visibleRange.end - visibleRange.start + 1 },
+      (_, index) => visibleRange.start + index,
+    );
+  }, [numPages, visibleRange.start, visibleRange.end]);
 
   if (error) {
     return (
@@ -271,13 +344,13 @@ export default function PdfViewer() {
               </button>
             )}
             {meta?.storage_type && (
-              <span className="text-mono text-[10px] px-2 py-0.5 rounded-sm border border-rule text-muted2 inline-flex items-center gap-1" data-testid="viewer-storage-badge" title={meta.storage_type === "google_drive" ? `Drive - ${meta.drive_file_id}` : `Locale - ${meta.file_path}`}>
+              <span className="text-mono text-[10px] px-2 py-0.5 rounded-sm border border-rule text-muted2 inline-flex items-center gap-1" data-testid="viewer-storage-badge" title={meta.storage_type === "google_drive" ? `Drive · ${meta.drive_file_id}` : `Locale · ${meta.file_path}`}>
                 {meta.storage_type === "google_drive" ? <><Cloud size={10} /> DRIVE</> : <><HardDrive size={10} /> LOCALE</>}
               </span>
             )}
           </div>
           <div className="text-mono text-xs text-muted2 flex flex-wrap items-center gap-2 mt-0.5">
-            <span>Pag <input type="number" min={1} max={numPages || 1} value={currentPage} onChange={(e) => { const nextPage = parseInt(e.target.value || "1", 10); setCurrentPage(nextPage); goToPage(nextPage); }} className="w-12 bg-canvas2 border border-rule rounded-sm px-1 py-0.5 text-center" data-testid="viewer-page-input" /> / {numPages || "..."}</span>
+            <span>Pag <input type="number" min={1} max={numPages || 1} value={currentPage} onChange={(e) => { const nextPage = parseInt(e.target.value || "1", 10); goToPage(nextPage); }} className="w-12 bg-canvas2 border border-rule rounded-sm px-1 py-0.5 text-center" data-testid="viewer-page-input" /> / {numPages || "…"}</span>
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
@@ -306,14 +379,14 @@ export default function PdfViewer() {
               {highlightsHidden ? <EyeOff size={14} /> : <Eye size={14} />}
             </button>
             <button onClick={clearQuery} className="ml-1 px-2 py-1 rounded-sm border border-[#854D0E]/30 hover:bg-white/50 text-xs font-mono uppercase tracking-wider" title="Cancella ricerca" data-testid="clear-search">
-              X
+              ×
             </button>
           </div>
         </div>
       )}
 
       <div ref={containerRef} className="flex-1 flex flex-col items-center py-8 px-2 md:px-4" style={{ paddingTop: queryStr ? "60px" : "32px" }}>
-        {busy && <div className="text-mono text-sm text-muted2 py-12" data-testid="pdf-loading">Caricamento PDF...</div>}
+        {busy && <div className="text-mono text-sm text-muted2 py-12" data-testid="pdf-loading">Caricamento PDF…</div>}
         <Document
           key={id}
           file={fileObj}
@@ -326,32 +399,47 @@ export default function PdfViewer() {
           }}
           loading=""
           error=""
-          className="w-full flex flex-col items-center gap-6"
+          className="w-full flex flex-col items-center"
         >
-          {Array.from({ length: numPages }, (_, index) => index + 1).map((pageNumber) => (
+          {numPages > 0 && (
             <div
-              key={`${id}-${pageNumber}`}
-              ref={(el) => {
-                if (el) pageRefs.current[pageNumber] = el;
-                else delete pageRefs.current[pageNumber];
-              }}
-              className="bg-white shadow-md border border-rule"
-              data-testid={`pdf-page-${pageNumber}`}
+              className="relative w-full max-w-full"
+              style={{ height: totalHeight }}
+              data-testid="pdf-virtual-scroll"
+              data-mounted-pages={mountedPageCount}
+              data-total-pages={numPages}
             >
-              <Page
-                key={`${id}-${pageNumber}-${renderGeneration}`}
-                pageNumber={pageNumber}
-                width={containerWidth}
-                scale={scale}
-                renderTextLayer
-                renderAnnotationLayer={false}
-                customTextRenderer={customTextRenderer}
-                onRenderSuccess={() => onPageRender(pageNumber, renderGeneration)}
-                onRenderError={(e) => console.error("[PdfViewer] Page render failed:", { pdf_id: id, pageNumber, error: e.message })}
-              />
-              <div className="text-center text-mono text-xs text-muted3 py-1.5 border-t border-rule">PAG {pageNumber}</div>
+              {visiblePageNumbers.map((pageNumber) => (
+                <div
+                  key={`${id}-${pageNumber}-${renderGeneration}`}
+                  ref={(el) => {
+                    if (el) pageRefs.current[pageNumber] = el;
+                    else delete pageRefs.current[pageNumber];
+                  }}
+                  className="absolute left-0 right-0 mx-auto bg-white shadow-md border border-rule"
+                  style={{
+                    top: (pageNumber - 1) * slotHeight,
+                    width: containerWidth,
+                    maxWidth: "100%",
+                  }}
+                  data-testid={`pdf-page-${pageNumber}`}
+                >
+                  <Page
+                    pageNumber={pageNumber}
+                    width={containerWidth}
+                    scale={scale}
+                    renderTextLayer
+                    renderAnnotationLayer={false}
+                    customTextRenderer={customTextRenderer}
+                    onRenderSuccess={() => onPageRender(pageNumber, renderGeneration)}
+                    onRenderError={(e) => console.error("[PdfViewer] Page render failed:", { pdf_id: id, pageNumber, error: e.message })}
+                    loading=""
+                  />
+                  <div className="text-center text-mono text-xs text-muted3 py-1.5 border-t border-rule">PAG {pageNumber}</div>
+                </div>
+              ))}
             </div>
-          ))}
+          )}
         </Document>
       </div>
     </div>
