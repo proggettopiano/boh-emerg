@@ -59,6 +59,7 @@ function usePageController({
   pendingScrollPageRef,
   programmaticScrollRef,
   initialScrollDoneRef,
+  completeInitialJumpRef,
   currentPageRef,
   onPageChange,
 }) {
@@ -88,6 +89,9 @@ function usePageController({
       const finish = () => {
         programmaticScrollRef.current = false;
         pendingScrollPageRef.current = null;
+        if (!initialScrollDoneRef.current) {
+          completeInitialJumpRef.current?.();
+        }
       };
 
       const tryScroll = (attempts = 0) => {
@@ -118,6 +122,8 @@ function usePageController({
       mountedRef,
       pendingScrollPageRef,
       programmaticScrollRef,
+      initialScrollDoneRef,
+      completeInitialJumpRef,
       setPageState,
     ],
   );
@@ -360,6 +366,7 @@ export function usePdfViewerState({
   const searchDriverDoneRef = useRef(false);
   const initialJumpPendingRef = useRef(initialPage > 1);
   const currentPageRef = useRef(initialPage);
+  const completeInitialJumpRef = useRef(null);
   const urlSyncTimerRef = useRef(null);
   const scrollSyncTimerRef = useRef(null);
   const activeQueryRef = useRef(initialQuery);
@@ -401,6 +408,7 @@ export function usePdfViewerState({
     pendingScrollPageRef,
     programmaticScrollRef,
     initialScrollDoneRef,
+    completeInitialJumpRef,
     currentPageRef,
     onPageChange,
   });
@@ -419,9 +427,10 @@ export function usePdfViewerState({
 
   useEffect(() => {
     const p = Math.max(1, Math.min(initialPage, numPages || initialPage || 1));
+    const externalPageChange = p !== currentPageRef.current;
     currentPageRef.current = p;
     initialJumpPendingRef.current = initialPage > 1;
-    if (numPages > 0) {
+    if (numPages > 0 && externalPageChange) {
       initialScrollDoneRef.current = false;
       searchDriverDoneRef.current = false;
     }
@@ -467,7 +476,6 @@ export function usePdfViewerState({
       if (!mountedRef.current || generation !== renderGenerationRef.current) return;
       if (pendingScrollPageRef.current === pageNumber) {
         scrollToPageRef.current?.(pageNumber, "auto");
-        return;
       }
       if (
         initialJumpPendingRef.current
@@ -501,6 +509,8 @@ export function usePdfViewerState({
       search.collectMatches();
     }
   }, [initialScrollDoneRef, searchDriverDoneRef, search]);
+
+  completeInitialJumpRef.current = completeInitialJump;
 
   return {
     page,
