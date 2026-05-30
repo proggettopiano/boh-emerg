@@ -421,7 +421,18 @@ export function usePdfViewerState({
     initialJumpPendingRef.current = initialPage > 1;
     searchDriverDoneRef.current = false;
     page.setPageState(p, { source: "document", skipNotify: true });
+    return () => {
+      clearTimeout(scrollSyncTimerRef.current);
+      clearTimeout(urlSyncTimerRef.current);
+    };
   }, [pdfId, initialPage, numPages]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    return () => {
+      clearTimeout(scrollSyncTimerRef.current);
+      clearTimeout(urlSyncTimerRef.current);
+    };
+  }, []);
 
   const scrollToPageRef = useRef(null);
   scrollToPageRef.current = page.scrollToPage;

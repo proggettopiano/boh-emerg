@@ -136,14 +136,12 @@ export default function PdfViewer() {
     return () => {
       mountedRef.current = false;
       clearTimeout(search.collectTimerRef.current);
-      clearTimeout(search.scrollTimerRef.current);
       pageRefs.current = {};
     };
-  }, [search.collectTimerRef, search.scrollTimerRef]);
+  }, [search.collectTimerRef]);
 
   useEffect(() => {
     clearTimeout(search.collectTimerRef.current);
-    clearTimeout(search.scrollTimerRef.current);
     initialScrollDoneRef.current = false;
     setMeta(null);
     setNumPages(0);
@@ -153,7 +151,7 @@ export default function PdfViewer() {
     pageRefs.current = {};
     visibleRangeRef.current = { start: 1, end: 12 };
     setVisibleRange({ start: 1, end: 12 });
-  }, [id, initialPage, search.collectTimerRef, search.scrollTimerRef]);
+  }, [id, initialPage, search.collectTimerRef]);
 
   useEffect(() => {
     const ctrl = new AbortController();
