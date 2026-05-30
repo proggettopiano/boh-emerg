@@ -59,6 +59,7 @@ function usePageController({
   mountedRef,
   pendingScrollPageRef,
   programmaticScrollRef,
+  initialScrollDoneRef,
   currentPageRef,
   onPageChange,
 }) {
@@ -141,6 +142,7 @@ function usePageController({
   const applyPageFromScroll = useCallback(
     (scrollY) => {
       if (numPages <= 0 || programmaticScrollRef.current) return;
+      if (initialScrollDoneRef && !initialScrollDoneRef.current) return;
       const detected = detectVisiblePage(scrollY, getToolbarOffset, pageRefs, numPages, slotHeight);
       // #region agent log
       fetch('http://127.0.0.1:7258/ingest/5406e6ab-9fc7-4f89-bdc3-3e87909b21b9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'3ec2bc'},body:JSON.stringify({sessionId:'3ec2bc',location:'usePdfViewerState.js:applyPageFromScroll',message:'scroll detect',data:{detected,ref:currentPageRef.current,scrollY,prog:programmaticScrollRef.current},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
@@ -149,7 +151,7 @@ function usePageController({
         setPageState(detected, { source: "scroll" });
       }
     },
-    [numPages, getToolbarOffset, pageRefs, slotHeight, currentPageRef, programmaticScrollRef, setPageState],
+    [numPages, getToolbarOffset, pageRefs, slotHeight, currentPageRef, programmaticScrollRef, initialScrollDoneRef, setPageState],
   );
 
   return {
@@ -376,16 +378,11 @@ export function usePdfViewerState({
 
       onPageChangedRef.current?.(p);
 
-      if (source !== "url") {
+      if (source !== "url" && (source === "programmatic" || initialScrollDoneRef.current)) {
         syncUrl(p, activeQueryRef.current);
       }
-
-      if (source === "programmatic" && initialPage > 1 && p === initialPage) {
-        initialScrollDoneRef.current = true;
-        searchDriverDoneRef.current = true;
-      }
     },
-    [numPages, syncUrl, initialPage, initialScrollDoneRef, searchDriverDoneRef],
+    [numPages, syncUrl, initialScrollDoneRef],
   );
 
   const onPageChangedRef = useRef(null);
@@ -399,6 +396,7 @@ export function usePdfViewerState({
     mountedRef,
     pendingScrollPageRef,
     programmaticScrollRef,
+    initialScrollDoneRef,
     currentPageRef,
     onPageChange,
   });
@@ -419,7 +417,10 @@ export function usePdfViewerState({
     const p = Math.max(1, Math.min(initialPage, numPages || initialPage || 1));
     currentPageRef.current = p;
     initialJumpPendingRef.current = initialPage > 1;
-    searchDriverDoneRef.current = false;
+    if (numPages > 0) {
+      initialScrollDoneRef.current = false;
+      searchDriverDoneRef.current = false;
+    }
     page.setPageState(p, { source: "document", skipNotify: true });
     return () => {
       clearTimeout(scrollSyncTimerRef.current);
