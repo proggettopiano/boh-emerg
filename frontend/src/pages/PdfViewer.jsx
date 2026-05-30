@@ -151,7 +151,7 @@ export default function PdfViewer() {
     pageRefs.current = {};
     visibleRangeRef.current = { start: 1, end: 12 };
     setVisibleRange({ start: 1, end: 12 });
-  }, [id, initialPage, search.collectTimerRef]);
+  }, [id, search.collectTimerRef]);
 
   useEffect(() => {
     const ctrl = new AbortController();
