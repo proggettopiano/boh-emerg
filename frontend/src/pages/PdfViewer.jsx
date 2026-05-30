@@ -199,7 +199,7 @@ export default function PdfViewer() {
     })();
 
     return () => { cancelled = true; };
-  }, [id, scale, containerWidth, numPages, setRangeAround]);
+  }, [id, scale, containerWidth, numPages, setRangeAround, currentPageRef, scrollToPageRef]);
 
   const onDocumentLoad = useCallback(
     async (pdf) => {
