@@ -249,10 +249,10 @@ export default function PdfViewer() {
   }, [numPages, pageHeight, initialPage, page, completeInitialJump]);
 
   useEffect(() => {
-    if (!search.isSearchActive || numPages === 0) return undefined;
+    if (!search.hasSearchQuery || numPages === 0) return undefined;
     const t = setTimeout(search.collectMatches, 250);
     return () => clearTimeout(t);
-  }, [search.isSearchActive, numPages, visibleRange, search.collectMatches]);
+  }, [search.hasSearchQuery, numPages, visibleRange, search.collectMatches]);
 
   useEffect(() => {
     if (numPages <= 0) return undefined;
