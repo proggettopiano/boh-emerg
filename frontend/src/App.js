@@ -25,11 +25,12 @@ import Admin from "@/pages/Admin";
 import GoogleCallback from "@/pages/GoogleCallback";
 import AuthCallback from "@/pages/AuthCallback";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import { shouldHideAppChrome } from "@/viewer/viewerChrome";
 
 function ChromeWrapper({ children }) {
   const { user } = useAuth();
   const location = useLocation();
-  const noChrome = ["/login", "/register", "/forgot", "/reset", "/profile-setup", "/auth/callback", "/auth/google/callback"].some((p) => location.pathname.startsWith(p));
+  const noChrome = shouldHideAppChrome(location.pathname);
   return (
     <>
       {user && !noChrome && <BackupBanner />}

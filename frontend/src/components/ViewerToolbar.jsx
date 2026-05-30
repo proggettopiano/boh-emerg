@@ -29,11 +29,11 @@ export default function ViewerToolbar({
 }) {
   return (
     <header className="viewer-toolbar" data-testid="viewer-toolbar">
-      <div className="viewer-toolbar-header px-4 md:px-6 py-2.5 flex items-center gap-3 flex-wrap">
+      <div className="viewer-toolbar-header px-3 sm:px-4 md:px-6 py-2.5 flex items-center gap-2 sm:gap-3 flex-nowrap min-w-0">
         <button type="button" onClick={onBack} className="btn-ghost shrink-0" data-testid="viewer-back-btn">
-          <ArrowLeft size={16} /> <span className="hidden sm:inline">Indietro</span>
+          <ArrowLeft size={16} /> <span className="sr-only sm:not-sr-only sm:inline">Indietro</span>
         </button>
-        <div className="flex-1 min-w-0 flex items-center justify-center gap-2 flex-wrap px-2">
+        <div className="flex-1 min-w-0 flex items-center justify-center gap-2 px-1 overflow-hidden">
           <span className="font-display font-semibold truncate text-center max-w-full">{meta?.title || "PDF"}</span>
           {meta && (
             <button type="button" onClick={onToggleFavorite} className="btn-ghost shrink-0" data-testid="viewer-favorite-btn" title="Preferito">
@@ -58,7 +58,7 @@ export default function ViewerToolbar({
         </div>
       </div>
 
-      <div className={`viewer-toolbar-controls px-4 md:px-6 ${search.isSearchActive ? "viewer-toolbar-controls--search" : ""}`}>
+      <div className={`viewer-toolbar-controls ${search.isSearchActive ? "viewer-toolbar-controls--search" : ""}`}>
         <div className="viewer-toolbar-group viewer-toolbar-group--page" data-testid="viewer-page-nav">
           <span className="viewer-toolbar-label">Pagina</span>
           <button
@@ -142,10 +142,10 @@ export default function ViewerToolbar({
                 </button>
                 <button
                   type="button"
-                  onClick={search.clearSearch}
+                  onClick={search.dismissSearchPanel}
                   className="viewer-tool-btn viewer-tool-btn--clear"
-                  title="Cancella ricerca (Esc)"
-                  data-testid="clear-search"
+                  title="Nascondi evidenziazione"
+                  data-testid="dismiss-search"
                 >
                   ×
                 </button>

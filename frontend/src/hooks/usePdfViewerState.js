@@ -11,7 +11,6 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Visible page from mounted DOM wrappers; falls back to slot estimate. */
 export function detectVisiblePage(scrollY, getToolbarOffset, pageRefs, numPages, slotHeight) {
   if (numPages <= 0) return 1;
   const viewTop = scrollY + getToolbarOffset();
@@ -144,9 +143,6 @@ function usePageController({
       if (numPages <= 0 || programmaticScrollRef.current) return;
       if (initialScrollDoneRef && !initialScrollDoneRef.current) return;
       const detected = detectVisiblePage(scrollY, getToolbarOffset, pageRefs, numPages, slotHeight);
-      // #region agent log
-      fetch('http://127.0.0.1:7258/ingest/5406e6ab-9fc7-4f89-bdc3-3e87909b21b9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'3ec2bc'},body:JSON.stringify({sessionId:'3ec2bc',location:'usePdfViewerState.js:applyPageFromScroll',message:'scroll detect',data:{detected,ref:currentPageRef.current,scrollY,prog:programmaticScrollRef.current},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
       if (detected !== currentPageRef.current) {
         setPageState(detected, { source: "scroll" });
       }
@@ -181,6 +177,7 @@ function useSearchController({
 }) {
   const navigate = useNavigate();
   const [query, setQuery] = useState(initialQuery);
+  const [searchPanelVisible, setSearchPanelVisible] = useState(Boolean(initialQuery));
   const [highlightsVisible, setHighlightsVisible] = useState(true);
   const [matches, setMatches] = useState([]);
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
@@ -188,7 +185,8 @@ function useSearchController({
   const collectTimerRef = useRef(null);
   const matchesRef = useRef([]);
 
-  const isSearchActive = query.length > 0;
+  const hasSearchQuery = query.length > 0;
+  const isSearchActive = hasSearchQuery && searchPanelVisible;
 
   useEffect(() => {
     matchesRef.current = matches;
@@ -196,6 +194,7 @@ function useSearchController({
 
   useEffect(() => {
     setQuery(initialQuery);
+    setSearchPanelVisible(Boolean(initialQuery));
     setHighlightsVisible(true);
     setMatches([]);
     setCurrentMatchIndex(0);
@@ -224,33 +223,29 @@ function useSearchController({
   }, [mountedRef]);
 
   const collectMatches = useCallback(() => {
-    if (!mountedRef.current || !containerRef.current || !isSearchActive) return;
+    if (!mountedRef.current || !containerRef.current || !hasSearchQuery) return;
     const list = Array.from(containerRef.current.querySelectorAll("mark.hl"));
     matchesRef.current = list;
     setMatches(list);
     syncMatchIndexToPage(getCurrentPage(), list);
-    // Search is observer-only after initial jump — never auto-scroll to match 0
-  }, [isSearchActive, containerRef, mountedRef, syncMatchIndexToPage, getCurrentPage]);
+  }, [hasSearchQuery, containerRef, mountedRef, syncMatchIndexToPage, getCurrentPage]);
 
   const scheduleCollect = useCallback(() => {
-    if (!isSearchActive) return;
+    if (!hasSearchQuery) return;
     clearTimeout(collectTimerRef.current);
     collectTimerRef.current = setTimeout(collectMatches, 120);
-  }, [isSearchActive, collectMatches]);
+  }, [hasSearchQuery, collectMatches]);
 
   const onPageChanged = useCallback(
     (pageNum) => {
-      if (!isSearchActive) return;
-      // #region agent log
-      fetch('http://127.0.0.1:7258/ingest/5406e6ab-9fc7-4f89-bdc3-3e87909b21b9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'3ec2bc'},body:JSON.stringify({sessionId:'3ec2bc',location:'usePdfViewerState.js:onPageChanged',message:'search observer',data:{pageNum,matchCount:matchesRef.current.length},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
-      // #endregion
+      if (!hasSearchQuery) return;
       if (matchesRef.current.length > 0) {
         syncMatchIndexToPage(pageNum);
       } else {
         scheduleCollect();
       }
     },
-    [isSearchActive, syncMatchIndexToPage, scheduleCollect],
+    [hasSearchQuery, syncMatchIndexToPage, scheduleCollect],
   );
 
   const goToPrevMatch = useCallback(() => {
@@ -271,8 +266,14 @@ function useSearchController({
     setHighlightsVisible((v) => !v);
   }, []);
 
+  const dismissSearchPanel = useCallback(() => {
+    setSearchPanelVisible(false);
+    setHighlightsVisible(false);
+  }, []);
+
   const clearSearch = useCallback(() => {
     setQuery("");
+    setSearchPanelVisible(true);
     setMatches([]);
     matchesRef.current = [];
     setCurrentMatchIndex(0);
@@ -281,18 +282,22 @@ function useSearchController({
   }, [pdfId, getCurrentPage, navigate]);
 
   const handleSearchEscape = useCallback(() => {
-    if (!isSearchActive) return false;
-    if (highlightsVisible) {
+    if (!hasSearchQuery) return false;
+    if (searchPanelVisible && highlightsVisible) {
       setHighlightsVisible(false);
+      return true;
+    }
+    if (searchPanelVisible) {
+      dismissSearchPanel();
       return true;
     }
     clearSearch();
     return true;
-  }, [isSearchActive, highlightsVisible, clearSearch]);
+  }, [hasSearchQuery, searchPanelVisible, highlightsVisible, dismissSearchPanel, clearSearch]);
 
   const customTextRenderer = useCallback(
     ({ str }) => {
-      if (!isSearchActive || !str) return str;
+      if (!hasSearchQuery || !str) return str;
       try {
         const re = new RegExp(`(${escapeRegExp(query)})`, "ig");
         return str.replace(re, (m) => `<mark class="hl">${m}</mark>`);
@@ -301,7 +306,7 @@ function useSearchController({
         return str;
       }
     },
-    [isSearchActive, query],
+    [hasSearchQuery, query],
   );
 
   const pageNum = getCurrentPage();
@@ -314,7 +319,9 @@ function useSearchController({
 
   return {
     query,
+    hasSearchQuery,
     isSearchActive,
+    searchPanelVisible,
     matches,
     currentMatchIndex,
     highlightsVisible,
@@ -323,6 +330,7 @@ function useSearchController({
     goToPrevMatch,
     goToNextMatch,
     toggleHighlights,
+    dismissSearchPanel,
     clearSearch,
     handleSearchEscape,
     customTextRenderer,
@@ -372,10 +380,6 @@ export function usePdfViewerState({
   const onPageChange = useCallback(
     (realPage, source = "scroll") => {
       const p = Math.max(1, Math.min(realPage, numPages || realPage || 1));
-      // #region agent log
-      fetch('http://127.0.0.1:7258/ingest/5406e6ab-9fc7-4f89-bdc3-3e87909b21b9',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'3ec2bc'},body:JSON.stringify({sessionId:'3ec2bc',location:'usePdfViewerState.js:onPageChange',message:'page sync',data:{p,source,ref:currentPageRef.current},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
-
       onPageChangedRef.current?.(p);
 
       if (source !== "url" && (source === "programmatic" || initialScrollDoneRef.current)) {
@@ -410,7 +414,7 @@ export function usePdfViewerState({
     getCurrentPage,
   });
 
-  activeQueryRef.current = search.query;
+  activeQueryRef.current = search.searchPanelVisible ? search.query : "";
   onPageChangedRef.current = search.onPageChanged;
 
   useEffect(() => {
@@ -473,7 +477,7 @@ export function usePdfViewerState({
         initialJumpPendingRef.current = false;
         initialScrollDoneRef.current = true;
         searchDriverDoneRef.current = true;
-        if (search.isSearchActive) search.collectMatches();
+        if (search.hasSearchQuery) search.collectMatches();
       }
       search.scheduleCollect();
     },
@@ -493,7 +497,7 @@ export function usePdfViewerState({
   const completeInitialJump = useCallback(() => {
     initialScrollDoneRef.current = true;
     searchDriverDoneRef.current = true;
-    if (search.isSearchActive) {
+    if (search.hasSearchQuery) {
       search.collectMatches();
     }
   }, [initialScrollDoneRef, searchDriverDoneRef, search]);
