@@ -13,9 +13,17 @@ const PAGE_GAP = 24;
 const PAGE_FOOTER_H = 28;
 const PAGE_ASPECT = 297 / 210;
 const PAGE_BUFFER = 4;
+const TOOLBAR_OFFSET = 120;
+const TOOLBAR_OFFSET_WITH_SEARCH = 132;
 
 const estimatePageHeight = (width, scale) =>
   Math.round(width * scale * PAGE_ASPECT + PAGE_FOOTER_H + PAGE_GAP);
+
+async function measureSlotHeight(pdf, pageNumber, width, scale) {
+  const page = await pdf.getPage(pageNumber);
+  const vp = page.getViewport({ scale: 1 });
+  return Math.round((vp.height / vp.width) * width * scale + PAGE_FOOTER_H + PAGE_GAP);
+}
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -33,8 +41,8 @@ function pageRangeAround(page, numPages, buffer = PAGE_BUFFER) {
   };
 }
 
-function rangeFromScroll(scrollY, viewportHeight, slotHeight, numPages) {
-  const top = scrollY + 120;
+function rangeFromScroll(scrollY, viewportHeight, slotHeight, numPages, toolbarOffset) {
+  const top = scrollY + toolbarOffset;
   const bottom = top + viewportHeight;
   return {
     start: Math.max(1, Math.floor(top / slotHeight) - PAGE_BUFFER),
@@ -62,9 +70,13 @@ export default function PdfViewer() {
   const [matchIndex, setMatchIndex] = useState(0);
   const [pageHeight, setPageHeight] = useState(null);
   const [visibleRange, setVisibleRange] = useState({ start: 1, end: 12 });
+  const [pageInput, setPageInput] = useState(String(initialPage));
 
   const containerRef = useRef(null);
   const pageRefs = useRef({});
+  const pdfDocRef = useRef(null);
+  const pendingScrollPageRef = useRef(null);
+  const scrollToPageRef = useRef(null);
   const mountedRef = useRef(false);
   const collectTimerRef = useRef(null);
   const scrollTimerRef = useRef(null);
@@ -80,6 +92,7 @@ export default function PdfViewer() {
   const slotHeight = pageHeight || estimatePageHeight(containerWidth, scale);
   const totalHeight = numPages > 0 ? numPages * slotHeight : 0;
   const mountedPageCount = numPages > 0 ? visibleRange.end - visibleRange.start + 1 : 0;
+  const scrollToolbarOffset = queryStr ? TOOLBAR_OFFSET_WITH_SEARCH : TOOLBAR_OFFSET;
 
   const applyVisibleRange = useCallback((start, end) => {
     if (visibleRangeRef.current.start === start && visibleRangeRef.current.end === end) return;
@@ -118,6 +131,7 @@ export default function PdfViewer() {
     setMatchIndex(0);
     setPageHeight(null);
     setCurrentPage(initialPage);
+    setPageInput(String(initialPage));
     pageRefs.current = {};
     visibleRangeRef.current = { start: 1, end: 12 };
     setVisibleRange({ start: 1, end: 12 });
@@ -149,23 +163,51 @@ export default function PdfViewer() {
   useEffect(() => {
     renderGenerationRef.current += 1;
     setRenderGeneration(renderGenerationRef.current);
-    setPageHeight(null);
     setMatches([]);
     setMatchIndex(0);
     clearTimeout(collectTimerRef.current);
     if (numPages > 0) setRangeAround(currentPage);
+
+    const pdf = pdfDocRef.current;
+    if (!pdf || numPages <= 0) {
+      setPageHeight(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+    (async () => {
+      const h = await measureSlotHeight(pdf, 1, containerWidth, scale);
+      if (cancelled || !mountedRef.current || h <= 0) return;
+      setPageHeight(h);
+      const target = pendingScrollPageRef.current || currentPage;
+      if (target > 1) scrollToPageRef.current?.(target, "auto");
+    })();
+
+    return () => { cancelled = true; };
   }, [id, queryStr, scale, containerWidth]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const onDocumentLoad = useCallback(({ numPages: loadedPages }) => {
+  const onDocumentLoad = useCallback(async (pdf) => {
     if (!mountedRef.current) return;
+    pdfDocRef.current = pdf;
+    const loadedPages = pdf.numPages;
     const target = Math.max(1, Math.min(initialPage, loadedPages));
+    const measureAt = target > 1 ? target : 1;
+
+    try {
+      const h = await measureSlotHeight(pdf, measureAt, containerWidth, scale);
+      if (mountedRef.current && h > 0) setPageHeight(h);
+    } catch (err) {
+      console.error("[PdfViewer] Failed to measure page height:", err);
+    }
+
     const { start, end } = pageRangeAround(target, loadedPages, PAGE_BUFFER + 3);
     visibleRangeRef.current = { start, end };
     setVisibleRange({ start, end });
     setCurrentPage(target);
+    setPageInput(String(target));
     setNumPages(loadedPages);
     setBusy(false);
-  }, [initialPage]);
+  }, [initialPage, containerWidth, scale]);
 
   const customTextRenderer = useCallback(({ str }) => {
     if (!queryStr || !str) return str;
@@ -186,13 +228,47 @@ export default function PdfViewer() {
     node.scrollIntoView({ behavior, block: "center" });
   }, []);
 
+  const scrollToPage = useCallback(
+    (page, behavior = "auto") => {
+      const p = Math.max(1, Math.min(page, numPages || page));
+      pendingScrollPageRef.current = p;
+      setCurrentPage(p);
+      setPageInput(String(p));
+      setRangeAround(p);
+
+      const tryScroll = (attempts = 0) => {
+        if (!mountedRef.current) return;
+        const el = pageRefs.current[p];
+        if (el) {
+          const top = el.getBoundingClientRect().top + window.scrollY - scrollToolbarOffset;
+          window.scrollTo({ top: Math.max(0, top), behavior });
+          pendingScrollPageRef.current = null;
+          if (initialPage > 1 && p === initialPage) initialScrollDoneRef.current = true;
+          return;
+        }
+        if (attempts < 80) {
+          requestAnimationFrame(() => tryScroll(attempts + 1));
+          return;
+        }
+        window.scrollTo({ top: Math.max(0, (p - 1) * slotHeight), behavior });
+        pendingScrollPageRef.current = null;
+        if (initialPage > 1 && p === initialPage) initialScrollDoneRef.current = true;
+      };
+
+      requestAnimationFrame(() => tryScroll());
+    },
+    [numPages, setRangeAround, slotHeight, scrollToolbarOffset, initialPage],
+  );
+
+  scrollToPageRef.current = scrollToPage;
+
   const collectMatches = useCallback(() => {
     if (!mountedRef.current || !containerRef.current || !queryStr) return;
     const list = Array.from(containerRef.current.querySelectorAll("mark.hl"));
     setMatches(list);
     setMatchIndex(0);
     clearTimeout(scrollTimerRef.current);
-    if (list.length > 0) {
+    if (list.length > 0 && initialScrollDoneRef.current) {
       scrollTimerRef.current = setTimeout(() => scrollToMatch(list, 0, "smooth"), 50);
     }
   }, [queryStr, scrollToMatch]);
@@ -203,6 +279,9 @@ export default function PdfViewer() {
     if (el?.offsetHeight > 0) {
       const measured = el.offsetHeight;
       setPageHeight((prev) => (prev && Math.abs(prev - measured) < 4 ? prev : measured));
+    }
+    if (pendingScrollPageRef.current === pageNumber) {
+      scrollToPageRef.current?.(pageNumber, "auto");
     }
     if (queryStr) {
       clearTimeout(collectTimerRef.current);
@@ -216,23 +295,15 @@ export default function PdfViewer() {
     return () => clearTimeout(collectTimerRef.current);
   }, [queryStr, numPages, visibleRange, collectMatches]);
 
-  const scrollToPage = useCallback(
-    (page, behavior = "auto") => {
-      const p = Math.max(1, Math.min(page, numPages || page));
-      setRangeAround(p);
-      requestAnimationFrame(() => {
-        window.scrollTo({ top: Math.max(0, (p - 1) * slotHeight), behavior });
-      });
-    },
-    [numPages, setRangeAround, slotHeight],
-  );
-
   useEffect(() => {
-    if (numPages > 0 && initialPage > 1 && !initialScrollDoneRef.current) {
-      initialScrollDoneRef.current = true;
+    if (numPages > 0 && pageHeight && initialPage > 1 && !initialScrollDoneRef.current) {
       scrollToPage(initialPage, "auto");
     }
-  }, [numPages, initialPage, scrollToPage]);
+  }, [numPages, pageHeight, initialPage, scrollToPage]);
+
+  useEffect(() => {
+    setPageInput(String(currentPage));
+  }, [currentPage]);
 
   const goPrev = useCallback(() => {
     if (matches.length === 0) return;
@@ -272,9 +343,9 @@ export default function PdfViewer() {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
         const scrollY = window.scrollY;
-        const { start, end } = rangeFromScroll(scrollY, window.innerHeight, slotHeight, numPages);
+        const { start, end } = rangeFromScroll(scrollY, window.innerHeight, slotHeight, numPages, scrollToolbarOffset);
         applyVisibleRange(start, end);
-        const cur = Math.min(numPages, Math.max(1, Math.floor((scrollY + 120) / slotHeight) + 1));
+        const cur = Math.min(numPages, Math.max(1, Math.floor((scrollY + scrollToolbarOffset) / slotHeight) + 1));
         setCurrentPage((prev) => (prev === cur ? prev : cur));
       });
     };
@@ -284,11 +355,19 @@ export default function PdfViewer() {
       cancelAnimationFrame(raf);
       window.removeEventListener("scroll", onScroll);
     };
-  }, [numPages, slotHeight, applyVisibleRange]);
+  }, [numPages, slotHeight, scrollToolbarOffset, applyVisibleRange]);
+
+  const commitPageInput = () => {
+    const parsed = parseInt(pageInput, 10);
+    if (!Number.isFinite(parsed)) {
+      setPageInput(String(currentPage));
+      return;
+    }
+    goToPage(parsed);
+  };
 
   const goToPage = (pageNumber) => {
     const clamped = Math.max(1, Math.min(pageNumber, numPages || 1));
-    setCurrentPage(clamped);
     scrollToPage(clamped, "smooth");
   };
 
@@ -349,8 +428,48 @@ export default function PdfViewer() {
               </span>
             )}
           </div>
-          <div className="text-mono text-xs text-muted2 flex flex-wrap items-center gap-2 mt-0.5">
-            <span>Pag <input type="number" min={1} max={numPages || 1} value={currentPage} onChange={(e) => { const nextPage = parseInt(e.target.value || "1", 10); goToPage(nextPage); }} className="w-12 bg-canvas2 border border-rule rounded-sm px-1 py-0.5 text-center" data-testid="viewer-page-input" /> / {numPages || "…"}</span>
+          <div className="flex flex-wrap items-center gap-2 mt-2" data-testid="viewer-page-nav">
+            <span className="text-sm text-muted2 hidden sm:inline">Pagina</span>
+            <button
+              type="button"
+              onClick={() => goToPage(currentPage - 1)}
+              disabled={currentPage <= 1}
+              className="viewer-page-step"
+              aria-label="Pagina precedente"
+              data-testid="viewer-page-prev"
+            >
+              ←
+            </button>
+            <input
+              type="number"
+              min={1}
+              max={numPages || 1}
+              value={pageInput}
+              onChange={(e) => setPageInput(e.target.value)}
+              onBlur={commitPageInput}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  commitPageInput();
+                }
+              }}
+              className="viewer-page-input"
+              data-testid="viewer-page-input"
+              aria-label="Numero pagina"
+            />
+            <button
+              type="button"
+              onClick={() => goToPage(currentPage + 1)}
+              disabled={currentPage >= (numPages || 1)}
+              className="viewer-page-step"
+              aria-label="Pagina successiva"
+              data-testid="viewer-page-next"
+            >
+              →
+            </button>
+            <span className="text-sm text-ink font-medium whitespace-nowrap">
+              di <span data-testid="viewer-page-total">{numPages || "…"}</span>
+            </span>
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
@@ -362,30 +481,30 @@ export default function PdfViewer() {
       </div>
 
       {queryStr && (
-        <div className="fixed top-[57px] left-0 right-0 z-20 bg-highlight/90 backdrop-blur border-b border-[#FDE047] px-4 md:px-6 py-2 flex items-center gap-2 flex-wrap" data-testid="viewer-search-bar">
-          <span className="text-mono text-xs text-highlightFg uppercase tracking-wider shrink-0">Cerca</span>
-          <span className="font-medium text-highlightFg truncate max-w-xs">"{queryStr}"</span>
-          <span className="text-mono text-xs text-highlightFg shrink-0" data-testid="match-counter">
+        <div className="viewer-search-bar sticky top-[57px] z-20" data-testid="viewer-search-bar">
+          <span className="text-mono text-xs uppercase tracking-wide shrink-0">Cerca</span>
+          <span className="font-medium truncate max-w-xs">"{queryStr}"</span>
+          <span className="text-mono text-xs shrink-0" data-testid="match-counter">
             {matches.length === 0 ? "Nessun risultato" : `Risultato ${matchIndex + 1} di ${matches.length}`}
           </span>
           <div className="flex items-center gap-1 ml-auto shrink-0">
-            <button onClick={goPrev} disabled={matches.length === 0} className="px-2 py-1 rounded-sm border border-[#854D0E]/30 hover:bg-white/50 disabled:opacity-30" title="Precedente" data-testid="match-prev">
+            <button onClick={goPrev} disabled={matches.length === 0} className="viewer-search-btn" title="Precedente" data-testid="match-prev">
               <ChevronUp size={14} />
             </button>
-            <button onClick={goNext} disabled={matches.length === 0} className="px-2 py-1 rounded-sm border border-[#854D0E]/30 hover:bg-white/50 disabled:opacity-30" title="Successivo (n)" data-testid="match-next">
+            <button onClick={goNext} disabled={matches.length === 0} className="viewer-search-btn" title="Successivo (n)" data-testid="match-next">
               <ChevronDown size={14} />
             </button>
-            <button onClick={() => setHighlightsHidden((value) => !value)} className="px-2 py-1 rounded-sm border border-[#854D0E]/30 hover:bg-white/50" title="Mostra/Nascondi evidenziazione (Esc)" data-testid="toggle-highlights">
+            <button onClick={() => setHighlightsHidden((value) => !value)} className="viewer-search-btn" title="Mostra/Nascondi evidenziazione (Esc)" data-testid="toggle-highlights">
               {highlightsHidden ? <EyeOff size={14} /> : <Eye size={14} />}
             </button>
-            <button onClick={clearQuery} className="ml-1 px-2 py-1 rounded-sm border border-[#854D0E]/30 hover:bg-white/50 text-xs font-mono uppercase tracking-wider" title="Cancella ricerca" data-testid="clear-search">
+            <button onClick={clearQuery} className="viewer-search-btn text-xs font-mono uppercase tracking-wider" title="Cancella ricerca" data-testid="clear-search">
               ×
             </button>
           </div>
         </div>
       )}
 
-      <div ref={containerRef} className="flex-1 flex flex-col items-center py-8 px-2 md:px-4" style={{ paddingTop: queryStr ? "60px" : "32px" }}>
+      <div ref={containerRef} className="flex-1 flex flex-col items-center py-8 px-2 md:px-4">
         {busy && <div className="text-mono text-sm text-muted2 py-12" data-testid="pdf-loading">Caricamento PDF…</div>}
         <Document
           key={id}
