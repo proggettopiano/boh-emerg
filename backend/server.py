@@ -45,7 +45,7 @@ WORKER_SECRET = os.environ.get("WORKER_SECRET", "")
 
 app = FastAPI(title=f"{APP_NAME} API")
 
-DEFAULT_CORS_ORIGINS = "https://boh-emerg-wzsa.vercel.app,http://localhost:3000"
+DEFAULT_CORS_ORIGINS = "https://scorelib.vercel.app,https://boh-emerg-wzsa.vercel.app,http://localhost:3000"
 allowed_origins = [
     origin.strip()
     for origin in os.environ.get("BACKEND_CORS_ORIGINS", DEFAULT_CORS_ORIGINS).split(",")
