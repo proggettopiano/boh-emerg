@@ -12,7 +12,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, UploadFile, File, Form, Query
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, UploadFile, File, Form, Query, BackgroundTasks
 from fastapi.responses import Response, FileResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -40,6 +40,8 @@ db = client[os.environ["DB_NAME"]]
 
 APP_NAME = os.environ.get("APP_NAME", "ScoreLib")
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@scorelib.app").lower()
+UPLOAD_SESSION_TTL_SECONDS = int(os.environ.get("UPLOAD_SESSION_TTL_SECONDS", "3600"))
+WORKER_SECRET = os.environ.get("WORKER_SECRET", "")
 
 app = FastAPI(title=f"{APP_NAME} API")
 
@@ -96,6 +98,10 @@ async def ensure_indexes():
     await db.password_resets.create_index("expires_at", expireAfterSeconds=0)
     await db.app_logs.create_index([("created_at", -1)])
     await db.system_settings.create_index("key", unique=True)
+    await db.upload_sessions.create_index("token_hash", unique=True)
+    await db.upload_sessions.create_index("expires_at", expireAfterSeconds=0)
+    await db.upload_jobs.create_index([("status", 1), ("created_at", 1)])
+    await db.upload_jobs.create_index("pdf_id", unique=True)
 
 
 async def get_master_drive() -> Optional[dict]:
@@ -121,6 +127,168 @@ async def resolve_backup_credentials(user: dict) -> Optional[dict]:
     if user.get("google_refresh_token"):
         return {"refresh_token": user["google_refresh_token"], "owner": "user", "folder_root_id": user.get("drive_folder_id")}
     return None
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def iso_now() -> str:
+    return utcnow().isoformat()
+
+
+def safe_pdf_filename(name: str, fallback: str = "upload.pdf") -> str:
+    base = (name or fallback).replace("\\", "/").split("/")[-1].strip()
+    base = re.sub(r"[^A-Za-z0-9._ -]+", "_", base)[:180].strip(" .")
+    if not base:
+        base = fallback
+    if not base.lower().endswith(".pdf"):
+        base = f"{base}.pdf"
+    return base
+
+
+def token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+async def resolve_upload_credentials(user_id: str) -> Optional[dict]:
+    user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    return await resolve_backup_credentials(user or {})
+
+
+async def ensure_drive_upload_folder(creds: dict, user_id: str) -> str:
+    refresh = creds["refresh_token"]
+    if creds["owner"] == "master":
+        master = await get_master_drive() or {}
+        root = master.get("folder_root_id")
+        if not root:
+            root = await asyncio.to_thread(gi.ensure_master_root, refresh)
+            master["folder_root_id"] = root
+            master["refresh_token"] = refresh
+            await set_master_drive(master)
+        return await asyncio.to_thread(gi.ensure_subfolder, refresh, root, user_id)
+    folder = creds.get("folder_root_id")
+    if not folder:
+        folder = await asyncio.to_thread(gi.ensure_user_folder, refresh, user_id)
+        await db.users.update_one({"user_id": user_id}, {"$set": {"drive_folder_id": folder}})
+    return folder
+
+
+async def get_drive_refresh_for_pdf(p: dict) -> Optional[str]:
+    if p.get("drive_owner") == "master":
+        master = await get_master_drive()
+        return master.get("refresh_token") if master else None
+    owner = await db.users.find_one({"user_id": p["owner_id"]}, {"_id": 0})
+    return (owner or {}).get("google_refresh_token")
+
+
+async def queue_pdf_processing(pdf_id: str, user_id: str) -> str:
+    job_id = str(uuid.uuid4())
+    now = iso_now()
+    await db.upload_jobs.update_one(
+        {"pdf_id": pdf_id},
+        {"$setOnInsert": {
+            "id": job_id,
+            "pdf_id": pdf_id,
+            "owner_id": user_id,
+            "attempts": 0,
+            "created_at": now,
+        }, "$set": {"status": "queued", "updated_at": now, "error": None}},
+        upsert=True,
+    )
+    job = await db.upload_jobs.find_one({"pdf_id": pdf_id}, {"_id": 0})
+    return job["id"]
+
+
+async def load_pdf_bytes_for_processing(p: dict) -> bytes:
+    fpath = Path(p.get("file_path") or "")
+    if fpath.exists():
+        return await asyncio.to_thread(fpath.read_bytes)
+    if p.get("drive_file_id"):
+        refresh = await get_drive_refresh_for_pdf(p)
+        if not refresh:
+            raise RuntimeError("Credenziali Drive non disponibili")
+        data = await asyncio.to_thread(gi.download_from_drive, refresh, p["drive_file_id"])
+        fpath.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(fpath.write_bytes, data)
+        return data
+    raise RuntimeError("File non disponibile nello storage")
+
+
+async def process_pdf_job(job_id: str) -> None:
+    job = await db.upload_jobs.find_one({"id": job_id}, {"_id": 0})
+    if not job:
+        return
+    pdf_id = job["pdf_id"]
+    now = iso_now()
+    claimed = await db.upload_jobs.update_one(
+        {"id": job_id, "status": {"$in": ["queued", "failed_retry"]}},
+        {"$set": {"status": "processing", "started_at": now, "updated_at": now}, "$inc": {"attempts": 1}},
+    )
+    if claimed.matched_count == 0:
+        return
+    p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
+    if not p:
+        await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "failed", "error": "PDF non trovato", "updated_at": iso_now()}})
+        return
+    user_id = p["owner_id"]
+    await db.pdfs.update_one({"id": pdf_id}, {"$set": {"processing_status": "processing", "processing_error": None}})
+    try:
+        data = await load_pdf_bytes_for_processing(p)
+        if data[:4] != b"%PDF":
+            raise RuntimeError("Non e un PDF valido")
+        original_size = len(data)
+        content_hash = hashlib.sha256(data).hexdigest()
+        dup = await db.pdfs.find_one(
+            {"owner_id": user_id, "content_hash": content_hash, "id": {"$ne": pdf_id}, "processing_status": {"$ne": "failed"}},
+            {"_id": 0, "id": 1, "title": 1},
+        )
+        if dup:
+            await db.pdfs.update_one({"id": pdf_id}, {"$set": {
+                "processing_status": "failed",
+                "processing_error": "Questo PDF esiste gia nella tua libreria",
+                "duplicate_of": dup["id"],
+                "content_hash": content_hash,
+            }})
+            await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "failed", "error": "duplicate", "updated_at": iso_now()}})
+            await log_event("pdf.duplicate", f"Duplicato rilevato in background: {p.get('filename')}", user_id=user_id, level="warn", meta={"pdf_id": pdf_id, "existing_id": dup["id"]})
+            return
+        compressed_data, was_compressed = await asyncio.to_thread(compress_pdf, data)
+        data = compressed_data
+        pages_text, total_pages, used_ocr = await asyncio.to_thread(extract_pages, data)
+        fpath = Path(p.get("file_path") or (UPLOAD_DIR / user_id / f"{pdf_id}.pdf"))
+        fpath.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(fpath.write_bytes, data)
+        page_docs = [{
+            "pdf_id": pdf_id,
+            "owner_id": user_id,
+            "page": i + 1,
+            "text": (t or "")[:50000],
+        } for i, t in enumerate(pages_text)]
+        await db.pdf_pages.delete_many({"pdf_id": pdf_id})
+        if page_docs:
+            await db.pdf_pages.insert_many(page_docs)
+        storage_type = "google_drive" if p.get("drive_file_id") else "local"
+        await db.pdfs.update_one({"id": pdf_id}, {"$set": {
+            "size": len(data),
+            "original_size": original_size,
+            "compressed": was_compressed,
+            "pages": total_pages,
+            "used_ocr": used_ocr,
+            "content_hash": content_hash,
+            "storage_type": storage_type,
+            "file_path": str(fpath.resolve()),
+            "processing_status": "ready",
+            "processing_error": None,
+            "processed_at": iso_now(),
+        }})
+        await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "done", "updated_at": iso_now(), "finished_at": iso_now()}})
+        await log_event("pdf.upload", f"Ricevuto e indicizzato: {p.get('filename')} ({total_pages}pp{', OCR' if used_ocr else ''})", user_id=user_id, meta={"pdf_id": pdf_id, "pages": total_pages, "ocr": used_ocr, "compressed": was_compressed, "storage_type": storage_type})
+    except Exception as e:
+        logger.exception("background pdf processing failed")
+        await db.pdfs.update_one({"id": pdf_id}, {"$set": {"processing_status": "failed", "processing_error": str(e)[:500]}})
+        await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "failed", "error": str(e)[:500], "updated_at": iso_now(), "finished_at": iso_now()}})
+        await log_event("pdf.error", f"Indicizzazione fallita per {p.get('filename')}: {e}", user_id=user_id, level="error", meta={"pdf_id": pdf_id, "stage": "background_process"})
 
 
 async def require_admin(user_id: str = Depends(get_current_user_id)) -> str:
@@ -272,6 +440,19 @@ class PdfPatchIn(BaseModel):
 
 class CreatePdfIn(BaseModel):
     title: str = Field(min_length=1, max_length=200)
+
+
+class PresignUploadIn(BaseModel):
+    filename: str = Field(min_length=1, max_length=255)
+    size: int = Field(ge=1)
+    content_type: Optional[str] = "application/pdf"
+    content_hash: Optional[str] = None
+
+
+class CompleteUploadIn(BaseModel):
+    pdf_id: str
+    drive_file_id: Optional[str] = None
+    size: Optional[int] = None
 
 
 # ----------------- Auth -----------------
@@ -851,6 +1032,186 @@ async def create_blank_pdf(payload: CreatePdfIn, user_id: str = Depends(get_curr
     return _serialize_pdf(doc)
 
 
+@api.post("/pdfs/upload-url")
+async def create_pdf_upload_url(payload: PresignUploadIn, request: Request, user_id: str = Depends(get_current_user_id)):
+    filename = safe_pdf_filename(payload.filename)
+    if payload.content_type and payload.content_type not in ("application/pdf", "application/octet-stream"):
+        raise HTTPException(status_code=400, detail="Carica solo file PDF")
+    if payload.content_hash:
+        dup = await db.pdfs.find_one({"owner_id": user_id, "content_hash": payload.content_hash}, {"_id": 0, "id": 1, "title": 1})
+        if dup:
+            return {"duplicate": True, "existing_id": dup["id"], "existing_title": dup.get("title", ""), "error": "Questo PDF esiste gia nella tua libreria"}
+
+    pdf_id = str(uuid.uuid4())
+    user_dir = UPLOAD_DIR / user_id
+    user_dir.mkdir(parents=True, exist_ok=True)
+    fpath = user_dir / f"{pdf_id}.pdf"
+    title = filename.rsplit(".", 1)[0]
+    now = iso_now()
+    doc = {
+        "id": pdf_id,
+        "owner_id": user_id,
+        "title": title,
+        "filename": filename,
+        "size": payload.size,
+        "original_size": payload.size,
+        "compressed": False,
+        "pages": 0,
+        "used_ocr": False,
+        "content_hash": payload.content_hash,
+        "drive_file_id": None,
+        "drive_owner": None,
+        "drive_folder_id": None,
+        "storage_type": "local",
+        "file_path": str(fpath.resolve()),
+        "synced_at": None,
+        "processing_status": "uploading",
+        "processing_error": None,
+        "created_at": now,
+    }
+
+    storage_type = "local"
+    upload_url = None
+    upload_headers = {"Content-Type": "application/pdf"}
+    creds = await resolve_upload_credentials(user_id)
+    if creds and gi.google_configured():
+        try:
+            folder_id = await ensure_drive_upload_folder(creds, user_id)
+            upload_url = await asyncio.to_thread(gi.create_resumable_upload_session, creds["refresh_token"], folder_id, f"{pdf_id}.pdf", payload.size)
+            storage_type = "google_drive"
+            doc.update({
+                "storage_type": "google_drive",
+                "drive_owner": creds["owner"],
+                "drive_folder_id": folder_id,
+            })
+        except Exception as e:
+            await log_event("pdf.error", f"Creazione upload Drive fallita, fallback locale: {e}", user_id=user_id, level="error", meta={"filename": filename, "stage": "upload_sign"})
+
+    if not upload_url:
+        raw_token = secrets.token_urlsafe(32)
+        expires_at = utcnow() + timedelta(seconds=UPLOAD_SESSION_TTL_SECONDS)
+        await db.upload_sessions.insert_one({
+            "id": str(uuid.uuid4()),
+            "token_hash": token_hash(raw_token),
+            "pdf_id": pdf_id,
+            "owner_id": user_id,
+            "file_path": str(fpath.resolve()),
+            "expected_size": payload.size,
+            "status": "created",
+            "created_at": now,
+            "expires_at": expires_at,
+        })
+        upload_url = str(request.url_for("put_signed_upload", token=raw_token))
+        storage_type = "local"
+        doc["storage_type"] = "local"
+
+    await db.pdfs.insert_one(doc)
+    await log_event("pdf.upload.session", f"URL upload creata: {filename} -> {storage_type}", user_id=user_id, meta={"pdf_id": pdf_id, "storage_type": storage_type, "size": payload.size})
+    return {
+        "ok": True,
+        "pdf_id": pdf_id,
+        "upload_url": upload_url,
+        "upload_method": "PUT",
+        "upload_headers": upload_headers,
+        "storage_type": storage_type,
+        "status": "uploading",
+    }
+
+
+@api.put("/uploads/{token}", name="put_signed_upload")
+async def put_signed_upload(token: str, request: Request):
+    session = await db.upload_sessions.find_one({"token_hash": token_hash(token)}, {"_id": 0})
+    if not session:
+        raise HTTPException(status_code=404, detail="Upload non valido o scaduto")
+    exp = session.get("expires_at")
+    if isinstance(exp, str):
+        exp = datetime.fromisoformat(exp)
+    if exp and exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    if exp and exp < utcnow():
+        raise HTTPException(status_code=410, detail="Upload scaduto")
+    if session.get("status") == "uploaded":
+        return {"ok": True, "bytes": session.get("bytes", 0)}
+
+    fpath = Path(session["file_path"])
+    fpath.parent.mkdir(parents=True, exist_ok=True)
+    tmp = fpath.with_suffix(".uploading")
+    written = 0
+    first = b""
+    try:
+        with open(tmp, "wb") as out:
+            async for chunk in request.stream():
+                if not chunk:
+                    continue
+                if len(first) < 4:
+                    first += chunk[: 4 - len(first)]
+                out.write(chunk)
+                written += len(chunk)
+        if first != b"%PDF":
+            tmp.unlink(missing_ok=True)
+            await db.upload_sessions.update_one({"id": session["id"]}, {"$set": {"status": "failed", "error": "invalid_pdf", "updated_at": iso_now()}})
+            raise HTTPException(status_code=400, detail="Non e un PDF valido")
+        tmp.replace(fpath)
+    except HTTPException:
+        raise
+    except Exception as e:
+        tmp.unlink(missing_ok=True)
+        await db.upload_sessions.update_one({"id": session["id"]}, {"$set": {"status": "failed", "error": str(e)[:500], "updated_at": iso_now()}})
+        raise HTTPException(status_code=500, detail="Upload fallito")
+
+    await db.upload_sessions.update_one({"id": session["id"]}, {"$set": {"status": "uploaded", "bytes": written, "updated_at": iso_now()}})
+    await db.pdfs.update_one({"id": session["pdf_id"]}, {"$set": {"size": written}})
+    return {"ok": True, "bytes": written}
+
+
+@api.post("/pdfs/upload-complete")
+async def complete_pdf_upload(payload: CompleteUploadIn, background_tasks: BackgroundTasks, user_id: str = Depends(get_current_user_id)):
+    p = await db.pdfs.find_one({"id": payload.pdf_id, "owner_id": user_id}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="PDF non trovato")
+    if p.get("processing_status") not in ("uploading", "failed"):
+        return {"ok": True, "status": p.get("processing_status", "queued"), "pdf": _serialize_pdf(p)}
+
+    update = {
+        "processing_status": "queued",
+        "processing_error": None,
+        "received_at": iso_now(),
+    }
+    if payload.size:
+        update["size"] = payload.size
+    if p.get("storage_type") == "google_drive":
+        if not payload.drive_file_id:
+            raise HTTPException(status_code=400, detail="ID file Drive mancante")
+        update["drive_file_id"] = payload.drive_file_id
+        update["synced_at"] = iso_now()
+    else:
+        fpath = Path(p.get("file_path") or "")
+        if not fpath.exists():
+            raise HTTPException(status_code=400, detail="Upload non completato")
+
+    await db.pdfs.update_one({"id": payload.pdf_id}, {"$set": update})
+    job_id = await queue_pdf_processing(payload.pdf_id, user_id)
+    background_tasks.add_task(process_pdf_job, job_id)
+    updated = await db.pdfs.find_one({"id": payload.pdf_id}, {"_id": 0})
+    await log_event("pdf.received", f"File ricevuto, indicizzazione in coda: {updated.get('filename')}", user_id=user_id, meta={"pdf_id": payload.pdf_id, "job_id": job_id})
+    return {"ok": True, "status": "received", "processing_status": "queued", "pdf": _serialize_pdf(updated)}
+
+
+@api.post("/jobs/process-next")
+@api.get("/jobs/process-next")
+async def process_next_upload_job(secret: Optional[str] = Query(None)):
+    if WORKER_SECRET and secret != WORKER_SECRET:
+        raise HTTPException(status_code=403, detail="Worker secret non valido")
+    if not WORKER_SECRET:
+        raise HTTPException(status_code=503, detail="WORKER_SECRET non configurato")
+    job = await db.upload_jobs.find_one({"status": {"$in": ["queued", "failed_retry"]}}, {"_id": 0}, sort=[("created_at", 1)])
+    if not job:
+        return {"ok": True, "processed": False}
+    await process_pdf_job(job["id"])
+    refreshed = await db.upload_jobs.find_one({"id": job["id"]}, {"_id": 0})
+    return {"ok": True, "processed": True, "job": refreshed}
+
+
 @api.post("/pdfs/upload")
 async def upload_pdfs(
     files: List[UploadFile] = File(...),
@@ -1035,6 +1396,10 @@ def _serialize_pdf(p: dict) -> dict:
         "file_path": p.get("file_path", ""),
         "drive_file_id": p.get("drive_file_id"),
         "synced_at": p.get("synced_at"),
+        "processing_status": p.get("processing_status", "ready"),
+        "processing_error": p.get("processing_error"),
+        "duplicate_of": p.get("duplicate_of"),
+        "processed_at": p.get("processed_at"),
         "created_at": p.get("created_at"),
     }
 

@@ -9,7 +9,10 @@ if (!BACKEND_URL) {
 
 export const API = `${BACKEND_URL.replace(/\/+$|\s+$/g, "")}/api`;
 
-const api = axios.create({ baseURL: API });
+const api = axios.create({
+  baseURL: API,
+  timeout: Number(process.env.REACT_APP_API_TIMEOUT_MS || 30000),
+});
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem("scorelib_token");

@@ -36,8 +36,10 @@ export const AuthProvider = ({ children }) => {
       return () => { mountedRef.current = false; };
     }
     const ctrl = new AbortController();
-    fetchMe(ctrl.signal);
+    const timeout = window.setTimeout(() => ctrl.abort(), Number(process.env.REACT_APP_AUTH_TIMEOUT_MS || 12000));
+    fetchMe(ctrl.signal).finally(() => window.clearTimeout(timeout));
     return () => {
+      window.clearTimeout(timeout);
       mountedRef.current = false;
       ctrl.abort();
     };
