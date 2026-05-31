@@ -18,6 +18,13 @@ const PAGE_FOOTER_H = 28;
 const PAGE_ASPECT = 297 / 210;
 const PAGE_BUFFER = 4;
 
+const PDF_FULL_BLEED = {
+  width: "100vw",
+  maxWidth: "100vw",
+  marginLeft: "calc(50% - 50vw)",
+  boxSizing: "border-box",
+};
+
 const estimatePageHeight = (width, scale) =>
   Math.round(width * scale * PAGE_ASPECT + PAGE_FOOTER_H + PAGE_GAP);
 
@@ -320,7 +327,7 @@ export default function PdfViewer() {
         search={search}
       />
 
-      <div ref={containerRef} className="flex-1 flex flex-col items-center py-8 px-2 md:px-4">
+      <div ref={containerRef} className="flex-1 flex flex-col items-center py-8 overflow-x-visible">
         {busy && <div className="text-mono text-sm text-muted2 py-12" data-testid="pdf-loading">Caricamento PDF…</div>}
         <Document
           key={id}
@@ -338,7 +345,7 @@ export default function PdfViewer() {
         >
           {numPages > 0 && (
             <div
-              className="relative w-full max-w-full"
+              className="relative w-full max-w-full overflow-visible"
               style={{ height: totalHeight }}
               data-testid="pdf-virtual-scroll"
               data-mounted-pages={mountedPageCount}
@@ -351,7 +358,7 @@ export default function PdfViewer() {
                     if (el) pageRefs.current[pageNumber] = el;
                     else delete pageRefs.current[pageNumber];
                   }}
-                  className="absolute left-0 right-0 mx-auto bg-white shadow-md border border-rule"
+                  className="absolute left-0 right-0 mx-auto bg-white shadow-md border border-rule overflow-visible"
                   style={{
                     top: (pageNumber - 1) * slotHeight,
                     width: containerWidth,
@@ -371,7 +378,31 @@ export default function PdfViewer() {
                     onRenderError={(e) => console.error("[PdfViewer] Page render failed:", { pdf_id: id, pageNumber, error: e.message })}
                     loading=""
                   />
-                  <div className="text-center text-mono text-xs text-muted3 py-1.5 border-t border-rule">PAG {pageNumber}</div>
+                  <div
+                    style={{
+                      ...PDF_FULL_BLEED,
+                      background: "#fafafa",
+                      borderTop: "1px solid #e5e5e5",
+                      minHeight: PAGE_FOOTER_H,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      padding: "0.375rem 0",
+                    }}
+                    aria-hidden="true"
+                  >
+                    <span className="text-mono text-xs text-muted3">PAG {pageNumber}</span>
+                  </div>
+                  {pageNumber < numPages && (
+                    <div
+                      style={{
+                        ...PDF_FULL_BLEED,
+                        height: PAGE_GAP,
+                        background: "#f0f0f0",
+                      }}
+                      aria-hidden="true"
+                    />
+                  )}
                 </div>
               ))}
             </div>
