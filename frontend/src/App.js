@@ -71,7 +71,7 @@ function GoogleOAuthReturn() {
         setTimeout(() => navigate("/login", { replace: true }), 2000);
       }
     })();
-  }, []);
+  }, [location.search, loginWithToken, navigate]);
 
   return <div>{status}</div>;
 }
