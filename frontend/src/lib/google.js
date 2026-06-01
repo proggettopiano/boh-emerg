@@ -1,29 +1,19 @@
 import api from "@/lib/api";
 
-const GOOGLE_REDIRECT_URI =
-  import.meta.env.VITE_GOOGLE_REDIRECT_URI ||
-  window.location.origin + "/auth/google/callback";
-
-let googleOAuthInProgress = false;
+export function getGoogleRedirectUri() {
+  return window.location.origin;
+}
 
 export async function startGoogleOAuth(mode = "login") {
-  if (googleOAuthInProgress) return;
-  googleOAuthInProgress = true;
+  const redirectUri = getGoogleRedirectUri();
+  sessionStorage.setItem("google_oauth_mode", mode);
 
-  try {
-    const redirectUri = GOOGLE_REDIRECT_URI;
-    sessionStorage.setItem("google_oauth_mode", mode);
-
-    const endpoint = mode === "master" ? "/admin/master-drive/url" : "/auth/google/url";
-    const r = await api.post(endpoint, { redirect_uri: redirectUri });
-
-    const url = r?.data?.url;
-    if (!url) {
-      throw new Error("Google OAuth URL non disponibile");
-    }
-
-    window.location.href = url;
-  } finally {
-    googleOAuthInProgress = false;
+  if (mode === "master") {
+    const r = await api.post("/admin/master-drive/url", { redirect_uri: redirectUri });
+    window.location.href = r.data.url;
+    return;
   }
+
+  const r = await api.post("/auth/google/url", { redirect_uri: redirectUri });
+  window.location.href = r.data.url;
 }

@@ -4,7 +4,6 @@ import { Plus, Users, Trash2, Lock, DoorOpen, EyeOff, Eye } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 export default function SharedLibraries() {
   const { user } = useAuth();
@@ -49,7 +48,6 @@ export default function SharedLibraries() {
   const unhide = async (id) => { await api.delete(`/libraries/${id}/hide`); toast.success("Libreria ripristinata"); load(); loadHidden(); };
 
   return (
-    <TooltipProvider delayDuration={300}>
     <div className="max-w-6xl mx-auto px-6 md:px-12 py-12">
       <div className="flex items-end justify-between flex-wrap gap-4 mb-10" data-testid="shared-libraries-page">
         <div>
@@ -75,7 +73,7 @@ export default function SharedLibraries() {
                   {l.owner_id !== user?.user_id && (
                     <Lock
                       size={16}
-                      className="shared-lib-readonly mt-1"
+                      className="shrink-0 text-muted2 mt-1"
                       title="Libreria condivisa in sola lettura"
                       aria-label="Libreria condivisa in sola lettura"
                       data-testid={`shared-lib-lock-${l.id}`}
@@ -89,20 +87,16 @@ export default function SharedLibraries() {
                 {l.owner_id === user?.user_id ? (
                   <button onClick={() => del(l.id)} className="btn-ghost shrink-0" data-testid={`shared-lib-delete-${l.id}`} title="Elimina libreria"><Trash2 size={14} /></button>
                 ) : (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        type="button"
-                        onClick={() => leaveLibrary(l.id, l.name)}
-                        className="shared-lib-leave-btn"
-                        data-testid={`shared-lib-leave-${l.id}`}
-                        aria-label="Abbandona libreria"
-                      >
-                        <DoorOpen size={14} />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent side="top">Abbandona libreria</TooltipContent>
-                  </Tooltip>
+                  <button
+                    type="button"
+                    onClick={() => leaveLibrary(l.id, l.name)}
+                    className="btn-ghost shrink-0"
+                    title="Abbandona libreria"
+                    aria-label="Abbandona libreria"
+                    data-testid={`shared-lib-leave-${l.id}`}
+                  >
+                    <DoorOpen size={14} />
+                  </button>
                 )}
               </div>
               <div className="flex items-center justify-between text-mono text-xs text-muted2 mt-3 pt-3 border-t border-rule">
@@ -161,6 +155,5 @@ export default function SharedLibraries() {
         </div>
       )}
     </div>
-    </TooltipProvider>
   );
 }

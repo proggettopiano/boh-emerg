@@ -102,6 +102,41 @@ def _drive_service(refresh_token: str):
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 
+def _access_token(refresh_token: str) -> str:
+    creds = _build_credentials(refresh_token)
+    if not creds.valid:
+        creds.refresh(GoogleRequest())
+    if not creds.token:
+        raise RuntimeError("Unable to refresh Google access token")
+    return creds.token
+
+
+def create_resumable_upload_session(refresh_token: str, folder_id: str, filename: str, size: int) -> str:
+    """Create a Drive resumable-upload session URL for direct browser upload."""
+    token = _access_token(refresh_token)
+    metadata = {"name": filename, "parents": [folder_id]}
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json; charset=UTF-8",
+        "X-Upload-Content-Type": "application/pdf",
+    }
+    if size and size > 0:
+        headers["X-Upload-Content-Length"] = str(size)
+    with httpx.Client(timeout=20) as cli:
+        r = cli.post(
+            "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id",
+            json=metadata,
+            headers=headers,
+        )
+    if r.status_code not in (200, 201):
+        logger.error(f"Drive resumable session failed: {r.status_code} {r.text[:300]}")
+        raise RuntimeError(f"Drive upload session failed: {r.status_code}")
+    location = r.headers.get("Location")
+    if not location:
+        raise RuntimeError("Drive upload session missing Location header")
+    return location
+
+
 def ensure_master_root(refresh_token: str) -> str:
     """Get or create top-level 'ScoreLib' folder in master drive root."""
     svc = _drive_service(refresh_token)

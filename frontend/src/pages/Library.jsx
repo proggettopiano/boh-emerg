@@ -15,6 +15,7 @@ export default function Library() {
   const [openUpload, setOpenUpload] = useState(false);
   const [editTagsFor, setEditTagsFor] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const loadSeq = useRef(0);
   const mountedRef = useRef(false);
   const navigate = useNavigate();
@@ -31,9 +32,14 @@ export default function Library() {
       if (mountedRef.current && seq === loadSeq.current) {
         setItems(r.data.items || []);
         setTags(r.data.tags || []);
+        setLoadError("");
       }
     } catch (e) {
-      if (mountedRef.current && seq === loadSeq.current) toast.error(e.response?.data?.detail || "Libreria non caricata");
+      if (mountedRef.current && seq === loadSeq.current) {
+        const msg = e.response?.data?.detail || "Libreria non caricata";
+        setLoadError(msg);
+        toast.error(msg);
+      }
     } finally {
       if (mountedRef.current && seq === loadSeq.current) setLoading(false);
     }
@@ -131,6 +137,13 @@ export default function Library() {
 
       {loading ? (
         <div className="border border-dashed border-rule rounded-md p-16 text-center text-muted2 text-mono text-sm" data-testid="library-loading">Caricamento libreria...</div>
+      ) : loadError ? (
+        <div className="border border-dashed border-rule rounded-md p-16 text-center" data-testid="library-error">
+          <FileText size={32} className="mx-auto mb-3 text-muted3" strokeWidth={1.5} />
+          <h3 className="font-display text-xl font-bold mb-1">Libreria non disponibile</h3>
+          <p className="text-muted2 mb-6">{loadError}</p>
+          <button onClick={load} className="btn-primary">Riprova</button>
+        </div>
       ) : items.length === 0 ? (
         <div className="border border-dashed border-rule rounded-md p-16 text-center" data-testid="library-empty">
           <FileText size={32} className="mx-auto mb-3 text-muted3" strokeWidth={1.5} />
@@ -151,7 +164,7 @@ export default function Library() {
                   <div className="font-display text-lg font-medium group-hover:underline decoration-2 underline-offset-4 truncate">{p.title}</div>
                   <div className="flex items-center gap-2 flex-wrap mt-0.5">
                     <span className="text-mono text-xs text-muted2">
-                      {p.created_at?.slice(0, 10)} - {p.pages}pp - {(p.size / 1024).toFixed(0)} KB{p.used_ocr ? " - OCR" : ""}
+                      {p.created_at?.slice(0, 10)} - {p.processing_status === "ready" || !p.processing_status ? `${p.pages}pp` : p.processing_status === "failed" ? "errore indicizzazione" : "indicizzazione in corso"} - {(p.size / 1024).toFixed(0)} KB{p.used_ocr ? " - OCR" : ""}
                     </span>
                     <span className={`text-mono text-[10px] px-1.5 py-0.5 rounded-sm ${p.storage_type === "google_drive" ? "bg-ink text-white" : "bg-canvas3 text-muted2"}`} title={p.storage_type === "google_drive" ? `Drive - ${p.drive_file_id}` : `Locale - ${p.file_path}`}>
                       {p.storage_type === "google_drive" ? "DRIVE" : "LOCALE"}
