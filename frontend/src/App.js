@@ -7,9 +7,12 @@ import api from "@/lib/api";
 import { getGoogleRedirectUri } from "@/lib/google";
 
 import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { UploadProvider } from "@/context/UploadContext";
+import { PdfStateProvider } from "@/context/PdfStateContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import Header from "@/components/Header";
 import BackupBanner from "@/components/BackupBanner";
+import { UploadWidget } from "@/components/UploadWidget";
 
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
@@ -123,11 +126,16 @@ function AppShell() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <AppShell />
-        <Toaster />
-      </BrowserRouter>
-    </AuthProvider>
+    <PdfStateProvider>
+      <UploadProvider>
+        <AuthProvider>
+          <BrowserRouter>
+            <AppShell />
+            <UploadWidget />
+            <Toaster />
+          </BrowserRouter>
+        </AuthProvider>
+      </UploadProvider>
+    </PdfStateProvider>
   );
 }

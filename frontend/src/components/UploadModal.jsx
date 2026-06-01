@@ -3,6 +3,8 @@ import { toast } from "sonner";
 import { UploadCloud, X, FileText, CheckCircle2, AlertCircle } from "lucide-react";
 import axios from "axios";
 import api from "@/lib/api";
+import { useUpload } from "@/context/UploadContext";
+import { usePdfState } from "@/context/PdfStateContext";
 
 function makeFileId(file) {
   const randomPart = typeof crypto !== "undefined" && crypto.randomUUID
@@ -27,6 +29,8 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
   const [progress, setProgress] = useState(0);
   const abortRef = useRef(null);
   const mountedRef = useRef(false);
+  const { trackUpload, updateUpload, startProcessing, errorUpload } = useUpload();
+  const { startPollingPdf } = usePdfState();
 
   useEffect(() => {
     mountedRef.current = true;
@@ -71,62 +75,87 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
       let uploadedBefore = 0;
       const uploadResults = [];
       for (const { id, file } of files) {
-        const signed = await api.post("/pdfs/upload-url", {
-          filename: file.name,
-          size: file.size,
-          content_type: file.type || "application/pdf",
-        }, { signal: ctrl.signal });
-        if (!mountedRef.current || ctrl.signal.aborted) return;
-        if (signed.data.duplicate) {
+        try {
+          // Track il file nel widget
+          trackUpload(id, file.name);
+
+          const signed = await api.post("/pdfs/upload-url", {
+            filename: file.name,
+            size: file.size,
+            content_type: file.type || "application/pdf",
+          }, { signal: ctrl.signal });
+          if (!mountedRef.current || ctrl.signal.aborted) return;
+          if (signed.data.duplicate) {
+            uploadedBefore += file.size;
+            if (mountedRef.current) setProgress(Math.min(100, Math.round((uploadedBefore / totalBytes) * 100)));
+            uploadResults.push({
+              name: file.name,
+              ok: false,
+              duplicate: true,
+              existing_id: signed.data.existing_id,
+              error: signed.data.error,
+              client_key: id,
+            });
+            // Notifica il widget che il file è duplicato - rimuovilo dopo poco
+            updateUpload(id, {
+              status: 'error',
+              message: 'Duplicato - già in libreria',
+            });
+            continue;
+          }
+          const signedData = signed.data;
+          const uploadHeaders = {
+            ...(signedData.upload_headers || { "Content-Type": "application/pdf" }),
+          };
+          const putResponse = await axios.put(signedData.upload_url, file, {
+            headers: uploadHeaders,
+            signal: ctrl.signal,
+            timeout: 0,
+            onUploadProgress: (evt) => {
+              if (!mountedRef.current || !evt.total) return;
+              const loaded = uploadedBefore + Math.min(evt.loaded, file.size);
+              const pct = Math.min(100, Math.round((loaded / totalBytes) * 100));
+              setProgress(pct);
+              // Aggiorna il widget con il progresso
+              updateUpload(id, {
+                progress: Math.min(100, Math.round((Math.min(evt.loaded, file.size) / file.size) * 100)),
+                message: `Caricamento in corso... ${pct}%`,
+              });
+            },
+          });
           uploadedBefore += file.size;
           if (mountedRef.current) setProgress(Math.min(100, Math.round((uploadedBefore / totalBytes) * 100)));
+          const completed = await api.post("/pdfs/upload-complete", {
+            pdf_id: signedData.pdf_id,
+            size: file.size,
+          }, { signal: ctrl.signal });
+          uploadResults.push({
+            name: file.name,
+            ok: true,
+            pdf_id: signedData.pdf_id,
+            pages: completed.data.pdf?.pages || 0,
+            ocr: false,
+            compressed: false,
+            processing_status: completed.data.processing_status || completed.data.pdf?.processing_status || "queued",
+            storage_type: completed.data.pdf?.storage_type || signedData.storage_type,
+            client_key: id,
+          });
+          // Notifica il widget che il file è iniziato l'elaborazione
+          startProcessing(id, signedData.pdf_id);
+          
+          // Avvia il polling CENTRALIZZATO nel PdfStateContext
+          // Non fare il polling qui - il PdfStateContext lo farà automaticamente
+          startPollingPdf(signedData.pdf_id);
+        } catch (fileErr) {
+          if (isCanceled(fileErr)) continue;
           uploadResults.push({
             name: file.name,
             ok: false,
-            duplicate: true,
-            existing_id: signed.data.existing_id,
-            error: signed.data.error,
+            error: fileErr.response?.data?.detail || fileErr.message || "Errore caricamento",
             client_key: id,
           });
-          continue;
+          errorUpload(id, fileErr.response?.data?.detail || fileErr.message || "Errore");
         }
-        const signedData = signed.data;
-        const uploadHeaders = {
-          ...(signedData.upload_headers || { "Content-Type": "application/pdf" }),
-          ...(signedData.storage_type === "google_drive" ? { "Content-Range": `bytes 0-${file.size - 1}/${file.size}` } : {}),
-        };
-        const putResponse = await axios.put(signedData.upload_url, file, {
-          headers: uploadHeaders,
-          signal: ctrl.signal,
-          timeout: 0,
-          onUploadProgress: (evt) => {
-            if (!mountedRef.current || !evt.total) return;
-            const loaded = uploadedBefore + Math.min(evt.loaded, file.size);
-            setProgress(Math.min(100, Math.round((loaded / totalBytes) * 100)));
-          },
-        });
-        uploadedBefore += file.size;
-        if (mountedRef.current) setProgress(Math.min(100, Math.round((uploadedBefore / totalBytes) * 100)));
-        let driveFileId = signedData.storage_type === "google_drive" ? putResponse.data?.id : undefined;
-        if (!driveFileId && signedData.storage_type === "google_drive" && typeof putResponse.data === "string") {
-          try { driveFileId = JSON.parse(putResponse.data).id; } catch (_) { /* response is not JSON */ }
-        }
-        const completed = await api.post("/pdfs/upload-complete", {
-          pdf_id: signedData.pdf_id,
-          drive_file_id: driveFileId,
-          size: file.size,
-        }, { signal: ctrl.signal });
-        uploadResults.push({
-          name: file.name,
-          ok: true,
-          pdf_id: signedData.pdf_id,
-          pages: completed.data.pdf?.pages || 0,
-          ocr: false,
-          compressed: false,
-          processing_status: completed.data.processing_status || completed.data.pdf?.processing_status || "queued",
-          storage_type: completed.data.pdf?.storage_type || signedData.storage_type,
-          client_key: id,
-        });
       }
       if (mountedRef.current) setProgress(100);
       setResults(uploadResults);

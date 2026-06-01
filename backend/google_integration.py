@@ -112,7 +112,14 @@ def _access_token(refresh_token: str) -> str:
 
 
 def create_resumable_upload_session(refresh_token: str, folder_id: str, filename: str, size: int) -> str:
-    """Create a Drive resumable-upload session URL for direct browser upload."""
+    """Create a Drive resumable-upload session URL.
+
+    NOTE: direct browser uploads using resumable sessions are not supported
+    by the current frontend/backend flow, because the browser cannot safely
+    use the OAuth token required to initialize the session. The app should
+    always upload to the backend proxy first and let the server perform any
+    Drive upload.
+    """
     token = _access_token(refresh_token)
     metadata = {"name": filename, "parents": [folder_id]}
     headers = {

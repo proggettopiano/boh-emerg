@@ -5,6 +5,7 @@ import "react-pdf/dist/Page/TextLayer.css";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import { toast } from "sonner";
 import api, { API } from "@/lib/api";
+import { usePdfState } from "@/context/PdfStateContext";
 import ViewerToolbar from "@/components/ViewerToolbar";
 import usePdfViewerState, {
   TOOLBAR_OFFSET,
@@ -84,6 +85,9 @@ export default function PdfViewer() {
   const fileUrl = `${API}/pdfs/${id}/file?token=${encodeURIComponent(token || "")}`;
   const fileObj = useMemo(() => ({ url: fileUrl }), [fileUrl]);
 
+  // Polling centralizzato dal PdfStateContext
+  const { startPollingPdf, fetchPdfState, getPdfState } = usePdfState();
+
   const slotHeight = pageHeight || estimatePageHeight(containerWidth, scale);
   const totalHeight = numPages > 0 ? numPages * slotHeight : 0;
   const mountedPageCount = numPages > 0 ? visibleRange.end - visibleRange.start + 1 : 0;
@@ -161,16 +165,59 @@ export default function PdfViewer() {
   }, [id, search.collectTimerRef]);
 
   useEffect(() => {
-    const ctrl = new AbortController();
-    api.get(`/pdfs/${id}`, { signal: ctrl.signal })
-      .then((r) => {
-        if (mountedRef.current) setMeta(r.data);
-      })
-      .catch((e) => {
-        if (!isCanceled(e) && mountedRef.current) setError(e.response?.data?.detail || "PDF non trovato");
-      });
-    return () => ctrl.abort();
-  }, [id]);
+    // Ottieni lo stato iniziale dal PdfStateContext invece di chiamare direttamente api.get
+    let did = false;
+    fetchPdfState(id).then((r) => {
+      if (!mountedRef.current) return;
+      const processingStatus = r?.processing_status || "ready";
+
+      if (processingStatus !== "ready" && processingStatus !== "failed") {
+        // Passiamo il risultato iniziale come seed per evitare un fetch duplicato
+        startPollingPdf(id, r);
+        setBusy(true);
+        setError(null);
+        setMeta({ ...r, _waiting_for_ready: true });
+      } else if (processingStatus === "failed") {
+        setError(r.processing_error || "Errore durante l'elaborazione del PDF");
+        setBusy(false);
+      } else {
+        setMeta(r);
+        setBusy(false);
+        setError(null);
+      }
+    }).catch((e) => {
+      if (!isCanceled(e) && mountedRef.current) {
+        setError(e.response?.data?.detail || "PDF non trovato");
+        setBusy(false);
+      }
+    });
+    return () => { did = true; };
+  }, [id, startPollingPdf, fetchPdfState]);
+
+  // Sottoscrizione al cambio dello stato dal context centralizzato
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (!mountedRef.current) return;
+      
+      const pdfState = getPdfState(id);
+      if (!pdfState) return; // Non ancora in cache
+      
+      const status = pdfState.processing_status || "ready";
+      
+      if (status === "ready") {
+        // Pronto - aggiorna meta e smetti di aspettare
+        setMeta(pdfState);
+        setBusy(false);
+        setError(null);
+      } else if (status === "failed") {
+        setError(pdfState.processing_error || "Errore durante l'elaborazione del PDF");
+        setBusy(false);
+      }
+      // Altrimenti continua a mostrare "in elaborazione"
+    }, 500); // Check locale (non fa richieste, è cache)
+
+    return () => clearInterval(interval);
+  }, [id, getPdfState]);
 
   useEffect(() => {
     const update = () => {
@@ -328,7 +375,13 @@ export default function PdfViewer() {
       />
 
       <div ref={containerRef} className="flex-1 flex flex-col items-center py-8 overflow-x-visible">
-        {busy && <div className="text-mono text-sm text-muted2 py-12" data-testid="pdf-loading">Caricamento PDF…</div>}
+        {busy && (
+          <div className="text-mono text-sm text-muted2 py-12" data-testid="pdf-loading">
+            {meta?._waiting_for_ready
+              ? "Elaborazione PDF in corso (compressione, OCR)… Questo può richiedere alcuni secondi o minuti per file grandi."
+              : "Caricamento PDF…"}
+          </div>
+        )}
         <Document
           key={id}
           file={fileObj}

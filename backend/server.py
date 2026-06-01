@@ -221,6 +221,26 @@ async def load_pdf_bytes_for_processing(p: dict) -> bytes:
     raise RuntimeError("File non disponibile nello storage")
 
 
+async def fail_stale_processing_jobs(max_age_seconds: int = 3600) -> None:
+    cutoff = utcnow() - timedelta(seconds=max_age_seconds)
+    stale_jobs = await db.upload_jobs.find({"status": "processing", "started_at": {"$lt": cutoff.isoformat()}}).to_list(1000)
+    for job in stale_jobs:
+        await db.upload_jobs.update_one(
+            {"id": job["id"]},
+            {"$set": {"status": "failed", "error": "processing_timeout", "updated_at": iso_now(), "finished_at": iso_now()}},
+        )
+        await db.pdfs.update_one(
+            {"id": job["pdf_id"], "processing_status": "processing"},
+            {"$set": {"processing_status": "failed", "processing_error": "Processing timeout"}},
+        )
+        await log_event(
+            "pdf.error",
+            f"Processing timeout: pdf_id={job['pdf_id']}",
+            level="error",
+            meta={"pdf_id": job["pdf_id"], "job_id": job["id"], "stage": "stale_timeout"},
+        )
+
+
 async def process_pdf_job(job_id: str) -> None:
     job = await db.upload_jobs.find_one({"id": job_id}, {"_id": 0})
     if not job:
@@ -236,6 +256,9 @@ async def process_pdf_job(job_id: str) -> None:
     p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
     if not p:
         await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "failed", "error": "PDF non trovato", "updated_at": iso_now()}})
+        return
+    if p.get("processing_status") == "ready":
+        await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "done", "updated_at": iso_now(), "finished_at": iso_now()}})
         return
     user_id = p["owner_id"]
     await db.pdfs.update_one({"id": pdf_id}, {"$set": {"processing_status": "processing", "processing_error": None}})
@@ -1073,6 +1096,7 @@ async def create_pdf_upload_url(payload: PresignUploadIn, request: Request, user
         "synced_at": None,
         "processing_status": "uploading",
         "processing_error": None,
+        "failed_reason": None,
         "created_at": now,
     }
 
@@ -1082,16 +1106,19 @@ async def create_pdf_upload_url(payload: PresignUploadIn, request: Request, user
     creds = await resolve_upload_credentials(user_id)
     if creds and gi.google_configured():
         try:
+            # Prepare Drive target info but DO NOT create a resumable session for direct browser upload.
+            # Direct client->Google resumable uploads require the same OAuth token used to create the session,
+            # which we don't expose to the browser. To avoid CORS/authorization failures, we proxy uploads
+            # through the backend: client uploads to our /uploads/{token} endpoint and the backend will
+            # push the file to Google Drive after receiving it.
             folder_id = await ensure_drive_upload_folder(creds, user_id)
-            upload_url = await asyncio.to_thread(gi.create_resumable_upload_session, creds["refresh_token"], folder_id, f"{pdf_id}.pdf", payload.size)
-            storage_type = "google_drive"
+            # Keep storage_type local until server-side Drive sync succeeds.
             doc.update({
-                "storage_type": "google_drive",
                 "drive_owner": creds["owner"],
                 "drive_folder_id": folder_id,
             })
         except Exception as e:
-            await log_event("pdf.error", f"Creazione upload Drive fallita, fallback locale: {e}", user_id=user_id, level="error", meta={"filename": filename, "stage": "upload_sign"})
+            await log_event("pdf.error", f"Preparazione Drive upload fallita, fallback locale: {e}", user_id=user_id, level="error", meta={"filename": filename, "stage": "upload_sign"})
 
     if not upload_url:
         raw_token = secrets.token_urlsafe(32)
@@ -1108,14 +1135,20 @@ async def create_pdf_upload_url(payload: PresignUploadIn, request: Request, user
             "expires_at": expires_at,
         })
         upload_url = str(request.url_for("put_signed_upload", token=raw_token))
-        storage_type = "local"
-        doc["storage_type"] = "local"
+        # Keep google_drive as the final storage_type when credentials are available.
+        # The browser still uploads to our proxy endpoint, and the backend will
+        # push the file to Drive after receiving it.
+        if storage_type == "local":
+            doc["storage_type"] = "local"
+        else:
+            doc["storage_type"] = "google_drive"
 
     await db.pdfs.insert_one(doc)
     await log_event("pdf.upload.session", f"URL upload creata: {filename} -> {storage_type}", user_id=user_id, meta={"pdf_id": pdf_id, "storage_type": storage_type, "size": payload.size})
     return {
         "ok": True,
         "pdf_id": pdf_id,
+        # Always return our internal PUT endpoint so the browser uploads to the backend proxy.
         "upload_url": upload_url,
         "upload_method": "PUT",
         "upload_headers": upload_headers,
@@ -1156,7 +1189,14 @@ async def put_signed_upload(token: str, request: Request):
         if first != b"%PDF":
             tmp.unlink(missing_ok=True)
             await db.upload_sessions.update_one({"id": session["id"]}, {"$set": {"status": "failed", "error": "invalid_pdf", "updated_at": iso_now()}})
+            await db.pdfs.update_one({"id": session["pdf_id"]}, {"$set": {"processing_status": "failed", "processing_error": "Upload non è un PDF valido"}})
             raise HTTPException(status_code=400, detail="Non e un PDF valido")
+        expected_size = session.get("expected_size")
+        if expected_size and written != expected_size:
+            tmp.unlink(missing_ok=True)
+            await db.upload_sessions.update_one({"id": session["id"]}, {"$set": {"status": "failed", "error": f"size_mismatch {written}/{expected_size}", "updated_at": iso_now()}})
+            await db.pdfs.update_one({"id": session["pdf_id"]}, {"$set": {"processing_status": "failed", "processing_error": "Upload incompleto o interrotto"}})
+            raise HTTPException(status_code=400, detail="Upload incompleto: dimensione file non corrisponde")
         tmp.replace(fpath)
     except HTTPException:
         raise
@@ -1165,8 +1205,9 @@ async def put_signed_upload(token: str, request: Request):
         await db.upload_sessions.update_one({"id": session["id"]}, {"$set": {"status": "failed", "error": str(e)[:500], "updated_at": iso_now()}})
         raise HTTPException(status_code=500, detail="Upload fallito")
 
-    await db.upload_sessions.update_one({"id": session["id"]}, {"$set": {"status": "uploaded", "bytes": written, "updated_at": iso_now()}})
-    await db.pdfs.update_one({"id": session["pdf_id"]}, {"$set": {"size": written}})
+    await db.upload_sessions.update_one({"id": session["id"]}, {"$set": {"status": "uploaded", "bytes": written, "uploaded_at": iso_now(), "updated_at": iso_now()}})
+    await db.pdfs.update_one({"id": session["pdf_id"]}, {"$set": {"size": written, "processing_status": "uploaded", "processing_error": None, "failed_reason": None}})
+    await log_event("pdf.uploaded", f"Upload ricevuto: {session['pdf_id']} ({written} bytes)", user_id=session.get("owner_id"), meta={"pdf_id": session['pdf_id'], "bytes": written})
     return {"ok": True, "bytes": written}
 
 
@@ -1175,27 +1216,69 @@ async def complete_pdf_upload(payload: CompleteUploadIn, background_tasks: Backg
     p = await db.pdfs.find_one({"id": payload.pdf_id, "owner_id": user_id}, {"_id": 0})
     if not p:
         raise HTTPException(status_code=404, detail="PDF non trovato")
-    if p.get("processing_status") not in ("uploading", "failed"):
+    session = await db.upload_sessions.find_one({"pdf_id": payload.pdf_id}, {"_id": 0, "status": 1, "bytes": 1})
+    if not session or session.get("status") != "uploaded":
+        raise HTTPException(status_code=400, detail="Upload non completato")
+    if p.get("processing_status") not in ("uploaded", "failed"):
         return {"ok": True, "status": p.get("processing_status", "queued"), "pdf": _serialize_pdf(p)}
 
     update = {
         "processing_status": "queued",
         "processing_error": None,
+        "failed_reason": None,
         "received_at": iso_now(),
     }
-    if payload.size:
-        update["size"] = payload.size
+    if payload.size is not None:
+        if session.get("bytes") is not None and payload.size != session["bytes"]:
+            raise HTTPException(status_code=400, detail="Dimensione upload non corrisponde")
+        update["size"] = session.get("bytes") or payload.size
+    elif session.get("bytes") is not None:
+        update["size"] = session["bytes"]
     if p.get("storage_type") == "google_drive":
-        if not payload.drive_file_id:
-            raise HTTPException(status_code=400, detail="ID file Drive mancante")
-        update["drive_file_id"] = payload.drive_file_id
-        update["synced_at"] = iso_now()
+        if payload.drive_file_id:
+            update["drive_file_id"] = payload.drive_file_id
+            update["synced_at"] = iso_now()
+        else:
+            # Client did not provide a Drive file id. Attempt server-side upload from local cache.
+            # This avoids exposing Google resumable sessions to the browser (CORS/authorization issues).
+            fpath = Path(p.get("file_path") or "")
+            if not fpath.exists():
+                raise HTTPException(status_code=400, detail="Upload non completato")
+            # Obtain refresh token for drive upload
+            refresh = await get_drive_refresh_for_pdf(p)
+            if not refresh:
+                raise HTTPException(status_code=400, detail="Drive credentials non disponibili; riprova")
+            folder_id = p.get("drive_folder_id")
+            if not folder_id:
+                # Ensure folder on drive for this user
+                creds = await resolve_upload_credentials(user_id)
+                if not creds:
+                    raise HTTPException(status_code=400, detail="Drive folder non disponibile")
+                folder_id = await ensure_drive_upload_folder(creds, user_id)
+            # Read file bytes and upload to Drive in thread
+            try:
+                data = await asyncio.to_thread(lambda: fpath.read_bytes())
+                drive_id = await upload_to_drive_with_retry(refresh, folder_id, fpath.name, data)
+                update["drive_file_id"] = drive_id
+                update["synced_at"] = iso_now()
+                # update storage_type just in case
+                update["storage_type"] = "google_drive"
+                update["failed_reason"] = None
+            except Exception as e:
+                await log_event("pdf.error", f"Drive upload server-side fallito: {e}", user_id=user_id, level="error", meta={"pdf_id": payload.pdf_id})
+                update["storage_type"] = "local"
+                update["drive_file_id"] = None
+                update["drive_owner"] = None
+                update["processing_error"] = str(e)[:500]
+                update["failed_reason"] = "drive_upload_failed"
+                await log_event("pdf.storage", f"Drive upload fallito, fallback su LOCAL: {payload.pdf_id}", user_id=user_id, level="warn", meta={"pdf_id": payload.pdf_id, "reason": str(e)[:200]})
     else:
         fpath = Path(p.get("file_path") or "")
         if not fpath.exists():
             raise HTTPException(status_code=400, detail="Upload non completato")
 
     await db.pdfs.update_one({"id": payload.pdf_id}, {"$set": update})
+    await log_event("pdf.queued", f"PDF messo in coda per processing: {payload.pdf_id}", user_id=user_id, meta={"pdf_id": payload.pdf_id, "status": "queued"})
     job_id = await queue_pdf_processing(payload.pdf_id, user_id)
     background_tasks.add_task(process_pdf_job, job_id)
     updated = await db.pdfs.find_one({"id": payload.pdf_id}, {"_id": 0})
@@ -1210,6 +1293,7 @@ async def process_next_upload_job(secret: Optional[str] = Query(None)):
         raise HTTPException(status_code=403, detail="Worker secret non valido")
     if not WORKER_SECRET:
         raise HTTPException(status_code=503, detail="WORKER_SECRET non configurato")
+    await fail_stale_processing_jobs()
     job = await db.upload_jobs.find_one({"status": {"$in": ["queued", "failed_retry"]}}, {"_id": 0}, sort=[("created_at", 1)])
     if not job:
         return {"ok": True, "processed": False}
@@ -1285,6 +1369,9 @@ async def upload_pdfs(
                 "storage_type": "local",
                 "file_path": file_path_str,
                 "synced_at": None,
+                "processing_status": "ready",
+                "processing_error": None,
+                "failed_reason": None,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
             await db.pdfs.insert_one(doc)
@@ -1406,6 +1493,7 @@ def _serialize_pdf(p: dict) -> dict:
         "synced_at": p.get("synced_at"),
         "processing_status": p.get("processing_status", "ready"),
         "processing_error": p.get("processing_error"),
+        "failed_reason": p.get("failed_reason"),
         "duplicate_of": p.get("duplicate_of"),
         "processed_at": p.get("processed_at"),
         "created_at": p.get("created_at"),
