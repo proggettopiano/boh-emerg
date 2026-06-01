@@ -1,15 +1,15 @@
 import axios from "axios";
 
-const BACKEND_URL = process.env.REACT_APP_API_URL || process.env.REACT_APP_BACKEND_URL;
+const BACKEND_URL = import.meta.env.VITE_API_URL || import.meta.env.VITE_BACKEND_URL;
 if (!BACKEND_URL) {
   throw new Error(
-    "Environment variable REACT_APP_API_URL must be defined for frontend API requests"
+    "Environment variable VITE_API_URL must be defined for frontend API requests"
   );
 }
 
 export const API = `${BACKEND_URL.replace(/\/+$|\s+$/g, "")}/api`;
 
-const api = axios.create({ baseURL: API });
+const api = axios.create({ baseURL: API, timeout: 20000 });
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem("scorelib_token");

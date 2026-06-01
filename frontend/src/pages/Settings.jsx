@@ -30,6 +30,7 @@ export default function Settings() {
 
   const [bk, setBk] = useState(null);
   const [bkBusy, setBkBusy] = useState(false);
+  const [connectBusy, setConnectBusy] = useState(false);
 
   const loadBackup = async () => {
     try { const r = await api.get("/backup/status"); setBk(r.data); } catch {}
@@ -58,7 +59,17 @@ export default function Settings() {
     try { const r = await api.post("/settings/backup", { enabled: !user.backup_enabled }); setUser(r.data); loadBackup(); toast.success(`Backup ${r.data.backup_enabled ? "attivato" : "disattivato"}`); }
     catch (e) { toast.error(e.response?.data?.detail || "Errore"); }
   };
-  const connectDrive = async () => { try { await startGoogleOAuth("connect"); } catch { toast.error("Errore Google OAuth"); } };
+  const connectDrive = async () => {
+    if (connectBusy) return;
+    setConnectBusy(true);
+    try {
+      await startGoogleOAuth("connect");
+    } catch {
+      toast.error("Errore Google OAuth");
+    } finally {
+      setConnectBusy(false);
+    }
+  };
   const runBackup = async () => {
     setBkBusy(true);
     try { const r = await api.post("/backup/run"); toast.success(`Backup completato · ${r.data.uploaded} caricati${r.data.errors ? `, ${r.data.errors} errori` : ""}`); loadBackup(); }
@@ -136,7 +147,7 @@ export default function Settings() {
               {bk?.drive_email && <p className="text-mono text-xs text-muted2 mt-1">{bk.drive_email}</p>}
             </div>
             {!bk?.drive_connected && (
-              <button onClick={connectDrive} className="btn-primary !py-2 !px-4 text-sm" data-testid="connect-drive-btn"><HardDriveUpload size={14} /> Connetti Google Drive</button>
+              <button onClick={connectDrive} disabled={connectBusy} className="btn-primary !py-2 !px-4 text-sm disabled:cursor-not-allowed disabled:opacity-50" data-testid="connect-drive-btn"><HardDriveUpload size={14} /> Connetti Google Drive</button>
             )}
           </div>
 

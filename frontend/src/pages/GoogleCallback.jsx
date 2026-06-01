@@ -20,7 +20,7 @@ export default function GoogleCallback() {
     if (err) { toast.error("Google: " + err); navigate("/login"); return; }
     if (!code) { navigate("/login"); return; }
     const redirectUri =
-      process.env.REACT_APP_GOOGLE_REDIRECT_URI ||
+      import.meta.env.VITE_GOOGLE_REDIRECT_URI ||
       window.location.origin + "/auth/google/callback";
     const mode = sessionStorage.getItem("google_oauth_mode") || "login";
     sessionStorage.removeItem("google_oauth_mode");

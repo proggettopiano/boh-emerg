@@ -371,7 +371,10 @@ export default function PdfViewer() {
                     onRenderError={(e) => console.error("[PdfViewer] Page render failed:", { pdf_id: id, pageNumber, error: e.message })}
                     loading=""
                   />
-                  <div className="text-center text-mono text-xs text-muted3 py-1.5 border-t border-rule">PAG {pageNumber}</div>
+                  <div className="pdf-page-separator" aria-hidden="true">
+                    <span className="pdf-page-separator-label text-mono text-xs text-muted3">PAG {pageNumber}</span>
+                  </div>
+                  {pageNumber < numPages && <div className="pdf-page-gap" aria-hidden="true" />}
                 </div>
               ))}
             </div>
