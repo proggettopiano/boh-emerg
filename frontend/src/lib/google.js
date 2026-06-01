@@ -1,7 +1,10 @@
 import api from "@/lib/api";
 
 export function getGoogleRedirectUri() {
-  return window.location.origin;
+  return (
+    import.meta.env.VITE_GOOGLE_REDIRECT_URI ||
+    window.location.origin + "/auth/google/callback"
+  );
 }
 
 export async function startGoogleOAuth(mode = "login") {
