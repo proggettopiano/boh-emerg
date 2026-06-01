@@ -1,6 +1,11 @@
 import axios from "axios";
 
-const BACKEND_URL = import.meta.env.VITE_API_URL || import.meta.env.VITE_BACKEND_URL;
+// Fallback al backend Render se le env vars non sono impostate
+const BACKEND_URL = 
+  import.meta.env.VITE_API_URL || 
+  import.meta.env.VITE_BACKEND_URL || 
+  "https://scorelib-backend.onrender.com";
+
 if (!BACKEND_URL) {
   throw new Error(
     "Environment variable VITE_API_URL must be defined for frontend API requests"
