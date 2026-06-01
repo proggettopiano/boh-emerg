@@ -50,11 +50,12 @@ export function PdfStateProvider({ children }) {
   const isMountedRef = useRef(true);
 
   useEffect(() => {
+    const intervalMap = pollingRefs.current;
     return () => {
       isMountedRef.current = false;
       // Cleanup di tutti i polling
-      pollingRefs.current.forEach(intervalId => clearInterval(intervalId));
-      pollingRefs.current.clear();
+      intervalMap.forEach(intervalId => clearInterval(intervalId));
+      intervalMap.clear();
     };
   }, []);
 
