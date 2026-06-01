@@ -34,6 +34,10 @@ load_dotenv(ROOT_DIR / ".env")
 UPLOAD_DIR = ROOT_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
+# Semaphore to limit concurrent heavy PDF processing (compress + OCR)
+# Max 2 concurrent to prevent overload on small instances
+pdf_processing_semaphore = asyncio.Semaphore(2)
+
 mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
@@ -1238,20 +1242,22 @@ async def upload_pdfs(
                 results.append({"name": f.filename, "ok": False, "duplicate": True, "existing_id": dup["id"], "existing_title": dup.get("title", ""), "error": "Questo PDF esiste già nella tua libreria"})
                 await log_event("pdf.duplicate", f"Duplicato rilevato: {f.filename}", user_id=user_id, level="warn")
                 continue
-            compressed_data, was_compressed = compress_pdf(data)
-            data = compressed_data
-            # extract text + OCR
-            try:
-                pages_text, total_pages, used_ocr = extract_pages(data)
-            except Exception as e:
-                results.append({"name": f.filename, "ok": False, "error": "PDF non leggibile"})
-                await log_event(
-                    "pdf.error",
-                    f"Errore estrazione testo da {f.filename}: {e}",
-                    user_id=user_id, level="error",
-                    meta={"filename": f.filename, "error": str(e), "stage": "extract"},
-                )
-                continue
+            # Async-safe compress + OCR with concurrency limit
+            async with pdf_processing_semaphore:
+                compressed_data, was_compressed = await asyncio.to_thread(compress_pdf, data)
+                data = compressed_data
+                # extract text + OCR
+                try:
+                    pages_text, total_pages, used_ocr = await asyncio.to_thread(extract_pages, data)
+                except Exception as e:
+                    results.append({"name": f.filename, "ok": False, "error": "PDF non leggibile"})
+                    await log_event(
+                        "pdf.error",
+                        f"Errore estrazione testo da {f.filename}: {e}",
+                        user_id=user_id, level="error",
+                        meta={"filename": f.filename, "error": str(e), "stage": "extract"},
+                    )
+                    continue
             pdf_id = str(uuid.uuid4())
             fpath = user_dir / f"{pdf_id}.pdf"
             with open(fpath, "wb") as out:

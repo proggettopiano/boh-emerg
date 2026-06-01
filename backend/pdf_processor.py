@@ -51,7 +51,48 @@ def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool]:
 
 
 def compress_pdf(pdf_bytes: bytes) -> Tuple[bytes, bool]:
-    """Try to compress a PDF using PyMuPDF deflate. Returns (bytes, was_compressed)."""
+    """Compress PDF: try Ghostscript (fast for large/scanned PDFs), fallback to PyMuPDF.
+    Always returns (compressed_bytes, was_compressed) — preserves exact signature.
+    """
+    import subprocess
+    import tempfile
+    import os
+    import sys
+    
+    # Try Ghostscript if available (much faster for scanned/large PDFs)
+    try:
+        gs_cmd = 'gswin64c' if sys.platform == 'win32' else 'gs'
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_in, \
+             tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_out:
+            tmp_in.write(pdf_bytes)
+            tmp_in.flush()
+            
+            cmd = [
+                gs_cmd, '-sDEVICE=pdfwrite', '-dCompatibilityLevel=1.4',
+                '-dPDFSETTINGS=/ebook', '-dNOPAUSE', '-dQUIET', '-dBATCH',
+                f'-sOutputFile={tmp_out.name}', tmp_in.name
+            ]
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            
+            if result.returncode == 0:
+                with open(tmp_out.name, 'rb') as f:
+                    gs_bytes = f.read()
+                # Cleanup temp files
+                try:
+                    os.unlink(tmp_in.name)
+                    os.unlink(tmp_out.name)
+                except:
+                    pass
+                
+                # Return if reduced > 5%
+                if len(gs_bytes) < len(pdf_bytes) * 0.95:
+                    logger.debug(f"Ghostscript compression: {len(pdf_bytes)} to {len(gs_bytes)} bytes")
+                    return gs_bytes, True
+    except (FileNotFoundError, subprocess.TimeoutExpired, Exception) as e:
+        # Ghostscript not installed or failed — silent fallback to PyMuPDF
+        logger.debug(f"Ghostscript unavailable: {e}, using PyMuPDF")
+    
+    # Fallback PyMuPDF (original logic)
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         out = doc.tobytes(garbage=4, deflate=True, clean=True)
