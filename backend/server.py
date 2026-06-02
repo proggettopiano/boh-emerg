@@ -220,6 +220,7 @@ async def load_pdf_bytes_for_processing(p: dict) -> bytes:
 async def process_pdf_job(job_id: str) -> None:
     job = await db.upload_jobs.find_one({"id": job_id}, {"_id": 0})
     if not job:
+        logger.warning(f"[process_pdf_job] job not found: {job_id}")
         return
     pdf_id = job["pdf_id"]
     now = iso_now()
@@ -228,12 +229,17 @@ async def process_pdf_job(job_id: str) -> None:
         {"$set": {"status": "processing", "started_at": now, "updated_at": now}, "$inc": {"attempts": 1}},
     )
     if claimed.matched_count == 0:
+        # Job already claimed by another worker or already done/failed - PDF status should be correct from the other worker
+        logger.info(f"[process_pdf_job] job already claimed or finished: {job_id} (status={job.get('status')})")
         return
     p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
     if not p:
+        # PDF was deleted - mark job as failed
         await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "failed", "error": "PDF non trovato", "updated_at": iso_now()}})
+        logger.warning(f"[process_pdf_job] PDF not found: {pdf_id}")
         return
     user_id = p["owner_id"]
+    # Set to processing FIRST - before any potential errors
     await db.pdfs.update_one({"id": pdf_id}, {"$set": {"processing_status": "processing", "processing_error": None}})
     try:
         data = await load_pdf_bytes_for_processing(p)
