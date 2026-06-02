@@ -8,10 +8,14 @@ import hashlib
 import logging
 import secrets
 import asyncio
+import psutil
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
+import aiofiles
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, UploadFile, File, Form, Query, BackgroundTasks
 from fastapi.responses import Response, FileResponse
 from dotenv import load_dotenv
@@ -41,9 +45,34 @@ db = client[os.environ["DB_NAME"]]
 APP_NAME = os.environ.get("APP_NAME", "ScoreLib")
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@scorelib.app").lower()
 UPLOAD_SESSION_TTL_SECONDS = int(os.environ.get("UPLOAD_SESSION_TTL_SECONDS", "3600"))
+MAX_UPLOAD_SIZE_BYTES = int(os.environ.get("MAX_UPLOAD_SIZE_BYTES", str(50 * 1024 * 1024)))
 WORKER_SECRET = os.environ.get("WORKER_SECRET", "")
 
-app = FastAPI(title=f"{APP_NAME} API")
+_thread_pool = ThreadPoolExecutor(max_workers=3)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await ensure_indexes()
+    await seed_admin()
+    await migrate_storage_fields()
+    await migrate_email_verified()
+    await db.pdfs.update_many(
+        {"status": {"$exists": False}, "processing_status": {"$nin": ["queued", "processing", "uploading", "received"]}},
+        {"$set": {"status": "ready"}}
+    )
+    await db.pdfs.update_many(
+        {"status": {"$exists": False}, "processing_status": {"$in": ["queued", "processing", "uploading", "received"]}},
+        {"$set": {"status": "pending"}}
+    )
+    await db.pdfs.update_many(
+        {"status": {"$exists": False}, "processing_status": {"$in": ["failed", "failed_retry"]}},
+        {"$set": {"status": "error"}}
+    )
+    logger.info("Startup migration: status field backfilled")
+    yield
+    _thread_pool.shutdown(wait=False)
+
+app = FastAPI(title=f"{APP_NAME} API", lifespan=lifespan)
 
 DEFAULT_CORS_ORIGINS = "https://scorelib.vercel.app,https://boh-emerg-wzsa.vercel.app,http://localhost:3000"
 allowed_origins = [
@@ -242,6 +271,29 @@ async def process_pdf_job(job_id: str) -> None:
         if not job:
             logger.warning(f"[PDF JOB EXIT] job not found job_id={job_id}")
             return
+        pdf_id = job["pdf_id"]
+        _step = "STEP 1"
+        logger.info(f"[STEP 1] job loaded job_id={job_id} pdf_id={pdf_id} job_status={job.get('status')} ts={iso_now()}")
+
+        now = iso_now()
+        claimed = await db.upload_jobs.update_one(
+            {"id": job_id, "status": {"$in": ["queued", "failed_retry"]}},
+            {"$set": {"status": "processing", "started_at": now, "updated_at": now}, "$inc": {"attempts": 1}},
+        )
+        if claimed.matched_count == 0:
+            logger.info(f"[PDF JOB EXIT] claim failed job_id={job_id} pdf_id={pdf_id} (already claimed or finished)")
+            return
+
+        await db.pdfs.update_one({"id": pdf_id}, {"$set": {"status": "processing", "error": None}})
+
+        _step = "STEP 2"
+        p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
+        if not p:
+            await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "failed", "error": "PDF non trovato", "updated_at": iso_now()}})
+            logger.warning(f"[PDF JOB EXIT] PDF not found after claim job_id={job_id} pdf_id={pdf_id}")
+            return
+        user_id = p["owner_id"]
+        logger.info(f"[STEP 2] pdf found job_id={job_id} pdf_id={pdf_id} filename={p.get('filename')} storage={p.get('storage_type')} file_path={p.get('file_path')} ts={iso_now()}")
 
         pdf_id = job["pdf_id"]
         _step = "STEP 1"
@@ -256,7 +308,7 @@ async def process_pdf_job(job_id: str) -> None:
             logger.info(f"[PDF JOB EXIT] claim failed job_id={job_id} pdf_id={pdf_id} (already claimed or finished)")
             return
 
-        await db.pdfs.update_one({"id": pdf_id}, {"$set": {"processing_status": "processing", "processing_error": None}})
+        await db.pdfs.update_one({"id": pdf_id}, {"$set": {"status": "processing", "error": None}})
 
         _step = "STEP 2"
         p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
@@ -280,13 +332,13 @@ async def process_pdf_job(job_id: str) -> None:
         content_hash = hashlib.sha256(data).hexdigest()
 
         dup = await db.pdfs.find_one(
-            {"owner_id": user_id, "content_hash": content_hash, "id": {"$ne": pdf_id}, "processing_status": {"$ne": "failed"}},
+            {"owner_id": user_id, "content_hash": content_hash, "id": {"$ne": pdf_id}, "status": {"$ne": "error"}},
             {"_id": 0, "id": 1, "title": 1},
         )
         if dup:
             await db.pdfs.update_one({"id": pdf_id}, {"$set": {
-                "processing_status": "failed",
-                "processing_error": "Questo PDF esiste gia nella tua libreria",
+                "status": "error",
+                "error": "Questo PDF esiste gia nella tua libreria",
                 "duplicate_of": dup["id"],
                 "content_hash": content_hash,
             }})
@@ -297,6 +349,8 @@ async def process_pdf_job(job_id: str) -> None:
 
         _step = "STEP 5"
         logger.info(f"[STEP 5] compress start job_id={job_id} pdf_id={pdf_id} ts={iso_now()}")
+        process = psutil.Process()
+        mem_before = process.memory_info().rss / (1024 * 1024)  # MB
         compressed_data, was_compressed = await asyncio.to_thread(compress_pdf, data)
         data = compressed_data
 
@@ -306,14 +360,14 @@ async def process_pdf_job(job_id: str) -> None:
         _step = "STEP 7"
         logger.info(f"[STEP 7] extract start job_id={job_id} pdf_id={pdf_id} ts={iso_now()}")
         pages_text, total_pages, used_ocr = await asyncio.to_thread(extract_pages, data)
-
+        mem_after = process.memory_info().rss / (1024 * 1024)
+        logger.info(f"PDF {pdf_id}: RAM before={mem_before:.1f}MB, after={mem_after:.1f}MB, delta={mem_after-mem_before:.1f}MB")
         _step = "STEP 8"
         logger.info(f"[STEP 8] extract done job_id={job_id} pdf_id={pdf_id} pages={total_pages} ocr={used_ocr} ts={iso_now()}")
-
         _step = "STEP 9"
         logger.info(f"[STEP 9] writing file job_id={job_id} pdf_id={pdf_id} ts={iso_now()}")
         fpath = Path(p.get("file_path") or (UPLOAD_DIR / user_id / f"{pdf_id}.pdf"))
-        fpath.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(lambda: fpath.parent.mkdir(parents=True, exist_ok=True))
         await asyncio.to_thread(fpath.write_bytes, data)
 
         _step = "STEP 10"
@@ -333,8 +387,8 @@ async def process_pdf_job(job_id: str) -> None:
             "content_hash": content_hash,
             "storage_type": storage_type,
             "file_path": str(fpath.resolve()),
-            "processing_status": "ready",
-            "processing_error": None,
+            "status": "ready",
+            "error": None,
             "processed_at": iso_now(),
         }})
         await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "done", "updated_at": iso_now(), "finished_at": iso_now()}})
@@ -347,12 +401,8 @@ async def process_pdf_job(job_id: str) -> None:
         _elapsed = round(_time.time() - _t0, 2)
         logger.error(f"[PDF JOB FAILED] job_id={job_id} pdf_id={pdf_id} last_step={_step} elapsed={_elapsed}s error={e}")
         logger.error(f"[PDF JOB TRACEBACK] job_id={job_id}\n{''.join(_tb.format_exception(type(e), e, e.__traceback__))}")
-        try:
-            if pdf_id:
-                await db.pdfs.update_one({"id": pdf_id}, {"$set": {"processing_status": "failed", "processing_error": str(e)[:500]}})
-            await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "failed", "error": str(e)[:500], "updated_at": iso_now(), "finished_at": iso_now()}})
-        except Exception as db_ex:
-            logger.error(f"[PDF JOB DB-FAIL] could not update status after error: {db_ex}")
+        await db.pdfs.update_one({"id": pdf_id}, {"$set": {"status": "error", "error": str(e)[:500]}})
+        await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "failed", "error": str(e)[:500], "updated_at": iso_now(), "finished_at": iso_now()}})
         await log_event("pdf.error", f"Indicizzazione fallita per {p.get('filename') if p else pdf_id}: {e}", user_id=user_id, level="error", meta={"pdf_id": pdf_id, "stage": "background_process", "last_step": _step})
 
 
@@ -415,15 +465,6 @@ async def migrate_email_verified():
         n += 1
     if n:
         logger.info(f"Migrated email_verified on {n} users")
-
-
-@app.on_event("startup")
-async def on_start():
-    await ensure_indexes()
-    await seed_admin()
-    await migrate_storage_fields()
-    await migrate_email_verified()
-    logger.info("Startup complete")
 
 
 # ----------------- Models -----------------
@@ -1102,6 +1143,8 @@ async def create_pdf_upload_url(payload: PresignUploadIn, request: Request, user
     filename = safe_pdf_filename(payload.filename)
     if payload.content_type and payload.content_type not in ("application/pdf", "application/octet-stream"):
         raise HTTPException(status_code=400, detail="Carica solo file PDF")
+    if payload.size and payload.size > MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail=f"File troppo grande. Massimo: {MAX_UPLOAD_SIZE_BYTES // (1024*1024)} MB")
     if payload.content_hash:
         dup = await db.pdfs.find_one({"owner_id": user_id, "content_hash": payload.content_hash}, {"_id": 0, "id": 1, "title": 1})
         if dup:
@@ -1130,8 +1173,7 @@ async def create_pdf_upload_url(payload: PresignUploadIn, request: Request, user
         "storage_type": "local",
         "file_path": str(fpath.resolve()),
         "synced_at": None,
-        "processing_status": "uploading",
-        "processing_error": None,
+        "status": "pending",
         "created_at": now,
     }
 
@@ -1179,7 +1221,7 @@ async def create_pdf_upload_url(payload: PresignUploadIn, request: Request, user
         "upload_method": "PUT",
         "upload_headers": upload_headers,
         "storage_type": storage_type,
-        "status": "uploading",
+        "status": "pending",
     }
 
 
@@ -1210,8 +1252,10 @@ async def put_signed_upload(token: str, request: Request):
                     continue
                 if len(first) < 4:
                     first += chunk[: 4 - len(first)]
-                out.write(chunk)
                 written += len(chunk)
+                if written > MAX_UPLOAD_SIZE_BYTES:
+                    raise HTTPException(status_code=413, detail=f"File troppo grande. Massimo: {MAX_UPLOAD_SIZE_BYTES // (1024*1024)} MB")
+                out.write(chunk)
         if first != b"%PDF":
             tmp.unlink(missing_ok=True)
             await db.upload_sessions.update_one({"id": session["id"]}, {"$set": {"status": "failed", "error": "invalid_pdf", "updated_at": iso_now()}})
@@ -1234,12 +1278,14 @@ async def complete_pdf_upload(payload: CompleteUploadIn, background_tasks: Backg
     p = await db.pdfs.find_one({"id": payload.pdf_id, "owner_id": user_id}, {"_id": 0})
     if not p:
         raise HTTPException(status_code=404, detail="PDF non trovato")
-    if p.get("processing_status") not in ("uploading", "failed"):
-        return {"ok": True, "status": p.get("processing_status", "queued"), "pdf": _serialize_pdf(p)}
+    if payload.size and payload.size > MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail=f"File troppo grande. Massimo: {MAX_UPLOAD_SIZE_BYTES // (1024*1024)} MB")
+    if p.get("status") not in ("pending", "error"):
+        return {"ok": True, "status": p.get("status", "pending"), "pdf": _serialize_pdf(p)}
 
     update = {
-        "processing_status": "queued",
-        "processing_error": None,
+        "status": "pending",
+        "error": None,
         "received_at": iso_now(),
     }
     if payload.size:
@@ -1259,7 +1305,7 @@ async def complete_pdf_upload(payload: CompleteUploadIn, background_tasks: Backg
     background_tasks.add_task(process_pdf_job, job_id)
     updated = await db.pdfs.find_one({"id": payload.pdf_id}, {"_id": 0})
     await log_event("pdf.received", f"File ricevuto, indicizzazione in coda: {updated.get('filename')}", user_id=user_id, meta={"pdf_id": payload.pdf_id, "job_id": job_id})
-    return {"ok": True, "status": "received", "processing_status": "queued", "pdf": _serialize_pdf(updated)}
+    return {"ok": True, "status": "pending", "pdf": _serialize_pdf(updated)}
 
 
 @api.post("/jobs/process-next")
@@ -1339,170 +1385,106 @@ async def recover_stuck_jobs(secret: Optional[str] = Query(None)):
 
 @api.post("/pdfs/upload")
 async def upload_pdfs(
+    background_tasks: BackgroundTasks,
     files: List[UploadFile] = File(...),
     user_id: str = Depends(get_current_user_id),
 ):
     results = []
     user_dir = UPLOAD_DIR / user_id
     user_dir.mkdir(parents=True, exist_ok=True)
+
     for f in files:
+        file_name = f.filename or "untitled.pdf"
+        tmp_path = user_dir / (uuid.uuid4().hex + ".uploading")
+        hash_builder = hashlib.sha256()
+        size = 0
+        first_bytes = b""
+        pdf_id = str(uuid.uuid4())
+        target_path = user_dir / (pdf_id + ".pdf")
+
         try:
-            data = await f.read()
-            if not data[:4] == b"%PDF":
-                results.append({"name": f.filename, "ok": False, "error": "Non è un PDF valido"})
-                await log_event("pdf.invalid", f"File non valido: {f.filename}", user_id=user_id, level="warn")
+            async with aiofiles.open(tmp_path, "wb") as out:
+                while chunk := await f.read(64 * 1024):
+                    if not chunk:
+                        continue
+                    if size < 4:
+                        first_bytes += chunk[: 4 - size]
+                    size += len(chunk)
+                    if size > MAX_UPLOAD_SIZE_BYTES:
+                        raise HTTPException(status_code=413, detail="File troppo grande")
+                    hash_builder.update(chunk)
+                    await out.write(chunk)
+
+            if first_bytes[:4] != b"%PDF":
+                tmp_path.unlink(missing_ok=True)
+                results.append({"name": file_name, "ok": False, "error": "Non è un PDF valido"})
+                await log_event("pdf.invalid", f"File non valido: {file_name}", user_id=user_id, level="warn")
                 continue
-            original_size = len(data)
-            # hash on ORIGINAL bytes (deterministic)
-            content_hash = hashlib.sha256(data).hexdigest()
-            # duplicate detector for this user
+
+            content_hash = hash_builder.hexdigest()
             dup = await db.pdfs.find_one({"owner_id": user_id, "content_hash": content_hash}, {"_id": 0, "id": 1, "title": 1})
             if dup:
-                results.append({"name": f.filename, "ok": False, "duplicate": True, "existing_id": dup["id"], "existing_title": dup.get("title", ""), "error": "Questo PDF esiste già nella tua libreria"})
-                await log_event("pdf.duplicate", f"Duplicato rilevato: {f.filename}", user_id=user_id, level="warn")
+                tmp_path.unlink(missing_ok=True)
+                results.append({"name": file_name, "ok": False, "duplicate": True, "existing_id": dup["id"], "existing_title": dup.get("title", ""), "error": "Questo PDF esiste già nella tua libreria"})
+                await log_event("pdf.duplicate", f"Duplicato rilevato: {file_name}", user_id=user_id, level="warn")
                 continue
-            compressed_data, was_compressed = await asyncio.to_thread(compress_pdf, data)
-            data = compressed_data
-            # extract text + OCR
-            try:
-                pages_text, total_pages, used_ocr = await asyncio.to_thread(extract_pages, data)
-            except Exception as e:
-                results.append({"name": f.filename, "ok": False, "error": "PDF non leggibile"})
-                await log_event(
-                    "pdf.error",
-                    f"Errore estrazione testo da {f.filename}: {e}",
-                    user_id=user_id, level="error",
-                    meta={"filename": f.filename, "error": str(e), "stage": "extract"},
-                )
-                continue
-            pdf_id = str(uuid.uuid4())
-            fpath = user_dir / f"{pdf_id}.pdf"
-            await asyncio.to_thread(fpath.write_bytes, data)
-            file_path_str = str(fpath.resolve())
-            await log_event(
-                "pdf.save",
-                f"File scritto su disco: {file_path_str} ({len(data)} bytes)",
-                user_id=user_id,
-                meta={"pdf_id": pdf_id, "filename": f.filename, "path": file_path_str, "size": len(data)},
-            )
-            title = (f.filename or "untitled.pdf").rsplit(".", 1)[0]
+
+            await asyncio.to_thread(tmp_path.replace, target_path)
+            now_iso = datetime.now(timezone.utc).isoformat()
             doc = {
                 "id": pdf_id,
                 "owner_id": user_id,
-                "title": title,
-                "filename": f.filename,
-                "size": len(data),
-                "original_size": original_size,
-                "compressed": was_compressed,
-                "pages": total_pages,
-                "used_ocr": used_ocr,
+                "title": file_name.rsplit(".", 1)[0],
+                "filename": file_name,
+                "size": size,
+                "original_size": size,
+                "compressed": False,
+                "pages": 0,
+                "used_ocr": False,
                 "content_hash": content_hash,
                 "drive_file_id": None,
+                "drive_owner": None,
                 "storage_type": "local",
-                "file_path": file_path_str,
+                "file_path": str(target_path.resolve()),
                 "synced_at": None,
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "status": "pending",
+                "created_at": now_iso,
             }
             await db.pdfs.insert_one(doc)
-            page_docs = [{
-                "pdf_id": pdf_id,
-                "owner_id": user_id,
-                "page": i + 1,
-                "text": (t or "")[:50000],
-            } for i, t in enumerate(pages_text)]
-            if page_docs:
-                await db.pdf_pages.insert_many(page_docs)
-            # Drive backup if enabled
-            user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-            drive_uploaded = False
-            drive_id = None
-            drive_owner = None
-            if user_doc and user_doc.get("backup_enabled"):
-                creds = await resolve_backup_credentials(user_doc)
-                if creds:
-                    try:
-                        refresh = creds["refresh_token"]
-                        # ensure folder for this user_id under either master or user's root
-                        if creds["owner"] == "master":
-                            # master drive: cache root folder id in system_settings; subfolder per user
-                            master = await get_master_drive() or {}
-                            master_root = master.get("folder_root_id")
-                            if not master_root:
-                                master_root = await asyncio.to_thread(gi.ensure_master_root, refresh)
-                                master["folder_root_id"] = master_root
-                                master["refresh_token"] = refresh
-                                await set_master_drive(master)
-                            user_folder = await asyncio.to_thread(gi.ensure_subfolder, refresh, master_root, user_id)
-                        else:
-                            user_folder = creds.get("folder_root_id")
-                            if not user_folder:
-                                user_folder = await asyncio.to_thread(gi.ensure_user_folder, refresh, user_id)
-                                await db.users.update_one({"user_id": user_id}, {"$set": {"drive_folder_id": user_folder}})
-                        drive_id = await asyncio.to_thread(gi.upload_to_drive, refresh, user_folder, f"{pdf_id}.pdf", data)
-                        drive_owner = creds["owner"]
-                        sync_iso = datetime.now(timezone.utc).isoformat()
-                        await db.pdfs.update_one({"id": pdf_id}, {"$set": {
-                            "drive_file_id": drive_id,
-                            "drive_owner": drive_owner,
-                            "storage_type": "google_drive",
-                            "synced_at": sync_iso,
-                        }})
-                        drive_uploaded = True
-                        await log_event(
-                            "pdf.sync",
-                            f"Sincronizzato su Google Drive ({drive_owner.upper()}) · fileId={drive_id} · folder={user_folder}",
-                            user_id=user_id,
-                            meta={"pdf_id": pdf_id, "drive_file_id": drive_id, "folder_id": user_folder, "drive_owner": drive_owner, "filename": f.filename},
-                        )
-                    except Exception as e:
-                        logger.error(f"Drive backup failed: {e}")
-                        await log_event(
-                            "pdf.error",
-                            f"Sync Drive fallito per {f.filename}: {e}",
-                            user_id=user_id, level="error",
-                            meta={"pdf_id": pdf_id, "filename": f.filename, "error": str(e), "stage": "drive_sync"},
-                        )
-            # storage decision log
-            if drive_uploaded:
-                await log_event(
-                    "pdf.storage",
-                    f"Storage finale: GOOGLE_DRIVE · driveFileId={drive_id} · localCache={file_path_str}",
-                    user_id=user_id,
-                    meta={"pdf_id": pdf_id, "storage_type": "google_drive", "drive_file_id": drive_id, "file_path": file_path_str},
-                )
-            else:
-                await log_event(
-                    "pdf.storage",
-                    f"Storage finale: LOCAL · path={file_path_str}",
-                    user_id=user_id,
-                    meta={"pdf_id": pdf_id, "storage_type": "local", "file_path": file_path_str},
-                )
-            await log_event(
-                "pdf.upload",
-                f"Caricato: {f.filename} ({total_pages}pp{', OCR' if used_ocr else ''}{', compresso' if was_compressed else ''}) → {('GOOGLE_DRIVE' if drive_uploaded else 'LOCAL')}",
-                user_id=user_id,
-                meta={
-                    "pdf_id": pdf_id, "filename": f.filename, "pages": total_pages,
-                    "ocr": used_ocr, "compressed": was_compressed,
-                    "storage_type": "google_drive" if drive_uploaded else "local",
-                    "drive_file_id": drive_id, "file_path": file_path_str,
-                },
-            )
-            if was_compressed:
-                await log_event("pdf.compress", f"PDF compresso: {f.filename} ({original_size}→{len(data)} bytes)", user_id=user_id, meta={"pdf_id": pdf_id})
-            if used_ocr:
-                await log_event("pdf.ocr", f"OCR eseguito su: {f.filename}", user_id=user_id, meta={"pdf_id": pdf_id})
+            job_id = await queue_pdf_processing(pdf_id, user_id)
+            background_tasks.add_task(process_pdf_job, job_id)
+            await log_event("pdf.upload", f"Upload ricevuto: {file_name}", user_id=user_id, meta={"pdf_id": pdf_id, "filename": file_name, "size": size})
             results.append({
-                "name": f.filename, "ok": True, "pdf_id": pdf_id, "pages": total_pages,
-                "ocr": used_ocr, "compressed": was_compressed, "drive": drive_uploaded,
-                "storage_type": "google_drive" if drive_uploaded else "local",
-                "file_path": file_path_str, "drive_file_id": drive_id,
+                "name": file_name,
+                "ok": True,
+                "pdf_id": pdf_id,
+                "status": "pending",
+                "storage_type": "local",
+                "file_path": str(target_path.resolve()),
             })
+        except HTTPException:
+            if tmp_path.exists():
+                tmp_path.unlink(missing_ok=True)
+            raise
         except Exception as e:
             logger.exception("upload failed")
-            results.append({"name": f.filename, "ok": False, "error": str(e)})
-            await log_event("pdf.error", f"Errore upload {f.filename}: {e}", user_id=user_id, level="error")
+            if tmp_path.exists():
+                tmp_path.unlink(missing_ok=True)
+            results.append({"name": file_name, "ok": False, "error": str(e)})
+            await log_event("pdf.error", f"Errore upload {file_name}: {e}", user_id=user_id, level="error")
     return {"results": results}
+
+
+def _normalize_pdf_status(p: dict) -> str:
+    status = p.get("status")
+    if status:
+        return status
+    proc = p.get("processing_status", "ready")
+    if proc in ("uploading", "created", "received", "queued", "processing"):
+        return "pending"
+    if proc in ("failed", "failed_retry", "error"):
+        return "error"
+    return "ready"
 
 
 def _serialize_pdf(p: dict) -> dict:
@@ -1520,8 +1502,8 @@ def _serialize_pdf(p: dict) -> dict:
         "file_path": p.get("file_path", ""),
         "drive_file_id": p.get("drive_file_id"),
         "synced_at": p.get("synced_at"),
-        "processing_status": p.get("processing_status", "ready"),
-        "processing_error": p.get("processing_error"),
+        "status": p.get("status") or _normalize_pdf_status(p),
+        "error": p.get("error"),
         "duplicate_of": p.get("duplicate_of"),
         "processed_at": p.get("processed_at"),
         "created_at": p.get("created_at"),
@@ -1581,6 +1563,24 @@ async def get_pdf(pdf_id: str, user_id: str = Depends(get_current_user_id)):
             raise HTTPException(status_code=403, detail="Accesso negato")
     await log_event("pdf.open", f"Apertura PDF: {p.get('title')}", user_id=user_id)
     return _serialize_pdf(p)
+
+
+@api.get("/pdfs/{pdf_id}/status")
+async def get_pdf_status(pdf_id: str, user_id: str = Depends(get_current_user_id)):
+    p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="PDF non trovato")
+    if p["owner_id"] != user_id:
+        accessible = await _user_can_access_pdf(user_id, pdf_id)
+        if not accessible:
+            raise HTTPException(status_code=403, detail="Accesso negato")
+    status = p.get("status") or _normalize_pdf_status(p)
+    return {
+        "id": pdf_id,
+        "status": status,
+        "error": p.get("error"),
+        "page_count": p.get("pages", 0),
+    }
 
 
 @api.get("/pdfs/{pdf_id}/file")
