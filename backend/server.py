@@ -1339,7 +1339,10 @@ async def recover_stuck_jobs(secret: Optional[str] = Query(None)):
     # Find PDFs stuck in processing for > 10 minutes (likely orphaned)
     stuck_threshold = datetime.now(timezone.utc) - timedelta(minutes=10)
     stuck_pdfs = await db.pdfs.find({
-        "processing_status": {"$in": ["queued", "processing"]},
+        "$or": [
+            {"status": "pending"},
+            {"processing_status": {"$in": ["queued", "processing"]}},
+        ],
         "created_at": {"$lt": stuck_threshold.isoformat()},
     }, {"_id": 0}).to_list(1000)
 
@@ -1355,8 +1358,8 @@ async def recover_stuck_jobs(secret: Optional[str] = Query(None)):
             existing_job = await db.upload_jobs.find_one({"pdf_id": pdf_id})
 
             if existing_job:
-                # Reset both PDF and job to 'queued' so it can be reprocessed
-                await db.pdfs.update_one({"id": pdf_id}, {"$set": {"processing_status": "queued", "processing_error": None}})
+                # Reset both PDF and job to pending so it can be reprocessed
+                await db.pdfs.update_one({"id": pdf_id}, {"$set": {"status": "pending", "error": None}})
                 await db.upload_jobs.update_one(
                     {"id": existing_job["id"]},
                     {"$set": {"status": "queued", "error": "stuck_recovery", "updated_at": iso_now()}},
