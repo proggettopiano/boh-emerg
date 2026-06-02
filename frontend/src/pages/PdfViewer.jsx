@@ -313,6 +313,27 @@ export default function PdfViewer() {
     );
   }
 
+  // Block viewer when PDF is still being processed
+  const isProcessing = meta && meta.processing_status && meta.processing_status !== "ready" && meta.processing_status !== "failed";
+  if (isProcessing) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-12 text-center" data-testid="pdf-viewer-processing">
+        <div className="mb-4">
+          <div className="inline-block w-12 h-12 border-4 border-canvas3 border-t-ink rounded-full animate-spin" />
+        </div>
+        <h3 className="font-display text-xl font-bold mb-2">PDF in elaborazione</h3>
+        <p className="text-muted2 mb-6">
+          Il file è stato ricevuto e verrà indicizzato a breve.<br />
+          Puoi navigare, cercare e caricare altri PDF mentre l'elaborazione continua in background.
+        </p>
+        <div className="flex gap-3">
+          <button type="button" onClick={() => navigate("/library")} className="btn-primary">Vai alla libreria</button>
+          <button type="button" onClick={() => window.location.reload()} className="btn-ghost border border-rule rounded-sm px-4 py-2">Riprova</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`min-h-screen flex flex-col bg-canvas3 ${search.highlightsHidden ? "hl-off" : ""}`} data-testid="pdf-viewer-page">
       <ViewerToolbar

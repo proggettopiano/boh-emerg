@@ -1238,11 +1238,11 @@ async def upload_pdfs(
                 results.append({"name": f.filename, "ok": False, "duplicate": True, "existing_id": dup["id"], "existing_title": dup.get("title", ""), "error": "Questo PDF esiste già nella tua libreria"})
                 await log_event("pdf.duplicate", f"Duplicato rilevato: {f.filename}", user_id=user_id, level="warn")
                 continue
-            compressed_data, was_compressed = compress_pdf(data)
+            compressed_data, was_compressed = await asyncio.to_thread(compress_pdf, data)
             data = compressed_data
             # extract text + OCR
             try:
-                pages_text, total_pages, used_ocr = extract_pages(data)
+                pages_text, total_pages, used_ocr = await asyncio.to_thread(extract_pages, data)
             except Exception as e:
                 results.append({"name": f.filename, "ok": False, "error": "PDF non leggibile"})
                 await log_event(
@@ -1254,8 +1254,7 @@ async def upload_pdfs(
                 continue
             pdf_id = str(uuid.uuid4())
             fpath = user_dir / f"{pdf_id}.pdf"
-            with open(fpath, "wb") as out:
-                out.write(data)
+            await asyncio.to_thread(fpath.write_bytes, data)
             file_path_str = str(fpath.resolve())
             await log_event(
                 "pdf.save",
