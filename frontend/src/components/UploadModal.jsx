@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { UploadCloud, X, FileText, CheckCircle2, AlertCircle } from "lucide-react";
-import axios from "axios";
 import api from "@/lib/api";
 
 function wait(ms) {
@@ -112,68 +111,28 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const totalBytes = files.reduce((sum, { file }) => sum + file.size, 0);
-      let uploadedBefore = 0;
-      const uploadResults = [];
-      for (const { id, file } of files) {
-        const signed = await api.post("/pdfs/upload-url", {
-          filename: file.name,
-          size: file.size,
-          content_type: file.type || "application/pdf",
-        }, { signal: ctrl.signal });
-        if (!mountedRef.current || ctrl.signal.aborted) return;
-        if (signed.data.duplicate) {
-          uploadedBefore += file.size;
-          if (mountedRef.current) setProgress(Math.min(100, Math.round((uploadedBefore / totalBytes) * 100)));
-          uploadResults.push({
-            name: file.name,
-            ok: false,
-            duplicate: true,
-            existing_id: signed.data.existing_id,
-            error: signed.data.error,
-            client_key: id,
-          });
-          continue;
-        }
-        const signedData = signed.data;
-        const uploadHeaders = {
-          ...(signedData.upload_headers || { "Content-Type": "application/pdf" }),
-          ...(signedData.storage_type === "google_drive" ? { "Content-Range": `bytes 0-${file.size - 1}/${file.size}` } : {}),
-        };
-        const putResponse = await axios.put(signedData.upload_url, file, {
-          headers: uploadHeaders,
-          signal: ctrl.signal,
-          timeout: 0,
-          onUploadProgress: (evt) => {
-            if (!mountedRef.current || !evt.total) return;
-            const loaded = uploadedBefore + Math.min(evt.loaded, file.size);
-            setProgress(Math.min(100, Math.round((loaded / totalBytes) * 100)));
-          },
-        });
-        uploadedBefore += file.size;
-        if (mountedRef.current) setProgress(Math.min(100, Math.round((uploadedBefore / totalBytes) * 100)));
-        let driveFileId = signedData.storage_type === "google_drive" ? putResponse.data?.id : undefined;
-        if (!driveFileId && signedData.storage_type === "google_drive" && typeof putResponse.data === "string") {
-          try { driveFileId = JSON.parse(putResponse.data).id; } catch (_) { /* response is not JSON */ }
-        }
-        const completed = await api.post("/pdfs/upload-complete", {
-          pdf_id: signedData.pdf_id,
-          drive_file_id: driveFileId,
-          size: file.size,
-        }, { signal: ctrl.signal });
-        uploadResults.push({
-          name: file.name,
-          ok: true,
-          pdf_id: signedData.pdf_id,
-          pages: completed.data.pdf?.pages || 0,
-          ocr: false,
-          compressed: false,
-          status: completed.data.status || completed.data.pdf?.status || "pending",
-          storage_type: completed.data.pdf?.storage_type || signedData.storage_type,
-          client_key: id,
-        });
-      }
-      if (mountedRef.current) setProgress(100);
+      const formData = new FormData();
+      files.forEach(({ file }) => {
+        formData.append("files", file);
+      });
+
+      const completed = await api.post("/pdfs/upload", formData, {
+        signal: ctrl.signal,
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+        onUploadProgress: (evt) => {
+          if (!mountedRef.current || !evt.total) return;
+          setProgress(Math.min(100, Math.round((evt.loaded / evt.total) * 100)));
+        },
+      });
+
+      if (!mountedRef.current || ctrl.signal.aborted) return;
+      const uploadResults = (completed.data?.results || []).map((result) => ({
+        ...result,
+        client_key: result.client_key || result.pdf_id || result.existing_id || result.name,
+      }));
+
       if (mountedRef.current) {
         setResults(uploadResults);
         pollPendingPdfStatuses(uploadResults, ctrl.signal).catch((err) => {
@@ -182,6 +141,7 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
           }
         });
       }
+
       const ok = uploadResults.filter((x) => x.ok).length;
       const fail = uploadResults.length - ok;
       if (libraryId && ok > 0) {
