@@ -218,35 +218,52 @@ async def load_pdf_bytes_for_processing(p: dict) -> bytes:
 
 
 async def process_pdf_job(job_id: str) -> None:
-    job = await db.upload_jobs.find_one({"id": job_id}, {"_id": 0})
-    if not job:
-        logger.warning(f"[process_pdf_job] job not found: {job_id}")
-        return
-    pdf_id = job["pdf_id"]
-    now = iso_now()
-    claimed = await db.upload_jobs.update_one(
-        {"id": job_id, "status": {"$in": ["queued", "failed_retry"]}},
-        {"$set": {"status": "processing", "started_at": now, "updated_at": now}, "$inc": {"attempts": 1}},
-    )
-    if claimed.matched_count == 0:
-        # Job already claimed by another worker or already done/failed - PDF status should be correct from the other worker
-        logger.info(f"[process_pdf_job] job already claimed or finished: {job_id} (status={job.get('status')})")
-        return
-    p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
-    if not p:
-        # PDF was deleted - mark job as failed
-        await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "failed", "error": "PDF non trovato", "updated_at": iso_now()}})
-        logger.warning(f"[process_pdf_job] PDF not found: {pdf_id}")
-        return
-    user_id = p["owner_id"]
-    # Set to processing FIRST - before any potential errors
-    await db.pdfs.update_one({"id": pdf_id}, {"$set": {"processing_status": "processing", "processing_error": None}})
+    """Process a queued PDF job: load, compress, extract text/OCR, save pages.
+
+    Every exit path (success, error, not-found, already-done) updates the database.
+    If an unexpected exception escapes, the outer try/except ensures the PDF
+    is marked failed rather than stuck in 'processing'.
+    """
     try:
+        job = await db.upload_jobs.find_one({"id": job_id}, {"_id": 0})
+        if not job:
+            logger.warning(f"[process_pdf_job] job not found: {job_id}")
+            return
+
+        pdf_id = job["pdf_id"]
+        now = iso_now()
+
+        # Claim the job: only process if status is queued/failed_retry
+        claimed = await db.upload_jobs.update_one(
+            {"id": job_id, "status": {"$in": ["queued", "failed_retry"]}},
+            {"$set": {"status": "processing", "started_at": now, "updated_at": now}, "$inc": {"attempts": 1}},
+        )
+        if claimed.matched_count == 0:
+            # Already claimed/done/failed by another worker — PDF status is their responsibility
+            logger.info(f"[process_pdf_job] job {job_id} already claimed or finished (status={job.get('status')})")
+            return
+
+        # Mark PDF as processing immediately so stuck jobs are visible
+        await db.pdfs.update_one({"id": pdf_id}, {"$set": {"processing_status": "processing", "processing_error": None}})
+
+        p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
+        if not p:
+            # PDF deleted after we claimed it — mark job failed
+            await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "failed", "error": "PDF non trovato", "updated_at": iso_now()}})
+            logger.warning(f"[process_pdf_job] PDF not found after claim: {pdf_id}")
+            return
+
+        user_id = p["owner_id"]
+
+        # Load PDF bytes (local file or download from Drive)
         data = await load_pdf_bytes_for_processing(p)
         if data[:4] != b"%PDF":
             raise RuntimeError("Non e un PDF valido")
+
         original_size = len(data)
         content_hash = hashlib.sha256(data).hexdigest()
+
+        # Duplicate detection
         dup = await db.pdfs.find_one(
             {"owner_id": user_id, "content_hash": content_hash, "id": {"$ne": pdf_id}, "processing_status": {"$ne": "failed"}},
             {"_id": 0, "id": 1, "title": 1},
@@ -261,21 +278,23 @@ async def process_pdf_job(job_id: str) -> None:
             await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "failed", "error": "duplicate", "updated_at": iso_now()}})
             await log_event("pdf.duplicate", f"Duplicato rilevato in background: {p.get('filename')}", user_id=user_id, level="warn", meta={"pdf_id": pdf_id, "existing_id": dup["id"]})
             return
+
+        # Compress and extract text/OCR
         compressed_data, was_compressed = await asyncio.to_thread(compress_pdf, data)
         data = compressed_data
         pages_text, total_pages, used_ocr = await asyncio.to_thread(extract_pages, data)
+
+        # Save compressed file
         fpath = Path(p.get("file_path") or (UPLOAD_DIR / user_id / f"{pdf_id}.pdf"))
         fpath.parent.mkdir(parents=True, exist_ok=True)
         await asyncio.to_thread(fpath.write_bytes, data)
-        page_docs = [{
-            "pdf_id": pdf_id,
-            "owner_id": user_id,
-            "page": i + 1,
-            "text": (t or "")[:50000],
-        } for i, t in enumerate(pages_text)]
+
+        # Save pages to MongoDB
+        page_docs = [{"pdf_id": pdf_id, "owner_id": user_id, "page": i + 1, "text": (t or "")[:50000]} for i, t in enumerate(pages_text)]
         await db.pdf_pages.delete_many({"pdf_id": pdf_id})
         if page_docs:
             await db.pdf_pages.insert_many(page_docs)
+
         storage_type = "google_drive" if p.get("drive_file_id") else "local"
         await db.pdfs.update_one({"id": pdf_id}, {"$set": {
             "size": len(data),
@@ -292,11 +311,16 @@ async def process_pdf_job(job_id: str) -> None:
         }})
         await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "done", "updated_at": iso_now(), "finished_at": iso_now()}})
         await log_event("pdf.upload", f"Ricevuto e indicizzato: {p.get('filename')} ({total_pages}pp{', OCR' if used_ocr else ''})", user_id=user_id, meta={"pdf_id": pdf_id, "pages": total_pages, "ocr": used_ocr, "compressed": was_compressed, "storage_type": storage_type})
+
     except Exception as e:
-        logger.exception("background pdf processing failed")
-        await db.pdfs.update_one({"id": pdf_id}, {"$set": {"processing_status": "failed", "processing_error": str(e)[:500]}})
-        await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "failed", "error": str(e)[:500], "updated_at": iso_now(), "finished_at": iso_now()}})
-        await log_event("pdf.error", f"Indicizzazione fallita per {p.get('filename')}: {e}", user_id=user_id, level="error", meta={"pdf_id": pdf_id, "stage": "background_process"})
+        # Any unexpected error: ensure PDF and job are marked failed
+        logger.exception(f"[process_pdf_job] job {job_id} failed: {e}")
+        try:
+            await db.pdfs.update_one({"id": pdf_id}, {"$set": {"processing_status": "failed", "processing_error": str(e)[:500]}})
+            await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "failed", "error": str(e)[:500], "updated_at": iso_now(), "finished_at": iso_now()}})
+        except Exception as db_ex:
+            logger.error(f"[process_pdf_job] failed to update DB after error: {db_ex}")
+        await log_event("pdf.error", f"Indicizzazione fallita per {p.get('filename') if p else pdf_id}: {e}", user_id=user_id if p else None, level="error", meta={"pdf_id": pdf_id if pdf_id else None, "stage": "background_process"})
 
 
 async def require_admin(user_id: str = Depends(get_current_user_id)) -> str:
@@ -1218,6 +1242,66 @@ async def process_next_upload_job(secret: Optional[str] = Query(None)):
     await process_pdf_job(job["id"])
     refreshed = await db.upload_jobs.find_one({"id": job["id"]}, {"_id": 0})
     return {"ok": True, "processed": True, "job": refreshed}
+
+
+@api.post("/jobs/recover-stuck")
+async def recover_stuck_jobs(secret: Optional[str] = Query(None)):
+    """Find and re-queue PDFs stuck in 'queued' or 'processing' for too long.
+
+    This handles cases where:
+    - The background task never ran (e.g. server restart during upload)
+    - The job is orphaned (job record exists but PDF is stuck)
+
+    Callers should pass ?secret=<WORKER_SECRET> in production.
+    """
+    if WORKER_SECRET and secret != WORKER_SECRET:
+        raise HTTPException(status_code=403, detail="Worker secret non valido")
+
+    # Find PDFs stuck in processing for > 10 minutes (likely orphaned)
+    stuck_threshold = datetime.now(timezone.utc) - timedelta(minutes=10)
+    stuck_pdfs = await db.pdfs.find({
+        "processing_status": {"$in": ["queued", "processing"]},
+        "created_at": {"$lt": stuck_threshold.isoformat()},
+    }, {"_id": 0}).to_list(1000)
+
+    recovered = []
+    orphaned_jobs = 0
+    errors = []
+
+    for p in stuck_pdfs:
+        pdf_id = p["id"]
+
+        try:
+            # Check if there's an existing job for this PDF
+            existing_job = await db.upload_jobs.find_one({"pdf_id": pdf_id})
+
+            if existing_job:
+                # Reset both PDF and job to 'queued' so it can be reprocessed
+                await db.pdfs.update_one({"id": pdf_id}, {"$set": {"processing_status": "queued", "processing_error": None}})
+                await db.upload_jobs.update_one(
+                    {"id": existing_job["id"]},
+                    {"$set": {"status": "queued", "error": "stuck_recovery", "updated_at": iso_now()}},
+                )
+                orphaned_jobs += 1
+                logger.info(f"[recover_stuck] reset stuck job {existing_job['id']} and PDF {pdf_id}")
+            else:
+                # No job exists — create a new one
+                job_id = await queue_pdf_processing(pdf_id, p["owner_id"])
+                recovered.append({"pdf_id": pdf_id, "title": p.get("title", ""), "job_id": job_id})
+                logger.info(f"[recover_stuck] created new job {job_id} for stuck PDF {pdf_id}")
+        except Exception as e:
+            errors.append({"pdf_id": pdf_id, "error": str(e)})
+            logger.error(f"[recover_stuck] failed to recover PDF {pdf_id}: {e}")
+
+    await log_event("jobs.recovered", f"Recovered {len(recovered)} PDFs, reset {orphaned_jobs} stuck jobs", meta={"recovered": len(recovered), "orphaned": orphaned_jobs, "errors": len(errors)})
+    return {
+        "ok": True,
+        "recovered": len(recovered),
+        "orphaned_jobs_reset": orphaned_jobs,
+        "errors": len(errors),
+        "details": recovered,
+        "error_list": errors,
+    }
 
 
 @api.post("/pdfs/upload")
