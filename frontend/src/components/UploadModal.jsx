@@ -4,11 +4,19 @@ import { UploadCloud, X, FileText, CheckCircle2, AlertCircle } from "lucide-reac
 import axios from "axios";
 import api from "@/lib/api";
 
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function makeFileId(file) {
   const randomPart = typeof crypto !== "undefined" && crypto.randomUUID
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   return `${file.name}-${file.size}-${file.lastModified}-${randomPart}`;
+}
+
+function updateUploadResult(results, clientKey, patch) {
+  return results?.map((item) => (item.client_key === clientKey ? { ...item, ...patch } : item));
 }
 
 function resultKey(result) {
@@ -27,6 +35,43 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
   const [progress, setProgress] = useState(0);
   const abortRef = useRef(null);
   const mountedRef = useRef(false);
+
+  const pollPdfStatus = async (pdfId, clientKey, signal) => {
+    const maxAttempts = 15;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      if (signal.aborted) return;
+      await wait(2000);
+      if (signal.aborted) return;
+
+      try {
+        const statusRes = await api.get(`/pdfs/${pdfId}/status`, { signal });
+        const { status, error, page_count } = statusRes.data;
+        const processingStatus = status === "ready" ? "ready" : status === "error" ? "error" : "pending";
+
+        setResults((prev) => updateUploadResult(prev, clientKey, {
+          status: processingStatus,
+          error,
+          pages: page_count,
+        }));
+
+        if (status === "ready" || status === "error") {
+          return;
+        }
+      } catch (e) {
+        if (isCanceled(e)) return;
+        // ignore transient errors and continue polling
+      }
+    }
+  };
+
+  const pollPendingPdfStatuses = async (currentResults, signal) => {
+    const pendingResults = (currentResults || []).filter(
+      (item) => item.ok && item.pdf_id && item.status !== "ready" && item.status !== "error"
+    );
+    if (!pendingResults.length) return;
+    await Promise.all(pendingResults.map((item) => pollPdfStatus(item.pdf_id, item.client_key, signal)));
+  };
 
   useEffect(() => {
     mountedRef.current = true;
@@ -123,13 +168,20 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
           pages: completed.data.pdf?.pages || 0,
           ocr: false,
           compressed: false,
-          processing_status: completed.data.processing_status || completed.data.pdf?.processing_status || "queued",
+          status: completed.data.status || completed.data.pdf?.status || "pending",
           storage_type: completed.data.pdf?.storage_type || signedData.storage_type,
           client_key: id,
         });
       }
       if (mountedRef.current) setProgress(100);
-      setResults(uploadResults);
+      if (mountedRef.current) {
+        setResults(uploadResults);
+        pollPendingPdfStatuses(uploadResults, ctrl.signal).catch((err) => {
+          if (!isCanceled(err)) {
+            console.error("PDF status polling failed", err);
+          }
+        });
+      }
       const ok = uploadResults.filter((x) => x.ok).length;
       const fail = uploadResults.length - ok;
       if (libraryId && ok > 0) {
@@ -218,7 +270,13 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
                     <span className="truncate text-sm">{r.name}</span>
                   </div>
                   <div className="text-mono text-xs text-muted2">
-                    {r.ok ? (r.processing_status === "ready" ? `${r.pages}pp${r.ocr ? " - OCR" : ""}${r.compressed ? " - compresso" : ""}` : "RICEVUTO - indicizzazione in coda") : (r.duplicate ? "DUPLICATO - gia in libreria" : r.error)}
+                    {r.ok ? (
+                      r.status === "ready" ?
+                        `${r.pages}pp${r.ocr ? " - OCR" : ""}${r.compressed ? " - compresso" : ""}` :
+                        r.status === "error" ?
+                          `ERRORE: ${r.error || "Indicizzazione fallita"}` :
+                          "RICEVUTO - indicizzazione in coda"
+                    ) : (r.duplicate ? "DUPLICATO - gia in libreria" : r.error)}
                   </div>
                 </li>
               ))}

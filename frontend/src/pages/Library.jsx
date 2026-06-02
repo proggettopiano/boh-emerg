@@ -164,7 +164,7 @@ export default function Library() {
                   <div className="font-display text-lg font-medium group-hover:underline decoration-2 underline-offset-4 truncate">{p.title}</div>
                   <div className="flex items-center gap-2 flex-wrap mt-0.5">
                     <span className="text-mono text-xs text-muted2">
-                      {p.created_at?.slice(0, 10)} - {p.processing_status === "ready" || !p.processing_status ? `${p.pages}pp` : p.processing_status === "failed" ? "errore indicizzazione" : "indicizzazione in corso"} - {(p.size / 1024).toFixed(0)} KB{p.used_ocr ? " - OCR" : ""}
+                      {p.created_at?.slice(0, 10)} - {p.status === "ready" ? `${p.pages}pp` : p.status === "error" ? "errore indicizzazione" : "indicizzazione in corso"} - {(p.size / 1024).toFixed(0)} KB{p.used_ocr ? " - OCR" : ""}
                     </span>
                     <span className={`text-mono text-[10px] px-1.5 py-0.5 rounded-sm ${p.storage_type === "google_drive" ? "bg-ink text-white" : "bg-canvas3 text-muted2"}`} title={p.storage_type === "google_drive" ? `Drive - ${p.drive_file_id}` : `Locale - ${p.file_path}`}>
                       {p.storage_type === "google_drive" ? "DRIVE" : "LOCALE"}
