@@ -314,7 +314,8 @@ export default function PdfViewer() {
   }
 
   // Block viewer when PDF is still being processed
-  const isProcessing = meta && meta.processing_status && meta.processing_status !== "ready" && meta.processing_status !== "failed";
+  const pdfStatus = meta?.status || meta?.processing_status;
+  const isProcessing = pdfStatus && pdfStatus !== "ready" && pdfStatus !== "failed" && pdfStatus !== "error";
   if (isProcessing) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-12 text-center" data-testid="pdf-viewer-processing">
