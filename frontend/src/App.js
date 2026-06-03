@@ -59,6 +59,15 @@ function GoogleOAuthReturn() {
       try {
         const redirect_uri = getGoogleRedirectUri();
 
+        if (mode === "master") {
+          await api.post("/admin/master-drive/connect", {
+            code,
+            redirect_uri,
+          });
+          navigate("/admin", { replace: true });
+          return;
+        }
+
         const r = await api.post("/auth/google", {
           code,
           redirect_uri,
