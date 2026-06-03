@@ -295,30 +295,6 @@ async def process_pdf_job(job_id: str) -> None:
         user_id = p["owner_id"]
         logger.info(f"[STEP 2] pdf found job_id={job_id} pdf_id={pdf_id} filename={p.get('filename')} storage={p.get('storage_type')} file_path={p.get('file_path')} ts={iso_now()}")
 
-        pdf_id = job["pdf_id"]
-        _step = "STEP 1"
-        logger.info(f"[STEP 1] job loaded job_id={job_id} pdf_id={pdf_id} job_status={job.get('status')} ts={iso_now()}")
-
-        now = iso_now()
-        claimed = await db.upload_jobs.update_one(
-            {"id": job_id, "status": {"$in": ["queued", "failed_retry"]}},
-            {"$set": {"status": "processing", "started_at": now, "updated_at": now}, "$inc": {"attempts": 1}},
-        )
-        if claimed.matched_count == 0:
-            logger.info(f"[PDF JOB EXIT] claim failed job_id={job_id} pdf_id={pdf_id} (already claimed or finished)")
-            return
-
-        await db.pdfs.update_one({"id": pdf_id}, {"$set": {"status": "processing", "error": None}})
-
-        _step = "STEP 2"
-        p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
-        if not p:
-            await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "failed", "error": "PDF non trovato", "updated_at": iso_now()}})
-            logger.warning(f"[PDF JOB EXIT] PDF not found after claim job_id={job_id} pdf_id={pdf_id}")
-            return
-        user_id = p["owner_id"]
-        logger.info(f"[STEP 2] pdf found job_id={job_id} pdf_id={pdf_id} filename={p.get('filename')} storage={p.get('storage_type')} file_path={p.get('file_path')} ts={iso_now()}")
-
         _step = "STEP 3"
         logger.info(f"[STEP 3] loading bytes job_id={job_id} pdf_id={pdf_id} ts={iso_now()}")
         data = await load_pdf_bytes_for_processing(p)
@@ -1260,6 +1236,11 @@ async def put_signed_upload(token: str, request: Request):
             tmp.unlink(missing_ok=True)
             await db.upload_sessions.update_one({"id": session["id"]}, {"$set": {"status": "failed", "error": "invalid_pdf", "updated_at": iso_now()}})
             raise HTTPException(status_code=400, detail="Non e un PDF valido")
+        expected_size = session.get("expected_size")
+        if expected_size and written != expected_size:
+            tmp.unlink(missing_ok=True)
+            await db.upload_sessions.update_one({"id": session["id"]}, {"$set": {"status": "failed", "error": "size_mismatch", "updated_at": iso_now()}})
+            raise HTTPException(status_code=400, detail="Dimensione upload diversa da quella dichiarata")
         tmp.replace(fpath)
     except HTTPException:
         raise
@@ -1583,6 +1564,10 @@ async def get_pdf_status(pdf_id: str, user_id: str = Depends(get_current_user_id
         "status": status,
         "error": p.get("error"),
         "page_count": p.get("pages", 0),
+        "used_ocr": p.get("used_ocr", False),
+        "compressed": p.get("compressed", False),
+        "storage_type": p.get("storage_type", "local"),
+        "processed_at": p.get("processed_at"),
     }
 
 

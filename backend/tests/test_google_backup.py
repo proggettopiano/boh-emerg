@@ -10,7 +10,7 @@ try:
 except Exception:
     pass
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://sheet-music-hub-4.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8000").rstrip("/")
 EXPECTED_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "239524592693-qhl4tacfd7t1ids24bq9tq5dj31a8mlk.apps.googleusercontent.com")
 
 

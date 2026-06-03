@@ -6,6 +6,14 @@ import api from "@/lib/api";
 import UploadModal from "@/components/UploadModal";
 import TagEditor from "@/components/TagEditor";
 
+function formatBytes(bytes = 0) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 KB";
+  const units = ["B", "KB", "MB", "GB"];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / (1024 ** index);
+  return `${value >= 10 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
+}
+
 export default function Library() {
   const [items, setItems] = useState([]);
   const [tags, setTags] = useState([]);
@@ -127,7 +135,7 @@ export default function Library() {
         <div className="ml-auto flex items-center gap-2">
           <span className="overline">ORDINA</span>
           <select value={sort} onChange={(e) => setSort(e.target.value)} className="border border-rule rounded-sm px-3 py-1.5 text-sm bg-white" data-testid="library-sort">
-            <option value="date_desc">Piu recenti</option>
+            <option value="date_desc">Più recenti</option>
             <option value="date_asc">Meno recenti</option>
             <option value="name_asc">Nome A-Z</option>
             <option value="name_desc">Nome Z-A</option>
@@ -164,7 +172,7 @@ export default function Library() {
                   <div className="font-display text-lg font-medium group-hover:underline decoration-2 underline-offset-4 truncate">{p.title}</div>
                   <div className="flex items-center gap-2 flex-wrap mt-0.5">
                     <span className="text-mono text-xs text-muted2">
-                      {p.created_at?.slice(0, 10)} - {p.status === "ready" ? `${p.pages}pp` : p.status === "error" ? "errore indicizzazione" : "indicizzazione in corso"} - {(p.size / 1024).toFixed(0)} KB{p.used_ocr ? " - OCR" : ""}
+                      {p.created_at?.slice(0, 10)} - {p.status === "ready" ? `${p.pages}pp` : p.status === "error" ? "errore indicizzazione" : "indicizzazione in corso"} - {formatBytes(p.size)}{p.used_ocr ? " - OCR" : ""}{p.compressed ? " - compresso" : ""}
                     </span>
                     <span className={`text-mono text-[10px] px-1.5 py-0.5 rounded-sm ${p.storage_type === "google_drive" ? "bg-ink text-white" : "bg-canvas3 text-muted2"}`} title={p.storage_type === "google_drive" ? `Drive - ${p.drive_file_id}` : `Locale - ${p.file_path}`}>
                       {p.storage_type === "google_drive" ? "DRIVE" : "LOCALE"}

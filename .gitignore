@@ -121,3 +121,8 @@ credentials.json
 .credentials
 frontend/node_modules/.cache/default-development/0.pack
 .env*.local
+
+# Keep safe sample environment templates versioned
+!.env.example
+!*.env.example
+!backend/.env.example

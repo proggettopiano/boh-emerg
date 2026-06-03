@@ -12,7 +12,7 @@ try:
 except Exception:
     pass  # .env.test not found, use env vars or defaults
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://sheet-music-hub-4.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8000").rstrip("/")
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@scorelib.app")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "Admin02009!")  # env var or fallback
 

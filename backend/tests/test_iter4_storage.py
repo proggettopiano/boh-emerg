@@ -16,7 +16,7 @@ import pytest
 import requests
 from reportlab.pdfgen import canvas
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://sheet-music-hub-4.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8000").rstrip("/")
 ADMIN_EMAIL = "admin@scorelib.app"
 ADMIN_PASSWORD = "Admin02009!"
 ADMIN_LOG_PWD = "Rome02009"

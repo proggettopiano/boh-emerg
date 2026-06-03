@@ -13,7 +13,7 @@ try:
 except Exception:
     pass
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://sheet-music-hub-4.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8000").rstrip("/")
 
 
 # ---- helper fixture: a normal (non-admin) registered user

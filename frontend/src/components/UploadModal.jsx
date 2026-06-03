@@ -46,13 +46,16 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
 
       try {
         const statusRes = await api.get(`/pdfs/${pdfId}/status`, { signal });
-        const { status, error, page_count } = statusRes.data;
+        const { status, error, page_count, used_ocr, compressed, storage_type } = statusRes.data;
         const processingStatus = status === "ready" ? "ready" : status === "error" ? "error" : "pending";
 
         setResults((prev) => updateUploadResult(prev, clientKey, {
           status: processingStatus,
           error,
           pages: page_count,
+          ocr: Boolean(used_ocr),
+          compressed: Boolean(compressed),
+          storage_type,
         }));
 
         if (status === "ready" || status === "error") {
@@ -166,8 +169,8 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
           ok: true,
           pdf_id: signedData.pdf_id,
           pages: completed.data.pdf?.pages || 0,
-          ocr: false,
-          compressed: false,
+          ocr: Boolean(completed.data.pdf?.used_ocr),
+          compressed: Boolean(completed.data.pdf?.compressed),
           status: completed.data.status || completed.data.pdf?.status || "pending",
           storage_type: completed.data.pdf?.storage_type || signedData.storage_type,
           client_key: id,
@@ -275,8 +278,8 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
                         `${r.pages}pp${r.ocr ? " - OCR" : ""}${r.compressed ? " - compresso" : ""}` :
                         r.status === "error" ?
                           `ERRORE: ${r.error || "Indicizzazione fallita"}` :
-                          "RICEVUTO - indicizzazione in coda"
-                    ) : (r.duplicate ? "DUPLICATO - gia in libreria" : r.error)}
+                          `RICEVUTO - ${r.storage_type === "google_drive" ? "Drive" : "locale"}, indicizzazione in coda`
+                    ) : (r.duplicate ? "DUPLICATO - già in libreria" : r.error)}
                   </div>
                 </li>
               ))}
