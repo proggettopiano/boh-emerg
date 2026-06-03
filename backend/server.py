@@ -231,69 +231,31 @@ async def queue_pdf_processing(pdf_id: str, user_id: str) -> str:
     return job["id"]
 
 
-async def load_pdf_bytes_for_processing(p: dict, timeout_seconds: float = 20.0) -> bytes:
-    """Load PDF bytes from local file or Drive, with hard timeout.
-
-    Raises asyncio.TimeoutError if the operation exceeds timeout_seconds.
-    """
-    async def _load():
-        fpath = Path(p.get("file_path") or "")
-        if fpath.exists():
-            return await asyncio.to_thread(fpath.read_bytes)
-        if p.get("drive_file_id"):
-            refresh = await get_drive_refresh_for_pdf(p)
-            if not refresh:
-                raise RuntimeError("Credenziali Drive non disponibili")
-            data = await asyncio.to_thread(gi.download_from_drive, refresh, p["drive_file_id"])
-            fpath.parent.mkdir(parents=True, exist_ok=True)
-            await asyncio.to_thread(fpath.write_bytes, data)
-            return data
-        raise RuntimeError("File non disponibile nello storage")
-
-    return await asyncio.wait_for(_load(), timeout=timeout_seconds)
+async def load_pdf_bytes_for_processing(p: dict) -> bytes:
+    fpath = Path(p.get("file_path") or "")
+    if fpath.exists():
+        return await asyncio.to_thread(fpath.read_bytes)
+    if p.get("drive_file_id"):
+        refresh = await get_drive_refresh_for_pdf(p)
+        if not refresh:
+            raise RuntimeError("Credenziali Drive non disponibili")
+        data = await asyncio.to_thread(gi.download_from_drive, refresh, p["drive_file_id"])
+        await asyncio.to_thread(lambda: fpath.parent.mkdir(parents=True, exist_ok=True))
+        await asyncio.to_thread(fpath.write_bytes, data)
+        return data
+    raise RuntimeError("File non disponibile nello storage")
 
 
 async def process_pdf_job(job_id: str) -> None:
-    """Process a queued PDF job: load, compress, extract text/OCR, save pages."""
-    import traceback as _tb
-    import time as _time
-
-    _step = "INIT"
-    pdf_id = None
-    p = None
-    user_id = None
-
-    logger.info(f"[PDF JOB START] job_id={job_id} ts={iso_now()}")
-    _t0 = _time.time()
-
+    job = await db.upload_jobs.find_one({"id": job_id}, {"_id": 0})
+    if not job:
+        return
+    _t0 = datetime.now(timezone.utc)
     try:
         job = await db.upload_jobs.find_one({"id": job_id}, {"_id": 0})
         if not job:
             logger.warning(f"[PDF JOB EXIT] job not found job_id={job_id}")
             return
-        pdf_id = job["pdf_id"]
-        _step = "STEP 1"
-        logger.info(f"[STEP 1] job loaded job_id={job_id} pdf_id={pdf_id} job_status={job.get('status')} ts={iso_now()}")
-
-        now = iso_now()
-        claimed = await db.upload_jobs.update_one(
-            {"id": job_id, "status": {"$in": ["queued", "failed_retry"]}},
-            {"$set": {"status": "processing", "started_at": now, "updated_at": now}, "$inc": {"attempts": 1}},
-        )
-        if claimed.matched_count == 0:
-            logger.info(f"[PDF JOB EXIT] claim failed job_id={job_id} pdf_id={pdf_id} (already claimed or finished)")
-            return
-
-        await db.pdfs.update_one({"id": pdf_id}, {"$set": {"status": "processing", "error": None}})
-
-        _step = "STEP 2"
-        p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
-        if not p:
-            await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "failed", "error": "PDF non trovato", "updated_at": iso_now()}})
-            logger.warning(f"[PDF JOB EXIT] PDF not found after claim job_id={job_id} pdf_id={pdf_id}")
-            return
-        user_id = p["owner_id"]
-        logger.info(f"[STEP 2] pdf found job_id={job_id} pdf_id={pdf_id} filename={p.get('filename')} storage={p.get('storage_type')} file_path={p.get('file_path')} ts={iso_now()}")
 
         pdf_id = job["pdf_id"]
         _step = "STEP 1"
@@ -308,7 +270,7 @@ async def process_pdf_job(job_id: str) -> None:
             logger.info(f"[PDF JOB EXIT] claim failed job_id={job_id} pdf_id={pdf_id} (already claimed or finished)")
             return
 
-        await db.pdfs.update_one({"id": pdf_id}, {"$set": {"status": "processing", "error": None}})
+        await db.pdfs.update_one({"id": pdf_id}, {"$set": {"processing_status": "processing", "processing_error": None}})
 
         _step = "STEP 2"
         p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
@@ -321,9 +283,11 @@ async def process_pdf_job(job_id: str) -> None:
 
         _step = "STEP 3"
         logger.info(f"[STEP 3] loading bytes job_id={job_id} pdf_id={pdf_id} ts={iso_now()}")
+        logger.info(f"[TRACE] before load_pdf_bytes_for_processing job_id={job_id} pdf_id={pdf_id} file_path={p.get('file_path')} storage={p.get('storage_type')} drive_file_id={p.get('drive_file_id')}")
         data = await load_pdf_bytes_for_processing(p)
         if data[:4] != b"%PDF":
             raise RuntimeError("Non e un PDF valido")
+        logger.info(f"[TRACE] after load_pdf_bytes_for_processing job_id={job_id} pdf_id={pdf_id} bytes={len(data)}")
 
         _step = "STEP 4"
         logger.info(f"[STEP 4] bytes loaded job_id={job_id} pdf_id={pdf_id} size={len(data)} ts={iso_now()}")
@@ -346,24 +310,28 @@ async def process_pdf_job(job_id: str) -> None:
             await log_event("pdf.duplicate", f"Duplicato rilevato in background: {p.get('filename')}", user_id=user_id, level="warn", meta={"pdf_id": pdf_id, "existing_id": dup["id"]})
             logger.info(f"[PDF JOB EXIT] duplicate job_id={job_id} pdf_id={pdf_id} dup_of={dup['id']}")
             return
-
         _step = "STEP 5"
-        logger.info(f"[STEP 5] compress start job_id={job_id} pdf_id={pdf_id} ts={iso_now()}")
+        logger.info(f"[TRACE] before compress_pdf job_id={job_id} pdf_id={pdf_id} size={len(data)}")
         process = psutil.Process()
         mem_before = process.memory_info().rss / (1024 * 1024)  # MB
         compressed_data, was_compressed = await asyncio.to_thread(compress_pdf, data)
         data = compressed_data
+        logger.info(f"[TRACE] after compress_pdf job_id={job_id} pdf_id={pdf_id} size_after={len(data)} was_compressed={was_compressed}")
 
         _step = "STEP 6"
         logger.info(f"[STEP 6] compress done job_id={job_id} pdf_id={pdf_id} was_compressed={was_compressed} size_after={len(data)} ts={iso_now()}")
 
         _step = "STEP 7"
+        logger.info(f"[TRACE] before extract_pages job_id={job_id} pdf_id={pdf_id} size={len(data)}")
         logger.info(f"[STEP 7] extract start job_id={job_id} pdf_id={pdf_id} ts={iso_now()}")
         pages_text, total_pages, used_ocr = await asyncio.to_thread(extract_pages, data)
+        logger.info(f"[TRACE] after extract_pages job_id={job_id} pdf_id={pdf_id} pages={total_pages} ocr={used_ocr}")
         mem_after = process.memory_info().rss / (1024 * 1024)
         logger.info(f"PDF {pdf_id}: RAM before={mem_before:.1f}MB, after={mem_after:.1f}MB, delta={mem_after-mem_before:.1f}MB")
+
         _step = "STEP 8"
         logger.info(f"[STEP 8] extract done job_id={job_id} pdf_id={pdf_id} pages={total_pages} ocr={used_ocr} ts={iso_now()}")
+
         _step = "STEP 9"
         logger.info(f"[STEP 9] writing file job_id={job_id} pdf_id={pdf_id} ts={iso_now()}")
         fpath = Path(p.get("file_path") or (UPLOAD_DIR / user_id / f"{pdf_id}.pdf"))
@@ -394,14 +362,18 @@ async def process_pdf_job(job_id: str) -> None:
         await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "done", "updated_at": iso_now(), "finished_at": iso_now()}})
         await log_event("pdf.upload", f"Ricevuto e indicizzato: {p.get('filename')} ({total_pages}pp{', OCR' if used_ocr else ''})", user_id=user_id, meta={"pdf_id": pdf_id, "pages": total_pages, "ocr": used_ocr, "compressed": was_compressed, "storage_type": storage_type})
 
-        _elapsed = round(_time.time() - _t0, 2)
+        _elapsed = round((datetime.now(timezone.utc) - _t0).total_seconds(), 2)
         logger.info(f"[PDF JOB DONE] job_id={job_id} pdf_id={pdf_id} pages={total_pages} elapsed={_elapsed}s ts={iso_now()}")
 
     except Exception as e:
-        _elapsed = round(_time.time() - _t0, 2)
-        logger.error(f"[PDF JOB FAILED] job_id={job_id} pdf_id={pdf_id} last_step={_step} elapsed={_elapsed}s error={e}")
-        logger.error(f"[PDF JOB TRACEBACK] job_id={job_id}\n{''.join(_tb.format_exception(type(e), e, e.__traceback__))}")
-        await db.pdfs.update_one({"id": pdf_id}, {"$set": {"status": "error", "error": str(e)[:500]}})
+        import traceback as _traceback
+        logger.error(f"[PDF JOB FAILED] job_id={job_id} pdf_id={pdf_id} last_step={_step} error={e}")
+        logger.error(f"[PDF JOB TRACEBACK] job_id={job_id}\n{''.join(_traceback.format_exception(type(e), e, e.__traceback__))}")
+        logger.exception("background pdf processing failed")
+        try:
+            await db.pdfs.update_one({"id": pdf_id}, {"$set": {"status": "error", "error": str(e)[:500]}})
+        except Exception as db_ex:
+            logger.error(f"[PDF JOB DB-FAIL] could not update pdf status after error: {db_ex}")
         await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "failed", "error": str(e)[:500], "updated_at": iso_now(), "finished_at": iso_now()}})
         await log_event("pdf.error", f"Indicizzazione fallita per {p.get('filename') if p else pdf_id}: {e}", user_id=user_id, level="error", meta={"pdf_id": pdf_id, "stage": "background_process", "last_step": _step})
 
@@ -1339,10 +1311,7 @@ async def recover_stuck_jobs(secret: Optional[str] = Query(None)):
     # Find PDFs stuck in processing for > 10 minutes (likely orphaned)
     stuck_threshold = datetime.now(timezone.utc) - timedelta(minutes=10)
     stuck_pdfs = await db.pdfs.find({
-        "$or": [
-            {"status": "pending"},
-            {"processing_status": {"$in": ["queued", "processing"]}},
-        ],
+        "processing_status": {"$in": ["queued", "processing"]},
         "created_at": {"$lt": stuck_threshold.isoformat()},
     }, {"_id": 0}).to_list(1000)
 
@@ -1358,8 +1327,8 @@ async def recover_stuck_jobs(secret: Optional[str] = Query(None)):
             existing_job = await db.upload_jobs.find_one({"pdf_id": pdf_id})
 
             if existing_job:
-                # Reset both PDF and job to pending so it can be reprocessed
-                await db.pdfs.update_one({"id": pdf_id}, {"$set": {"status": "pending", "error": None}})
+                # Reset both PDF and job to 'queued' so it can be reprocessed
+                await db.pdfs.update_one({"id": pdf_id}, {"$set": {"processing_status": "queued", "processing_error": None}})
                 await db.upload_jobs.update_one(
                     {"id": existing_job["id"]},
                     {"$set": {"status": "queued", "error": "stuck_recovery", "updated_at": iso_now()}},
