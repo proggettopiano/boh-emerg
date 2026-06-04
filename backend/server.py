@@ -69,6 +69,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+api = APIRouter(prefix="/api")
+
 logger = logging.getLogger("scorelib")
 logging.basicConfig(level=logging.INFO)
 
@@ -93,11 +95,8 @@ async def ensure_indexes():
         try:
             await collection.create_index(keys, **kwargs)
         except Exception as e:
-            # Se c'è un conflitto di opzioni (es. non-unique vs unique)
             if "IndexKeySpecsConflict" in str(e) or "IndexOptionsConflict" in str(e):
                 try:
-                    # Tenta di identificare il nome dell'indice dai keys per il drop
-                    # In motor/pymongo, l'indice per [("a", 1), ("b", 1)] si chiama solitamente "a_1_b_1"
                     idx_name = "_".join([f"{k}_{v}" for k, v in (keys if isinstance(keys, list) else [(keys, 1)])])
                     logger.warning(f"Conflitto indice su {collection.name}.{idx_name}, tento drop/recreate.")
                     await collection.drop_index(idx_name)
@@ -168,7 +167,7 @@ async def require_admin(user_id: str = Depends(get_current_user_id)):
         raise HTTPException(status_code=403, detail="Solo amministratori")
     return user_id
 
-@app.post("/auth/login")
+@api.post("/auth/login")
 async def login(payload: LoginIn, request: Request):
     ip = get_client_ip(request)
     email = payload.email.lower().strip()
@@ -195,7 +194,7 @@ async def login(payload: LoginIn, request: Request):
 
     raise HTTPException(status_code=404, detail="Email non riconosciuta")
 
-@app.post("/auth/request-access")
+@api.post("/auth/request-access")
 async def request_access(payload: AccessRequestIn, request: Request):
     ip = get_client_ip(request)
     await db.access_requests.update_one(
@@ -205,7 +204,7 @@ async def request_access(payload: AccessRequestIn, request: Request):
     )
     return {"message": "Richiesta inviata."}
 
-@app.get("/auth/me")
+@api.get("/auth/me")
 async def me(user_id: str = Depends(get_current_user_id)):
     u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     if not u: raise HTTPException(status_code=404, detail="Utente non trovato")
@@ -215,7 +214,7 @@ async def me(user_id: str = Depends(get_current_user_id)):
 async def get_master_drive():
     return await db.config.find_one({"key": "master_drive"})
 
-@app.get("/backup/status")
+@api.get("/backup/status")
 async def backup_status(user_id: str = Depends(get_current_user_id)):
     master = await get_master_drive()
     has_master = bool(master and master.get("refresh_token"))
@@ -228,7 +227,7 @@ async def backup_status(user_id: str = Depends(get_current_user_id)):
         "pending_pdfs": max(0, total - backed),
     }
 
-@app.post("/backup/run")
+@api.post("/backup/run")
 async def backup_run(user_id: str = Depends(get_current_user_id)):
     master = await get_master_drive()
     if not master: raise HTTPException(status_code=400, detail="Master Drive non connesso")
@@ -249,13 +248,13 @@ def _serialize_pdf(p: dict) -> dict:
         "created_at": p.get("created_at"),
     }
 
-@app.get("/pdfs")
+@api.get("/pdfs")
 async def list_pdfs(user_id: str = Depends(get_current_user_id)):
     cursor = db.pdfs.find({}, {"_id": 0}).sort("created_at", -1)
     items = await cursor.to_list(1000)
     return {"items": [_serialize_pdf(i) for i in items]}
 
-@app.post("/pdfs/upload")
+@api.post("/pdfs/upload")
 async def upload_pdf(background_tasks: BackgroundTasks, file: UploadFile = File(...), user_id: str = Depends(get_current_user_id)):
     content = await file.read()
     if len(content) > 50 * 1024 * 1024: raise HTTPException(status_code=413, detail="File troppo grande")
@@ -276,26 +275,26 @@ async def upload_pdf(background_tasks: BackgroundTasks, file: UploadFile = File(
     
     return {"results": [{"ok": True, "pdf_id": pdf_id}]}
 
-@app.get("/pdfs/{pdf_id}/status")
+@api.get("/pdfs/{pdf_id}/status")
 async def get_pdf_status(pdf_id: str, user_id: str = Depends(get_current_user_id)):
     p = await db.pdfs.find_one({"id": pdf_id}, {"status": 1, "pages": 1})
     if not p: raise HTTPException(status_code=404, detail="Non trovato")
     return p
 
-@app.get("/pdfs/{pdf_id}")
+@api.get("/pdfs/{pdf_id}")
 async def get_pdf(pdf_id: str, user_id: str = Depends(get_current_user_id)):
     p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
     if not p: raise HTTPException(status_code=404, detail="PDF non trovato")
     return _serialize_pdf(p)
 
-@app.patch("/pdfs/{pdf_id}")
+@api.patch("/pdfs/{pdf_id}")
 async def patch_pdf(pdf_id: str, payload: PdfPatchIn, user_id: str = Depends(get_current_user_id)):
     update = payload.model_dump(exclude_none=True)
     if update: await db.pdfs.update_one({"id": pdf_id}, {"$set": update})
     p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
     return _serialize_pdf(p)
 
-@app.delete("/pdfs/{pdf_id}")
+@api.delete("/pdfs/{pdf_id}")
 async def delete_pdf(pdf_id: str, user_id: str = Depends(require_admin)):
     p = await db.pdfs.find_one({"id": pdf_id})
     if p and os.path.exists(p["file_path"]): os.remove(p["file_path"])
@@ -303,7 +302,7 @@ async def delete_pdf(pdf_id: str, user_id: str = Depends(require_admin)):
     await db.pdf_pages.delete_many({"pdf_id": pdf_id})
     return {"ok": True}
 
-@app.get("/pdfs/{pdf_id}/file")
+@api.get("/pdfs/{pdf_id}/file")
 async def get_pdf_file(pdf_id: str, token: Optional[str] = Query(None), user_id: Optional[str] = Depends(get_optional_user_id)):
     if not user_id and token: user_id = decode_jwt(token)
     p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
@@ -314,7 +313,7 @@ async def get_pdf_file(pdf_id: str, token: Optional[str] = Query(None), user_id:
     raise HTTPException(status_code=404, detail="File non trovato")
 
 # ----------------- Search -----------------
-@app.get("/search")
+@api.get("/search")
 async def search(q: str = Query(..., min_length=1), user_id: str = Depends(get_current_user_id)):
     safe_q = re.escape(q.strip())
     results = []
@@ -325,19 +324,19 @@ async def search(q: str = Query(..., min_length=1), user_id: str = Depends(get_c
     return {"results": results}
 
 # ----------------- Admin -----------------
-@app.get("/admin/stats")
+@api.get("/admin/stats")
 async def admin_stats(_: str = Depends(require_admin)):
     return {
         "users_total": await db.access_requests.count_documents({"status": "approved"}),
         "pdfs_total": await db.pdfs.count_documents({}),
     }
 
-@app.get("/admin/users")
+@api.get("/admin/users")
 async def admin_users(_: str = Depends(require_admin)):
     reqs = await db.access_requests.find({"status": "approved"}).to_list(1000)
     return {"users": [{"email": r["email"], "name": r["name"], "created_at": r["created_at"]} for r in reqs]}
 
-@app.get("/admin/logs")
+@api.get("/admin/logs")
 async def admin_logs(event_type: Optional[str] = None, q: Optional[str] = None, limit: int = 100, _: str = Depends(require_admin)):
     query = {}
     if event_type: query["event_type"] = event_type
@@ -346,30 +345,30 @@ async def admin_logs(event_type: Optional[str] = None, q: Optional[str] = None, 
     types = await db.app_logs.distinct("event_type")
     return {"items": items, "types": types}
 
-@app.get("/admin/access-requests")
+@api.get("/admin/access-requests")
 async def list_access_requests(_: str = Depends(require_admin)):
     return await db.access_requests.find({}).sort("created_at", -1).to_list(100)
 
-@app.post("/admin/access-requests/approve")
+@api.post("/admin/access-requests/approve")
 async def approve_access(payload: dict, _: str = Depends(require_admin)):
     await db.access_requests.update_one({"email": payload["email"]}, {"$set": {"status": "approved"}})
     return {"ok": True}
 
-@app.post("/admin/access-requests/reject")
+@api.post("/admin/access-requests/reject")
 async def reject_access(payload: dict, _: str = Depends(require_admin)):
     await db.access_requests.update_one({"email": payload["email"]}, {"$set": {"status": "rejected"}})
     return {"ok": True}
 
-@app.get("/admin/master-drive/status")
+@api.get("/admin/master-drive/status")
 async def master_drive_status(_: str = Depends(require_admin)):
     m = await get_master_drive()
     return {"connected": bool(m), "email": m.get("email", "") if m else ""}
 
-@app.post("/admin/master-drive/url")
+@api.post("/admin/master-drive/url")
 async def master_drive_url(payload: dict, _: str = Depends(require_admin)):
     return {"url": gi.build_auth_url(payload["redirect_uri"], secrets.token_urlsafe(16))}
 
-@app.post("/admin/master-drive/connect")
+@api.post("/admin/master-drive/connect")
 async def master_drive_connect(payload: dict, _: str = Depends(require_admin)):
     tokens = await gi.exchange_code(payload["code"], payload["redirect_uri"])
     info = await gi.fetch_userinfo(tokens["access_token"])
@@ -377,10 +376,12 @@ async def master_drive_connect(payload: dict, _: str = Depends(require_admin)):
     await db.config.update_one({"key": "master_drive"}, {"$set": {"refresh_token": tokens["refresh_token"], "email": info["email"], "folder_root_id": root, "updated_at": iso_now()}}, upsert=True)
     return {"connected": True, "email": info["email"]}
 
-@app.post("/admin/master-drive/disconnect")
+@api.post("/admin/master-drive/disconnect")
 async def master_drive_disconnect(_: str = Depends(require_admin)):
     await db.config.delete_one({"key": "master_drive"})
     return {"ok": True}
+
+app.include_router(api)
 
 # ----------------- Worker -----------------
 async def process_pdf_job(job_id):
