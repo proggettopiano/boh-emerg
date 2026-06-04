@@ -1,92 +1,168 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
+import { Moon, Sun, Monitor, Cloud, RefreshCw, Users, CheckCircle } from "lucide-react";
 import { toast } from "sonner";
-import { HardDriveUpload, RefreshCw, CheckCircle2, CloudOff } from "lucide-react";
 import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 
-function Section({ title, children }) {
-  return (
-    <section className="border-t border-rule py-8">
-      <h2 className="overline mb-4">{title}</h2>
-      {children}
-    </section>
-  );
-}
-
 export default function Settings() {
   const { user } = useAuth();
-  const [bk, setBk] = useState(null);
-  const [bkBusy, setBkBusy] = useState(false);
+  const [backup, setBackup] = useState(null);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [theme, setTheme] = useState(localStorage.getItem("theme") || "system");
 
-  const loadBackup = async () => {
-    try { const r = await api.get("/backup/status"); setBk(r.data); } catch {}
-  };
-  useEffect(() => { loadBackup(); }, []);
+  const isAdmin = user?.is_admin;
 
-  const runBackup = async () => {
-    setBkBusy(true);
-    try { 
-      const r = await api.post("/backup/run"); 
-      toast.success(`Backup avviato · ${r.data.pending} file in attesa`); 
-      loadBackup(); 
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [b, u] = await Promise.all([
+        api.get("/backup/status"),
+        api.get("/admin/users").catch(() => ({ data: { users: [] } }))
+      ]);
+      setBackup(b.data);
+      setUsers(u.data.users || []);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
     }
-    catch (e) { toast.error(e.response?.data?.detail || "Errore"); }
-    finally { setBkBusy(false); }
   };
 
-  if (!user) return null;
+  useEffect(() => {
+    load();
+  }, []);
+
+  const changeTheme = (t) => {
+    setTheme(t);
+    localStorage.setItem("theme", t);
+    if (t === "dark") document.documentElement.classList.add("dark");
+    else if (t === "light") document.documentElement.classList.remove("dark");
+    else {
+      if (window.matchMedia("(prefers-color-scheme: dark)").matches) document.documentElement.classList.add("dark");
+      else document.documentElement.classList.remove("dark");
+    }
+  };
 
   return (
-    <div className="max-w-3xl mx-auto px-6 md:px-12 py-12">
-      <p className="overline mb-2">ACCOUNT</p>
-      <h1 className="font-display font-black text-4xl md:text-5xl tracking-tighter mb-10">Impostazioni</h1>
+    <div className="max-w-4xl mx-auto px-6 md:px-12 py-12">
+      <div className="mb-10">
+        <p className="overline mb-2">IMPOSTAZIONI</p>
+        <h1 className="font-display font-black text-4xl md:text-5xl tracking-tighter">Preferenze</h1>
+        
+        {!isAdmin ? (
+          <p className="text-sm text-amber-700 bg-amber-50 border border-amber-100 rounded-md p-3 mt-4">
+            Stai usando un account di gruppo. Le impostazioni di sicurezza sono gestite dall'amministratore.
+          </p>
+        ) : (
+          <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-md p-3 mt-4">
+            Account Amministratore · Gestione completa del sistema attiva.
+          </p>
+        )}
+      </div>
 
-      <Section title="ACCOUNT">
-        <p className="text-sm text-muted2 mb-4">
-          Stai usando un account di gruppo. Le impostazioni di sicurezza sono gestite dall'amministratore.
-        </p>
-        <div className="text-mono text-sm text-muted2">Email: {user.email}</div>
-        <div className="text-mono text-sm text-muted2">Ruolo: {user.is_admin ? "Amministratore" : "Membro Gruppo"}</div>
-      </Section>
-
-      <Section title="BACKUP GRUPPO">
-        <div className="border border-rule rounded-md p-5 space-y-4 bg-white">
-          <div className="flex items-start justify-between gap-4 flex-wrap">
-            <div className="min-w-0">
-              <p className="font-medium flex items-center gap-2">
-                {bk?.drive_connected ? <><CheckCircle2 size={16} className="text-emerald-600" /> Sincronizzazione Cloud Attiva</> : <><CloudOff size={16} className="text-muted2" /> Backup non configurato</>}
-              </p>
-              <p className="text-sm text-muted2 mt-1">
-                Tutti gli spartiti sono salvati automaticamente nel Master Drive di gruppo.
-              </p>
-            </div>
+      <div className="space-y-12">
+        {/* Nomi persone dell'account */}
+        <section>
+          <h2 className="font-display font-bold text-xl mb-4 flex items-center gap-2">
+            <Users size={20} /> Membri del Gruppo
+          </h2>
+          <div className="border border-rule rounded-md bg-white divide-y divide-rule">
+            {users.length > 0 ? (
+              users.map((u, idx) => (
+                <div key={idx} className="p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-canvas3 flex items-center justify-center text-xs font-bold">
+                      {u.name.split(' ').map(n => n[0]).join('').toUpperCase()}
+                    </div>
+                    <span className="font-medium">{u.name}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[10px] text-muted2 uppercase tracking-wider font-mono">
+                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                    Online
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="p-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-canvas3 flex items-center justify-center text-xs font-bold">
+                    {user?.name?.split(' ').map(n => n[0]).join('').toUpperCase() || "U"}
+                  </div>
+                  <span className="font-medium">{user?.name || "Utente Gruppo"}</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-[10px] text-muted2 uppercase tracking-wider font-mono">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                  Online
+                </div>
+              </div>
+            )}
           </div>
+        </section>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 border-t border-rule pt-4">
-            <Stat label="Libreria" value="GRUPPO" mono />
-            <Stat label="File totali" value={bk?.total_pdfs ?? "—"} />
-            <Stat label="Su Drive" value={bk?.backed_up_pdfs ?? "—"} />
-            <Stat label="In attesa" value={bk?.pending_pdfs ?? "—"} />
+        {/* Tema */}
+        <section>
+          <h2 className="font-display font-bold text-xl mb-4 flex items-center gap-2">
+            <Monitor size={20} /> Tema
+          </h2>
+          <div className="grid grid-cols-3 gap-3">
+            <ThemeBtn active={theme === "light"} onClick={() => changeTheme("light")} icon={<Sun size={16} />} label="Chiaro" />
+            <ThemeBtn active={theme === "dark"} onClick={() => changeTheme("dark")} icon={<Moon size={16} />} label="Scuro" />
+            <ThemeBtn active={theme === "system"} onClick={() => changeTheme("system")} icon={<Monitor size={16} />} label="Sistema" />
           </div>
+        </section>
 
-          {user.is_admin && bk?.drive_connected && (
-            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-rule">
-              <button onClick={runBackup} disabled={bkBusy} className="btn-ghost border border-rule rounded-sm px-3 py-2 text-sm disabled:opacity-50">
-                <RefreshCw size={14} className={bkBusy ? "animate-spin" : ""} /> Sincronizza ora
-              </button>
-            </div>
-          )}
-        </div>
-      </Section>
+        {/* Google Drive Master */}
+        <section>
+          <h2 className="font-display font-bold text-xl mb-4 flex items-center gap-2">
+            <Cloud size={20} /> Google Drive Master
+          </h2>
+          <div className="border border-rule rounded-md p-5 bg-white">
+            {backup?.drive_connected ? (
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2 text-emerald-700 font-bold text-sm mb-1">
+                    <CheckCircle size={16} /> BACKUP AUTOMATICO ATTIVO
+                  </div>
+                  <p className="text-sm text-muted2">
+                    Tutti gli spartiti sono sincronizzati sul Drive di gruppo.
+                  </p>
+                  <div className="mt-4 grid grid-cols-2 gap-4">
+                    <div><div className="overline text-[10px]">Spartiti</div><div className="text-xl font-bold">{backup.total_pdfs}</div></div>
+                    <div><div className="overline text-[10px]">Sincronizzati</div><div className="text-xl font-bold">{backup.backed_up_pdfs}</div></div>
+                  </div>
+                </div>
+                {isAdmin && (
+                  <button onClick={load} disabled={loading} className="btn-ghost border border-rule rounded-sm p-2">
+                    <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="text-center py-4">
+                <p className="text-sm text-muted2 mb-4">Il backup su Google Drive non è configurato.</p>
+                {isAdmin && (
+                  <button onClick={() => window.location.href='/admin'} className="btn-primary text-sm">Configura in Admin</button>
+                )}
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
 
-function Stat({ label, value, mono }) {
+function ThemeBtn({ active, onClick, icon, label }) {
   return (
-    <div>
-      <div className="overline mb-1">{label}</div>
-      <div className={`text-2xl font-bold ${mono ? "text-mono" : "font-display"}`}>{value}</div>
-    </div>
+    <button 
+      onClick={onClick}
+      className={`flex flex-col items-center gap-2 p-4 rounded-md border transition-all ${
+        active ? "bg-ink text-white border-ink" : "bg-white border-rule hover:border-ink"
+      }`}
+    >
+      {icon}
+      <span className="text-xs font-mono uppercase">{label}</span>
+    </button>
   );
 }

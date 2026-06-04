@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
-import { Search, Library, LogOut, Settings as SettingsIcon, ScrollText, Shield } from "lucide-react";
+import { Search, Library, Share2, LogOut, Settings as SettingsIcon, ScrollText, Shield } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import TrebleClef from "@/components/TrebleClef";
 
@@ -13,12 +13,13 @@ export default function Header() {
   const navItems = [
     { to: "/", label: "Cerca", icon: Search, end: true },
     { to: "/library", label: "Libreria", icon: Library },
+    { to: "/shared", label: "Condivise", icon: Share2 },
     { to: "/settings", label: "Impostazioni", icon: SettingsIcon },
   ];
   if (isAdmin) {
     navItems.push(
-      { to: "/logs", label: "Logs", icon: ScrollText },
       { to: "/admin", label: "Admin", icon: Shield },
+      { to: "/logs", label: "Log", icon: ScrollText },
     );
   }
 
@@ -52,7 +53,10 @@ export default function Header() {
               </NavLink>
             ))}
             <div className="flex items-center gap-2 ml-3 pl-3 border-l border-rule">
-              <span className="text-mono text-[10px] text-muted2 max-w-[150px] truncate">{user.email}</span>
+              <div className="flex flex-col items-end mr-2">
+                <span className="text-xs font-bold leading-none">{user.name || "Utente Gruppo"}</span>
+                <span className="text-[9px] text-muted3 font-mono uppercase tracking-tighter">{isAdmin ? "Admin" : "Membro"}</span>
+              </div>
               <button onClick={handleLogout} className="btn-ghost" title="Logout">
                 <LogOut size={16} strokeWidth={1.75} />
               </button>
