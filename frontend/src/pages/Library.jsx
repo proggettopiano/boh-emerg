@@ -100,8 +100,8 @@ export default function Library() {
     <div className="max-w-6xl mx-auto px-6 md:px-12 py-12">
       <div className="flex items-end justify-between flex-wrap gap-4 mb-10" data-testid="library-page">
         <div>
-          <p className="overline mb-2">IL TUO ARCHIVIO</p>
-          <h1 className="font-display font-black text-4xl md:text-5xl tracking-tighter">Libreria</h1>
+          <p className="overline mb-2">ARCHIVIO CONDIVISO</p>
+          <h1 className="font-display font-black text-4xl md:text-5xl tracking-tighter">Gruppo</h1>
           <p className="text-mono text-sm text-muted2 mt-2"><span data-testid="library-count">{countText}</span></p>
         </div>
         <div className="flex flex-wrap gap-2">

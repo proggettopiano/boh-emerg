@@ -54,6 +54,7 @@ _thread_pool = ThreadPoolExecutor(max_workers=3)
 async def lifespan(app: FastAPI):
     await ensure_indexes()
     await seed_admin()
+    await migrate_single_owner()  # Forziamo owner unico per tutto il gruppo
     await migrate_storage_fields()
     await migrate_email_verified()
     await db.pdfs.update_many(
@@ -175,26 +176,11 @@ async def set_master_drive(value: Optional[dict]):
 
 async def resolve_backup_credentials(user: dict) -> Optional[dict]:
     """Decide dove vanno i backup/upload Drive.
-
-    POLICY UFFICIALE (single-account master drive):
-    - Se è configurato un master_drive in system_settings, TUTTI i file vanno
-      su quell'account Google, indipendentemente dall'utente che ha fatto l'upload.
-      Ogni utente ottiene una sotto-cartella dedicata (user_id) dentro la root master.
-    - Se il master_drive non è configurato, si usa il Drive personale dell'utente
-      (se ha collegato il proprio account Google).
-    - Se nessuno dei due è disponibile, il file rimane solo in locale.
-
-    Questa è una scelta di progetto deliberata (un solo account Google per tutto il
-    gruppo), non un bug. Per cambiare policy basta rimuovere il documento
-    master_drive da db.system_settings.
-
-    Returns dict {refresh_token, owner: 'master'|'user', folder_root_id} or None.
+    SEMPLIFICAZIONE: Solo master_drive, nessun backup per-utente.
     """
     master = await get_master_drive()
     if master and master.get("refresh_token"):
         return {"refresh_token": master["refresh_token"], "owner": "master", "folder_root_id": master.get("folder_root_id"), "email": master.get("email")}
-    if user.get("google_refresh_token"):
-        return {"refresh_token": user["google_refresh_token"], "owner": "user", "folder_root_id": user.get("drive_folder_id")}
     return None
 
 
@@ -477,6 +463,19 @@ async def migrate_email_verified():
         logger.info(f"Migrated email_verified on {n} users")
 
 
+async def migrate_single_owner():
+    """Assegna tutti i PDF e i job all'admin unico per la modalità condivisa."""
+    admin = await db.users.find_one({"email": ADMIN_EMAIL}, {"_id": 0, "user_id": 1})
+    if not admin:
+        return
+    admin_id = admin["user_id"]
+    r1 = await db.pdfs.update_many({"owner_id": {"$ne": admin_id}}, {"$set": {"owner_id": admin_id}})
+    r2 = await db.upload_jobs.update_many({"owner_id": {"$ne": admin_id}}, {"$set": {"owner_id": admin_id}})
+    r3 = await db.pdf_pages.update_many({"owner_id": {"$ne": admin_id}}, {"$set": {"owner_id": admin_id}})
+    if r1.modified_count > 0 or r2.modified_count > 0:
+        logger.info(f"Migrated {r1.modified_count} PDFs and {r2.modified_count} jobs to admin owner {admin_id}")
+
+
 # ----------------- Models -----------------
 class RegisterIn(BaseModel):
     email: EmailStr
@@ -595,36 +594,7 @@ def user_public(u: dict) -> dict:
 
 @api.post("/auth/register")
 async def register(payload: RegisterIn, request: Request):
-    ip = get_client_ip(request)
-    ok, retry = rate_limiter.check("register", ip, max_attempts=5, window_sec=3600, block_sec=3600)
-    if not ok:
-        await log_event("auth.register.blocked", f"Rate limit reached for IP {ip}", level="warn", meta={"ip": ip})
-        raise HTTPException(status_code=429, detail=f"Troppi tentativi. Riprova tra {retry}s.")
-
-    email = payload.email.lower().strip()
-    existing = await db.users.find_one({"email": email}, {"_id": 0, "user_id": 1})
-    if existing:
-        await log_event("auth.register.duplicate", f"Tentativo registrazione email esistente: {email}", level="warn", meta={"ip": ip})
-        raise HTTPException(status_code=409, detail="Email già registrata. Usa il recupero password.")
-
-    user_id = f"user_{uuid.uuid4().hex[:12]}"
-    doc = {
-        "user_id": user_id,
-        "email": email,
-        "password_hash": hash_password(payload.password),
-        "name": "",
-        "picture": "",
-        "how_found": "",
-        "backup_enabled": False,
-        "profile_completed": False,
-        "auth_provider": "password",
-        "email_verified": True,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    await db.users.insert_one(doc)
-    token = create_jwt(user_id)
-    await log_event("auth.register", f"Nuovo account creato: {email}", user_id=user_id, meta={"ip": ip})
-    return {"token": token, "user": user_public(doc), "message": "Account creato"}
+    raise HTTPException(status_code=404, detail="Registrazione disabilitata")
 
 
 @api.post("/auth/login")
@@ -702,37 +672,7 @@ async def verify_email(token: str = Query(...)):
 
 @api.post("/auth/forgot")
 async def forgot(payload: ForgotIn, request: Request):
-    ip = get_client_ip(request)
-    ok, _ = rate_limiter.check("forgot", ip, max_attempts=5, window_sec=3600, block_sec=3600)
-    if not ok:
-        raise HTTPException(status_code=429, detail="Troppi tentativi. Riprova più tardi.")
-    email = payload.email.lower().strip()
-    u = await db.users.find_one({"email": email}, {"_id": 0})
-    # always return ok, but send only if exists
-    if u and u.get("auth_provider") == "password":
-        token = secrets.token_urlsafe(32)
-        token_hash = hash_reset_token(token)
-        await db.password_resets.insert_one({
-            "token": token_hash,  # hashed value kept for compatibility with the legacy unique index
-            "token_hash": token_hash,
-            "user_id": u["user_id"],
-            "email": email,
-            "expires_at": datetime.now(timezone.utc) + timedelta(minutes=60),
-            "created_at": datetime.now(timezone.utc),
-        })
-        frontend_url = request.headers.get("origin") or request.headers.get("referer", "").rstrip("/")
-        if not frontend_url:
-            frontend_url = ""
-        reset_link = f"{frontend_url}/reset?token={token}"
-        sent = await send_password_reset_email(email, reset_link, u.get("name", ""))
-        if sent:
-            await log_event("password_reset_requested", f"Reset password richiesto per {email}", user_id=u["user_id"])
-            if not os.environ.get("RESEND_API_KEY"):
-                await log_event("password_reset.dev_link", f"DEV reset link per {email}: {reset_link}", user_id=u["user_id"], level="warn", meta={"reset_link": reset_link})
-        else:
-            await log_event("password_reset_failed", f"Invio reset password fallito per {email}", user_id=u["user_id"], level="error")
-            return {"ok": False, "message": "Non siamo riusciti a inviare l'email. Riprova piu tardi."}
-    return {"ok": True, "message": "Se l'email esiste, riceverai un link per il reset."}
+    raise HTTPException(status_code=404, detail="Recupero password disabilitato")
 
 
 @api.post("/auth/reset")
@@ -1527,20 +1467,23 @@ async def list_pdfs(
     tag: Optional[str] = None,
     user_id: str = Depends(get_current_user_id),
 ):
+    # Semplificazione: tutti vedono tutto (libreria condivisa)
+    # Forziamo il recupero di tutti i PDF indipendentemente dall'owner_id dell'utente loggato
+    # dato che la migrazione ha già allineato tutto all'admin_id.
     sort_map = {
         "date_desc": [("created_at", -1)],
         "date_asc": [("created_at", 1)],
         "name_asc": [("title", 1)],
         "name_desc": [("title", -1)],
     }
-    flt: Dict[str, Any] = {"owner_id": user_id}
+    flt: Dict[str, Any] = {} # Nessun filtro owner_id = libreria condivisa
     if favorite is True:
         flt["is_favorite"] = True
     if tag:
         flt["tags"] = tag
     cursor = db.pdfs.find(flt, {"_id": 0}).sort(sort_map.get(sort, [("created_at", -1)]))
     items = await cursor.to_list(10000)
-    all_tags = await db.pdfs.distinct("tags", {"owner_id": user_id})
+    all_tags = await db.pdfs.distinct("tags")
     return {"items": [_serialize_pdf(p) for p in items], "tags": sorted([t for t in all_tags if t])}
 
 

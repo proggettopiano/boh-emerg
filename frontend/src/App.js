@@ -111,10 +111,6 @@ function AppShell() {
     <ChromeWrapper>
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
-        <Route path="/forgot" element={<ForgotPassword />} />
-        <Route path="/reset" element={<ResetPassword />} />
-
         <Route path="/profile-setup" element={<ProtectedRoute requireProfile={false}><ProfileSetup /></ProtectedRoute>} />
         <Route path="/" element={<ProtectedRoute><Home /></ProtectedRoute>} />
         <Route path="/library" element={<ProtectedRoute><Library /></ProtectedRoute>} />
