@@ -10,7 +10,6 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [success, setSuccess] = useState(false);
   const navigate = useNavigate();
@@ -22,6 +21,13 @@ export default function Login() {
     setBusy(true);
     try {
       const r = await api.post("/auth/login", { email, password });
+      
+      if (r.data.action === "request_access") {
+        setMode("request");
+        setEmail(r.data.email);
+        return;
+      }
+
       loginWithToken(r.data.token, r.data.user);
       const from = location.state?.from || "/";
       navigate(from, { replace: true });
@@ -36,7 +42,7 @@ export default function Login() {
     e.preventDefault();
     setBusy(true);
     try {
-      await api.post("/auth/request-access", { name, email, reason });
+      await api.post("/auth/request-access", { name, email });
       setSuccess(true);
       toast.success("Richiesta inviata con successo!");
     } catch (err) {
@@ -51,18 +57,20 @@ export default function Login() {
       <AuthShell title="Richiesta Inviata" subtitle="Grazie per l'interesse.">
         <div className="text-center space-y-4 py-6">
           <p className="text-ink">
-            La tua richiesta di accesso per <strong>{email}</strong> è stata inoltrata agli amministratori.
+            La tua richiesta di accesso per <strong>{email}</strong> è stata inoltrata.
           </p>
           <p className="text-muted3 text-sm">
-            Riceverai una notifica via email non appena la richiesta verrà approvata.
+            Potrai accedere non appena l'amministratore avrà approvato il tuo indirizzo IP.
           </p>
-          <button onClick={() => setSuccess(false)} className="btn-secondary w-full">
+          <button onClick={() => { setSuccess(false); setMode("login"); }} className="btn-secondary w-full">
             Torna al login
           </button>
         </div>
       </AuthShell>
     );
   }
+
+  const isGroupEmail = email.toLowerCase() === "chiesapomigliano@scorebil.com";
 
   return (
     <AuthShell 
@@ -79,17 +87,23 @@ export default function Login() {
               className="input-base" placeholder="tu@esempio.com" 
             />
           </div>
-          <div>
-            <label className="overline block mb-2">Password</label>
-            <input 
-              type="password" required value={password} 
-              onChange={(e) => setPassword(e.target.value)} 
-              className="input-base" placeholder="********" 
-            />
-          </div>
+          
+          {/* Mostra la password solo se NON è l'email di gruppo (quindi è admin o altro account con password) */}
+          {!isGroupEmail && email.length > 0 && (
+            <div>
+              <label className="overline block mb-2">Password</label>
+              <input 
+                type="password" required value={password} 
+                onChange={(e) => setPassword(e.target.value)} 
+                className="input-base" placeholder="********" 
+              />
+            </div>
+          )}
+
           <button type="submit" disabled={busy} className="btn-primary w-full">
-            {busy ? "Accesso in corso..." : "Accedi"}
+            {busy ? "Accesso in corso..." : (isGroupEmail ? "Entra come Gruppo" : "Accedi")}
           </button>
+          
           <div className="pt-4 text-center">
             <button 
               type="button" onClick={() => setMode("request")}
@@ -117,13 +131,6 @@ export default function Login() {
               className="input-base" placeholder="tu@esempio.com" 
             />
           </div>
-          <div>
-            <label className="overline block mb-2">Motivo della richiesta (opzionale)</label>
-            <textarea 
-              value={reason} onChange={(e) => setReason(e.target.value)} 
-              className="input-base min-h-[80px]" placeholder="Es: Faccio parte del coro..." 
-            />
-          </div>
           <button type="submit" disabled={busy} className="btn-primary w-full">
             {busy ? "Invio richiesta..." : "Invia Richiesta"}
           </button>
@@ -132,7 +139,7 @@ export default function Login() {
               type="button" onClick={() => setMode("login")}
               className="text-sm text-ink hover:underline font-medium"
             >
-              Hai già un account? Accedi
+              Torna al login
             </button>
           </div>
         </form>

@@ -12,7 +12,6 @@ function escapeRegExp(value) {
 function highlight(text, q) {
   if (!text || !q) return text;
   try {
-    // Gestione speciale per ricerca accordi [Accordo]
     const chordMatch = q.match(/^\[(.+)\]$/);
     const needle = chordMatch ? chordMatch[1].toLowerCase() : q.toLowerCase();
     const cleanQ = chordMatch ? chordMatch[1] : q;
@@ -28,7 +27,6 @@ function highlight(text, q) {
         : <span key={key}>{part}</span>;
     });
   } catch (err) {
-    console.error("[Home] Search highlight failed:", { query: q, error: err.message });
     return text;
   }
 }
@@ -77,7 +75,7 @@ export default function Home() {
 
   return (
     <div className="max-w-4xl mx-auto px-6 md:px-12 py-12 md:py-20">
-      <div className="text-center mb-10" data-testid="home-hero">
+      <div className="text-center mb-10">
         <div className="inline-block mb-6"><TrebleClef size={44} /></div>
         <h1 className="font-display font-black text-4xl sm:text-5xl lg:text-6xl tracking-tighter mb-3">
           Trova ogni spartito.<br />In un battito.
@@ -94,40 +92,41 @@ export default function Home() {
             onChange={(e) => setQ(e.target.value)}
             placeholder="Cerca per titolo, contenuto, accordi..."
             className="w-full text-xl md:text-2xl py-5 outline-none placeholder:text-muted3 bg-transparent"
-            data-testid="global-search-input"
           />
-          {q && <button onClick={() => setQ("")} className="text-mono text-xs text-muted2 hover:text-ink" data-testid="search-clear">CANCELLA</button>}
+          {q && <button onClick={() => setQ("")} className="text-mono text-xs text-muted2 hover:text-ink">CANCELLA</button>}
         </div>
       </div>
 
       <div className="flex items-center justify-between text-sm text-muted2 mb-8">
-        <span data-testid="library-count">{countLoading ? "Caricamento libreria..." : `${count} PDF nella libreria di gruppo`}</span>
-        <button onClick={() => setOpenUpload(true)} className="btn-primary !py-2 !px-4 text-sm" data-testid="home-upload-btn">
+        <span>{countLoading ? "Caricamento libreria..." : `${count} PDF nella libreria di gruppo`}</span>
+        <button onClick={() => setOpenUpload(true)} className="btn-primary !py-2 !px-4 text-sm">
           <UploadIcon size={16} /> Carica PDF
         </button>
       </div>
 
       {results && (
-        <ul className="border-t border-rule" data-testid="search-results">
+        <ul className="border-t border-rule">
           {results.length === 0 && (
-            <li className="py-10 text-center text-muted2" data-testid="search-empty">Nessun risultato per "<span className="text-ink">{q}</span>"</li>
+            <li className="py-10 text-center text-muted2">Nessun risultato per "<span className="text-ink">{q}</span>"</li>
           )}
-          {results.map((r) => (
-            <li key={`${r.pdf_id}:${r.page}:${r.source}:${r.match_in}`} className="py-5 border-b border-rule animate-fade-in">
+          {results.map((r, idx) => (
+            <li key={idx} className="py-5 border-b border-rule animate-fade-in">
               <button
                 onClick={() => navigate(`/viewer/${r.pdf_id}?page=${r.page}&q=${encodeURIComponent(q)}`)}
                 className="text-left w-full group"
-                data-testid={`search-result-${r.pdf_id}`}
               >
                 <div className="flex items-baseline gap-3 flex-wrap mb-1">
                   <span className="font-display text-xl font-semibold group-hover:underline decoration-2 underline-offset-4">{highlight(r.title, q)}</span>
-                  <span className="text-mono text-xs px-2 py-0.5 border border-rule rounded-sm text-muted2">
-                    {r.source === "personal" ? "GRUPPO" : `CONDIVISA - ${r.source.replace("shared:", "")}`}
+                  <span className="text-mono text-[10px] px-2 py-0.5 bg-canvas3 rounded-sm text-muted2">
+                    PAG {r.page}
                   </span>
-                  <span className="text-mono text-xs text-muted2">PAG {r.page}</span>
+                  {r.is_protected && (
+                    <span className="text-mono text-[10px] px-2 py-0.5 bg-amber-100 text-amber-700 rounded-sm font-bold">
+                      PROTETTO
+                    </span>
+                  )}
                 </div>
                 {r.snippet && <p className="text-[#525252] leading-relaxed">{highlight(r.snippet, q)}</p>}
-                <p className="text-mono text-xs text-muted3 mt-1">{r.created_at?.slice(0, 10)}</p>
               </button>
             </li>
           ))}

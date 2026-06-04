@@ -31,15 +31,9 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     mountedRef.current = true;
-    if (window.location.hash?.includes("session_id=")) {
-      setLoading(false);
-      return () => { mountedRef.current = false; };
-    }
     const ctrl = new AbortController();
-    const timeout = window.setTimeout(() => ctrl.abort(), Number(process.env.REACT_APP_AUTH_TIMEOUT_MS || 12000));
-    fetchMe(ctrl.signal).finally(() => window.clearTimeout(timeout));
+    fetchMe(ctrl.signal);
     return () => {
-      window.clearTimeout(timeout);
       mountedRef.current = false;
       ctrl.abort();
     };
