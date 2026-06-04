@@ -89,15 +89,33 @@ async def log_event(event_type: str, description: str, user_id: Optional[str] = 
     log_func(f"[{event_type.upper()}] {description} (user={user_id})")
 
 async def ensure_indexes():
-    await db.users.create_index("user_id", unique=True)
-    await db.users.create_index("email", unique=True)
-    await db.pdfs.create_index("id", unique=True)
-    await db.pdf_pages.create_index([("pdf_id", 1), ("page", 1)], unique=True)
-    await db.pdf_pages.create_index("text")
-    await db.upload_jobs.create_index("id", unique=True)
-    await db.app_logs.create_index("created_at")
-    await db.access_requests.create_index("email")
-    await db.access_requests.create_index("ip")
+    async def safe_create_index(collection, keys, **kwargs):
+        try:
+            await collection.create_index(keys, **kwargs)
+        except Exception as e:
+            # Se c'è un conflitto di opzioni (es. non-unique vs unique)
+            if "IndexKeySpecsConflict" in str(e) or "IndexOptionsConflict" in str(e):
+                try:
+                    # Tenta di identificare il nome dell'indice dai keys per il drop
+                    # In motor/pymongo, l'indice per [("a", 1), ("b", 1)] si chiama solitamente "a_1_b_1"
+                    idx_name = "_".join([f"{k}_{v}" for k, v in (keys if isinstance(keys, list) else [(keys, 1)])])
+                    logger.warning(f"Conflitto indice su {collection.name}.{idx_name}, tento drop/recreate.")
+                    await collection.drop_index(idx_name)
+                    await collection.create_index(keys, **kwargs)
+                except Exception as e2:
+                    logger.error(f"Impossibile ricreare indice {idx_name} su {collection.name}: {e2}")
+            else:
+                logger.error(f"Errore creazione indice su {collection.name}: {e}")
+
+    await safe_create_index(db.users, "user_id", unique=True)
+    await safe_create_index(db.users, "email", unique=True)
+    await safe_create_index(db.pdfs, "id", unique=True)
+    await safe_create_index(db.pdf_pages, [("pdf_id", 1), ("page", 1)], unique=True)
+    await safe_create_index(db.pdf_pages, "text")
+    await safe_create_index(db.upload_jobs, "id", unique=True)
+    await safe_create_index(db.app_logs, "created_at")
+    await safe_create_index(db.access_requests, "email")
+    await safe_create_index(db.access_requests, "ip")
 
 async def seed_admin():
     admin = await db.users.find_one({"email": ADMIN_EMAIL})
