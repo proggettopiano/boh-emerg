@@ -97,7 +97,7 @@ export default function Home() {
       </div>
 
       <div className="flex items-center justify-between text-sm text-muted2 mb-8">
-        <span data-testid="library-count">{countLoading ? "Caricamento libreria..." : `${count} PDF nella tua libreria`}</span>
+        <span data-testid="library-count">{countLoading ? "Caricamento libreria..." : `${count} PDF nella libreria di gruppo`}</span>
         <button onClick={() => setOpenUpload(true)} className="btn-primary !py-2 !px-4 text-sm" data-testid="home-upload-btn">
           <UploadIcon size={16} /> Carica PDF
         </button>
@@ -118,7 +118,7 @@ export default function Home() {
                 <div className="flex items-baseline gap-3 flex-wrap mb-1">
                   <span className="font-display text-xl font-semibold group-hover:underline decoration-2 underline-offset-4">{highlight(r.title, q)}</span>
                   <span className="text-mono text-xs px-2 py-0.5 border border-rule rounded-sm text-muted2">
-                    {r.source === "personal" ? "PERSONALE" : `CONDIVISA - ${r.source.replace("shared:", "")}`}
+                    {r.source === "personal" ? "GRUPPO" : `CONDIVISA - ${r.source.replace("shared:", "")}`}
                   </span>
                   <span className="text-mono text-xs text-muted2">PAG {r.page}</span>
                 </div>

@@ -40,31 +40,23 @@ export default function ProfileSetup() {
     <div className="min-h-screen flex items-center justify-center p-6 md:p-12 bg-canvas">
       <div className="w-full max-w-xl" data-testid="profile-setup-page">
         <p className="overline mb-3">PROFILO · STEP 1</p>
-        <h1 className="font-display font-black text-4xl md:text-5xl tracking-tighter mb-3">Benvenuto.</h1>
-        <p className="text-[#525252] mb-10">Compila qualche dettaglio per personalizzare la tua esperienza.</p>
+        <h1 className="font-display font-black text-4xl md:text-5xl tracking-tighter mb-3">Configurazione Gruppo.</h1>
+        <p className="text-[#525252] mb-10">Imposta il nome che apparirà nelle condivisioni e nella libreria.</p>
         <form onSubmit={submit} className="space-y-6">
           <div className="flex items-center gap-5">
             <div className="w-20 h-20 rounded-md bg-canvas3 overflow-hidden border border-rule flex items-center justify-center">
-              {picture ? <img src={picture} alt="profile" className="w-full h-full object-cover" /> : <span className="text-mono text-xs text-muted2">FOTO</span>}
+              {picture ? <img src={picture} alt="profile" className="w-full h-full object-cover" /> : <span className="text-mono text-xs text-muted2">LOGO</span>}
             </div>
             <label className="btn-ghost border border-rule rounded-sm cursor-pointer">
               <input type="file" accept="image/*" className="hidden" onChange={onPickFile} data-testid="profile-picture-input" />
-              {picture ? "Cambia foto" : "Carica foto"}
+              {picture ? "Cambia logo" : "Carica logo"}
             </label>
           </div>
           <div>
-            <label className="overline block mb-2">Nome (visibile nelle condivisioni)</label>
-            <input data-testid="profile-name-input" required value={name} onChange={(e) => setName(e.target.value)} className="input-base" placeholder="Es. Maria Rossi" />
+            <label className="overline block mb-2">Nome del Gruppo</label>
+            <input data-testid="profile-name-input" required value={name} onChange={(e) => setName(e.target.value)} className="input-base" placeholder="Es. Coro Alpino, Banda Comunale..." />
           </div>
-          <div>
-            <label className="overline block mb-2">Come ci hai trovato?</label>
-            <div className="flex flex-wrap gap-2" data-testid="how-found-group">
-              {HOW_FOUND.map((h) => (
-                <button type="button" key={h} onClick={() => setHowFound(h)} className={`px-3 py-2 text-sm rounded-sm border transition-colors ${howFound === h ? "bg-ink text-white border-ink" : "border-rule text-[#525252] hover:border-ink hover:text-ink"}`} data-testid={`how-found-${h.toLowerCase().replace(/[^a-z]/g, "-")}`}>{h}</button>
-              ))}
-            </div>
-          </div>
-          <button type="submit" disabled={busy} className="btn-primary disabled:opacity-50" data-testid="profile-save-btn">{busy ? "Salvataggio…" : "Continua"}</button>
+          <button type="submit" disabled={busy} className="btn-primary disabled:opacity-50" data-testid="profile-save-btn">{busy ? "Salvataggio…" : "Completa configurazione"}</button>
         </form>
       </div>
     </div>

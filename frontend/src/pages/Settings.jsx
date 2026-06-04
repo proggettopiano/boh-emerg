@@ -131,17 +131,14 @@ export default function Settings() {
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="min-w-0">
               <p className="font-medium flex items-center gap-2">
-                {bk?.drive_connected ? <><CheckCircle2 size={16} className="text-emerald-600" /> {bk?.master_drive_connected && !bk?.user_drive_connected ? "Master Drive connesso" : "Drive connesso"}</> : <><CloudOff size={16} className="text-muted2" /> Drive non connesso</>}
+                {bk?.drive_connected ? <><CheckCircle2 size={16} className="text-emerald-600" /> Master Drive connesso</> : <><CloudOff size={16} className="text-muted2" /> Drive non configurato</>}
               </p>
               {bk?.drive_email && <p className="text-mono text-xs text-muted2 mt-1">{bk.drive_email}</p>}
             </div>
-            {!bk?.drive_connected && (
-              <button onClick={connectDrive} className="btn-primary !py-2 !px-4 text-sm" data-testid="connect-drive-btn"><HardDriveUpload size={14} /> Connetti Google Drive</button>
-            )}
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 border-t border-rule pt-4">
-            <Stat label="Backup" value={user.backup_enabled ? "ON" : "OFF"} mono />
+            <Stat label="Libreria" value="CONDIVISA" mono />
             <Stat label="File totali" value={bk?.total_pdfs ?? "—"} />
             <Stat label="Su Drive" value={bk?.backed_up_pdfs ?? "—"} />
             <Stat label="In attesa" value={bk?.pending_pdfs ?? "—"} />
@@ -149,35 +146,17 @@ export default function Settings() {
 
           {bk?.last_backup_at && <p className="text-mono text-xs text-muted2">Ultimo backup: {new Date(bk.last_backup_at).toLocaleString("it-IT")}</p>}
 
-          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-rule">
-            <button onClick={toggleBackup} className={`px-4 py-2 rounded-sm font-medium text-sm ${user.backup_enabled ? "bg-emerald-500 text-white" : "bg-canvas3 text-ink border border-rule"}`} data-testid="settings-backup-toggle">
-              {user.backup_enabled ? "BACKUP ATTIVO" : "ATTIVA BACKUP"}
-            </button>
-            {bk?.drive_connected && (
+          {user.is_admin && bk?.drive_connected && (
+            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-rule">
               <button onClick={runBackup} disabled={bkBusy} className="btn-ghost border border-rule rounded-sm px-3 py-2 text-sm disabled:opacity-50" data-testid="run-backup-btn">
                 <RefreshCw size={14} className={bkBusy ? "animate-spin" : ""} /> Esegui backup ora
               </button>
-            )}
-            {user.is_admin && bk?.drive_connected && (
               <button onClick={testBackup} disabled={bkBusy} className="btn-ghost border border-rule rounded-sm px-3 py-2 text-sm disabled:opacity-50" data-testid="test-backup-btn">
                 <FlaskConical size={14} /> Testa backup
               </button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
-
-        {!user.backup_enabled && (
-          <div className="mt-3 flex items-start gap-2 text-highlightFg bg-highlight border border-[#FDE047] p-3 rounded-sm text-sm">
-            <AlertTriangle size={16} className="shrink-0 mt-0.5" />
-            <span>Backup disattivato. I file sono solo sul server. Se viene perso, dovrai ricaricarli manualmente.</span>
-          </div>
-        )}
-      </Section>
-
-      <Section title="ZONA PERICOLO" testId="settings-danger-section">
-        <button onClick={deleteAccount} className="inline-flex items-center gap-2 border border-red-500 text-red-600 hover:bg-red-50 px-4 py-2 rounded-sm font-medium text-sm" data-testid="settings-delete-account">
-          <Trash2 size={14} /> Cancella account
-        </button>
       </Section>
     </div>
   );

@@ -75,9 +75,8 @@ export default function Login() {
           {busy ? (retrying ? "Risveglio backend..." : "Accesso...") : "Accedi"}
         </button>
       </form>
-      <div className="mt-6 flex items-center justify-between text-sm">
-        <Link to="/forgot" className="text-[#525252] hover:text-ink underline" data-testid="forgot-link">Password dimenticata?</Link>
-        <Link to="/register" className="text-[#525252] hover:text-ink underline" data-testid="goto-register-link">Crea account</Link>
+      <div className="mt-6 text-center text-sm text-muted3">
+        Accedi con l'account condiviso del gruppo.
       </div>
     </AuthShell>
   );

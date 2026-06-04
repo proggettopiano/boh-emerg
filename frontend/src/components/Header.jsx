@@ -14,7 +14,7 @@ export default function Header() {
   const isAdmin = user.email?.toLowerCase() === ADMIN_EMAIL || user.is_admin;
   const navItems = [
     { to: "/", label: "Cerca", icon: Search, end: true, testId: "nav-search" },
-    { to: "/library", label: "Libreria", icon: Library, testId: "nav-library" },
+    { to: "/library", label: "Gruppo", icon: Library, testId: "nav-library" },
     { to: "/libraries", label: "Condivise", icon: Users, testId: "nav-shared" },
     { to: "/settings", label: "Impostazioni", icon: SettingsIcon, testId: "nav-settings" },
   ];
