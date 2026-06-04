@@ -18,13 +18,11 @@ import PdfViewer from "@/pages/PdfViewer";
 import Settings from "@/pages/Settings";
 import AdminLogs from "@/pages/AdminLogs";
 import Admin from "@/pages/Admin";
-import ErrorBoundary from "@/components/ErrorBoundary";
 import { shouldHideAppChrome } from "@/viewer/viewerChrome";
 
 function GoogleOAuthReturn() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { setUser, loginWithToken, user: currentUser } = useAuth();
   const processed = useRef(false);
   const [status, setStatus] = useState("Connessione a Google in corso...");
 
@@ -38,12 +36,7 @@ function GoogleOAuthReturn() {
     const mode = sessionStorage.getItem("google_oauth_mode") || "login";
     sessionStorage.removeItem("google_oauth_mode");
 
-    if (error) {
-      navigate("/login", { replace: true });
-      return;
-    }
-
-    if (!code) {
+    if (error || !code) {
       navigate("/login", { replace: true });
       return;
     }
@@ -52,6 +45,7 @@ function GoogleOAuthReturn() {
       try {
         const redirect_uri = getGoogleRedirectUri();
 
+        // Solo la modalità "master" è supportata per la connessione Drive dell'admin
         if (mode === "master") {
           await api.post("/admin/master-drive/connect", {
             code,
@@ -61,19 +55,14 @@ function GoogleOAuthReturn() {
           return;
         }
 
-        const r = await api.post("/auth/google", {
-          code,
-          redirect_uri,
-        });
-
-        loginWithToken(r.data.token, r.data.user);
-        navigate(r.data.user.profile_completed ? "/" : "/profile-setup", { replace: true });
+        // Login Google rimosso per gli utenti normali
+        navigate("/login", { replace: true });
       } catch (e) {
         setStatus("Errore Google");
         setTimeout(() => navigate("/login", { replace: true }), 2000);
       }
     })();
-  }, [location.search, loginWithToken, navigate]);
+  }, [location.search, navigate]);
 
   return <div>{status}</div>;
 }

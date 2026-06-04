@@ -1,14 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { AlertTriangle, Trash2, HardDriveUpload, RefreshCw, CheckCircle2, CloudOff, FlaskConical } from "lucide-react";
+import { HardDriveUpload, RefreshCw, CheckCircle2, CloudOff } from "lucide-react";
 import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { startGoogleOAuth } from "@/lib/google";
 
-function Section({ title, children, testId }) {
+function Section({ title, children }) {
   return (
-    <section className="border-t border-rule py-8" data-testid={testId}>
+    <section className="border-t border-rule py-8">
       <h2 className="overline mb-4">{title}</h2>
       {children}
     </section>
@@ -16,18 +14,7 @@ function Section({ title, children, testId }) {
 }
 
 export default function Settings() {
-  const { user, setUser, logout } = useAuth();
-  const navigate = useNavigate();
-  const [name, setName] = useState(user?.name || "");
-  const [howFound, setHowFound] = useState(user?.how_found || "");
-  const [picture, setPicture] = useState(user?.picture || "");
-
-  const [newEmail, setNewEmail] = useState("");
-  const [emailPwd, setEmailPwd] = useState("");
-
-  const [curPwd, setCurPwd] = useState("");
-  const [newPwd, setNewPwd] = useState("");
-
+  const { user } = useAuth();
   const [bk, setBk] = useState(null);
   const [bkBusy, setBkBusy] = useState(false);
 
@@ -36,88 +23,41 @@ export default function Settings() {
   };
   useEffect(() => { loadBackup(); }, []);
 
-  const saveProfile = async () => {
-    try { const r = await api.patch("/profile", { name, how_found: howFound, picture }); setUser(r.data); toast.success("Profilo aggiornato"); }
-    catch (e) { toast.error(e.response?.data?.detail || "Errore"); }
-  };
-  const onPickFile = (e) => {
-    const f = e.target.files?.[0]; if (!f) return;
-    if (f.size > 2 * 1024 * 1024) { toast.error("Max 2MB"); return; }
-    const reader = new FileReader(); reader.onload = () => setPicture(reader.result); reader.readAsDataURL(f);
-  };
-  const changeEmail = async () => {
-    try { const r = await api.post("/settings/email", { password: emailPwd, new_email: newEmail }); setUser(r.data); setNewEmail(""); setEmailPwd(""); toast.success("Email aggiornata"); }
-    catch (e) { toast.error(e.response?.data?.detail || "Errore"); }
-  };
-  const changePassword = async () => {
-    try { await api.post("/settings/password", { current_password: curPwd, new_password: newPwd }); setCurPwd(""); setNewPwd(""); toast.success("Password aggiornata"); }
-    catch (e) { toast.error(e.response?.data?.detail || "Errore"); }
-  };
-  const toggleBackup = async () => {
-    if (!user.backup_enabled && !bk?.drive_connected) { toast.error("Connetti Google Drive o chiedi all'admin di collegare il Master Drive"); return; }
-    try { const r = await api.post("/settings/backup", { enabled: !user.backup_enabled }); setUser(r.data); loadBackup(); toast.success(`Backup ${r.data.backup_enabled ? "attivato" : "disattivato"}`); }
-    catch (e) { toast.error(e.response?.data?.detail || "Errore"); }
-  };
-  const connectDrive = async () => { try { await startGoogleOAuth("connect"); } catch { toast.error("Errore Google OAuth"); } };
   const runBackup = async () => {
     setBkBusy(true);
-    try { const r = await api.post("/backup/run"); toast.success(`Backup completato · ${r.data.uploaded} caricati${r.data.errors ? `, ${r.data.errors} errori` : ""}`); loadBackup(); }
+    try { 
+      const r = await api.post("/backup/run"); 
+      toast.success(`Backup avviato · ${r.data.pending} file in attesa`); 
+      loadBackup(); 
+    }
     catch (e) { toast.error(e.response?.data?.detail || "Errore"); }
     finally { setBkBusy(false); }
-  };
-  const testBackup = async () => {
-    setBkBusy(true);
-    try { const r = await api.post("/backup/test"); toast.success(`Test OK · ${r.data.files_count} file nella cartella Drive`); loadBackup(); }
-    catch (e) { toast.error(e.response?.data?.detail || "Errore test"); }
-    finally { setBkBusy(false); }
-  };
-  const deleteAccount = async () => {
-    if (!window.confirm("Cancellare definitivamente l'account e tutti i tuoi PDF? Operazione irreversibile.")) return;
-    if (!window.confirm("Sei davvero sicuro? Non puoi tornare indietro.")) return;
-    try { await api.delete("/settings/account"); logout(); navigate("/register"); toast.success("Account eliminato"); }
-    catch (e) { toast.error(e.response?.data?.detail || "Errore"); }
   };
 
   if (!user) return null;
 
   return (
-    <div className="max-w-3xl mx-auto px-6 md:px-12 py-12" data-testid="settings-page">
+    <div className="max-w-3xl mx-auto px-6 md:px-12 py-12">
       <p className="overline mb-2">ACCOUNT</p>
       <h1 className="font-display font-black text-4xl md:text-5xl tracking-tighter mb-10">Impostazioni</h1>
 
-      <Section title="PROFILO" testId="settings-profile-section">
-        <div className="flex items-center gap-5 mb-4">
-          <div className="w-20 h-20 rounded-md bg-canvas3 overflow-hidden border border-rule flex items-center justify-center">
-            {picture ? <img src={picture} alt="profile" className="w-full h-full object-cover" /> : <span className="text-mono text-xs text-muted2">FOTO</span>}
-          </div>
-          <label className="btn-ghost border border-rule rounded-sm cursor-pointer">
-            <input type="file" accept="image/*" className="hidden" onChange={onPickFile} data-testid="settings-picture-input" />
-            Cambia foto
-          </label>
-        </div>
-        <div className="grid sm:grid-cols-2 gap-4 mb-4">
-          <div><label className="overline block mb-2">Nome</label><input value={name} onChange={(e) => setName(e.target.value)} className="input-base" data-testid="settings-name-input" /></div>
-          <div><label className="overline block mb-2">Come ci hai trovato</label><input value={howFound} onChange={(e) => setHowFound(e.target.value)} className="input-base" data-testid="settings-howfound-input" /></div>
-        </div>
-        <button onClick={saveProfile} className="btn-primary" data-testid="settings-save-profile">Salva profilo</button>
-      </Section>
-
-      <Section title="ACCOUNT" testId="settings-account-section">
+      <Section title="ACCOUNT">
         <p className="text-sm text-muted2 mb-4">
-          Stai usando un account di gruppo. Le impostazioni di sicurezza (email e password) sono gestite dall'amministratore.
+          Stai usando un account di gruppo. Le impostazioni di sicurezza sono gestite dall'amministratore.
         </p>
         <div className="text-mono text-sm text-muted2">Email: {user.email}</div>
+        <div className="text-mono text-sm text-muted2">Ruolo: {user.is_admin ? "Amministratore" : "Membro Gruppo"}</div>
       </Section>
 
-      <Section title="BACKUP GRUPPO" testId="settings-backup-section">
-        <div className="border border-rule rounded-md p-5 space-y-4">
+      <Section title="BACKUP GRUPPO">
+        <div className="border border-rule rounded-md p-5 space-y-4 bg-white">
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="min-w-0">
               <p className="font-medium flex items-center gap-2">
-                {bk?.drive_connected ? <><CheckCircle2 size={16} className="text-emerald-600" /> Sincronizzazione Drive Attiva</> : <><CloudOff size={16} className="text-muted2" /> Backup non configurato</>}
+                {bk?.drive_connected ? <><CheckCircle2 size={16} className="text-emerald-600" /> Sincronizzazione Cloud Attiva</> : <><CloudOff size={16} className="text-muted2" /> Backup non configurato</>}
               </p>
               <p className="text-sm text-muted2 mt-1">
-                Tutti gli spartiti sono salvati automaticamente nel cloud di gruppo.
+                Tutti gli spartiti sono salvati automaticamente nel Master Drive di gruppo.
               </p>
             </div>
           </div>
@@ -129,11 +69,9 @@ export default function Settings() {
             <Stat label="In attesa" value={bk?.pending_pdfs ?? "—"} />
           </div>
 
-          {bk?.last_backup_at && <p className="text-mono text-xs text-muted2">Ultimo aggiornamento cloud: {new Date(bk.last_backup_at).toLocaleString("it-IT")}</p>}
-
           {user.is_admin && bk?.drive_connected && (
             <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-rule">
-              <button onClick={runBackup} disabled={bkBusy} className="btn-ghost border border-rule rounded-sm px-3 py-2 text-sm disabled:opacity-50" data-testid="run-backup-btn">
+              <button onClick={runBackup} disabled={bkBusy} className="btn-ghost border border-rule rounded-sm px-3 py-2 text-sm disabled:opacity-50">
                 <RefreshCw size={14} className={bkBusy ? "animate-spin" : ""} /> Sincronizza ora
               </button>
             </div>

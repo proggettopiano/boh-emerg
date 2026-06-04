@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Shield, Cloud, HardDrive, Users, FileText, AlertTriangle, RefreshCw, ScrollText, FlaskConical, Unlink, HardDriveUpload, Check, X, Lock, Unlock } from "lucide-react";
+import { Shield, Cloud, Users, FileText, AlertTriangle, RefreshCw, ScrollText, Unlink, HardDriveUpload, Check, X } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
@@ -10,49 +10,36 @@ export default function Admin() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [stats, setStats] = useState(null);
-  const [users, setUsers] = useState([]);
   const [requests, setRequests] = useState([]);
   const [busy, setBusy] = useState(false);
   const [master, setMaster] = useState(null);
 
-  const isAdmin = user?.email?.toLowerCase() === "admin@scorelib.app" || user?.is_admin;
+  const isAdmin = user?.is_admin;
 
   const load = async () => {
     setBusy(true);
     try {
-      const [s, u, m, r] = await Promise.all([
+      const [s, m, r] = await Promise.all([
         api.get("/admin/stats"),
-        api.get("/admin/users"),
         api.get("/admin/master-drive/status"),
         api.get("/admin/access-requests"),
       ]);
       setStats(s.data); 
-      setUsers(u.data.users); 
       setMaster(m.data);
-      setRequests(r.data.requests || []);
+      setRequests(r.data || []);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Accesso negato");
       if (e.response?.status === 403) navigate("/");
     } finally { setBusy(false); }
   };
 
-  const handleRequest = async (requestId, action) => {
+  const handleRequest = async (email, action) => {
     try {
-      await api.post(`/admin/access-requests/${requestId}/${action}`);
+      await api.post(`/admin/access-requests/${action}`, { email });
       toast.success(`Richiesta ${action === "approve" ? "approvata" : "rifiutata"}`);
       load();
     } catch (e) {
       toast.error("Errore nell'elaborazione della richiesta");
-    }
-  };
-
-  const togglePdfProtection = async (pdfId, currentStatus) => {
-    try {
-      await api.patch(`/pdfs/${pdfId}`, { is_protected: !currentStatus });
-      toast.success(`Protezione ${!currentStatus ? "attivata" : "disattivata"}`);
-      load();
-    } catch (e) {
-      toast.error("Errore nell'aggiornamento della protezione");
     }
   };
 
@@ -99,7 +86,7 @@ export default function Admin() {
           <Stat icon={<Users size={16} />} label="Membri Gruppo" value={stats.users_total} />
           <Stat icon={<FileText size={16} />} label="Spartiti Totali" value={stats.pdfs_total} />
           <Stat icon={<Cloud size={16} />} label="Backup Drive" value={master?.connected ? "ATTIVO" : "OFF"} accent={!master?.connected} />
-          <Stat icon={<AlertTriangle size={16} />} label="Richieste Pendenti" value={requests.length} accent={requests.length > 0} />
+          <Stat icon={<AlertTriangle size={16} />} label="Richieste Pendenti" value={requests.filter(r => r.status === 'pending').length} accent={requests.filter(r => r.status === 'pending').length > 0} />
         </div>
       )}
 
@@ -113,47 +100,56 @@ export default function Admin() {
             <thead className="bg-canvas2 border-b border-rule text-left">
               <tr>
                 <th className="py-3 px-4 overline">Richiedente</th>
-                <th className="py-3 px-4 overline">Motivazione</th>
                 <th className="py-3 px-4 overline">IP</th>
+                <th className="py-3 px-4 overline">Stato</th>
                 <th className="py-3 px-4 overline">Data / Ora</th>
                 <th className="py-3 px-4 overline text-right">Azioni</th>
               </tr>
             </thead>
             <tbody>
-              {requests.map((r) => (
-                <tr key={r.id} className="border-b border-rule hover:bg-canvas2">
+              {requests.map((r, idx) => (
+                <tr key={idx} className="border-b border-rule hover:bg-canvas2">
                   <td className="py-3 px-4">
                     <div className="font-bold">{r.name}</div>
                     <div className="text-xs text-muted3 text-mono">{r.email}</div>
                   </td>
-                  <td className="py-3 px-4 text-muted2 italic">"{r.reason || "Nessuna motivazione"}"</td>
                   <td className="py-3 px-4 text-xs text-mono">{r.ip || "—"}</td>
+                  <td className="py-3 px-4">
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                      r.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : 
+                      r.status === 'rejected' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
+                    }`}>
+                      {r.status.toUpperCase()}
+                    </span>
+                  </td>
                   <td className="py-3 px-4 text-xs text-mono">
                     {r.created_at ? new Date(r.created_at).toLocaleString("it-IT") : "—"}
                   </td>
                   <td className="py-3 px-4 text-right">
-                    <div className="flex justify-end gap-2">
-                      <button 
-                        onClick={() => handleRequest(r.id, "approve")}
-                        className="p-1.5 bg-emerald-100 text-emerald-700 rounded-sm hover:bg-emerald-200"
-                        title="Approva"
-                      >
-                        <Check size={16} />
-                      </button>
-                      <button 
-                        onClick={() => handleRequest(r.id, "reject")}
-                        className="p-1.5 bg-red-100 text-red-700 rounded-sm hover:bg-red-200"
-                        title="Rifiuta"
-                      >
-                        <X size={16} />
-                      </button>
-                    </div>
+                    {r.status === 'pending' && (
+                      <div className="flex justify-end gap-2">
+                        <button 
+                          onClick={() => handleRequest(r.email, "approve")}
+                          className="p-1.5 bg-emerald-100 text-emerald-700 rounded-sm hover:bg-emerald-200"
+                          title="Approva"
+                        >
+                          <Check size={16} />
+                        </button>
+                        <button 
+                          onClick={() => handleRequest(r.email, "reject")}
+                          className="p-1.5 bg-red-100 text-red-700 rounded-sm hover:bg-red-200"
+                          title="Rifiuta"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}
               {requests.length === 0 && (
                 <tr>
-                  <td colSpan="4" className="py-8 text-center text-muted3 italic">Nessuna richiesta pendente</td>
+                  <td colSpan="5" className="py-8 text-center text-muted3 italic">Nessuna richiesta trovata</td>
                 </tr>
               )}
             </tbody>
@@ -188,47 +184,6 @@ export default function Admin() {
             <div><div className="overline mb-1">Stato Backup</div><div className="text-emerald-700 text-sm font-medium">● Sincronizzazione Attiva</div></div>
           </div>
         )}
-      </div>
-
-      {/* Members Table */}
-      <div className="border border-rule rounded-md overflow-hidden bg-white">
-        <div className="px-5 py-3 border-b border-rule flex items-center justify-between bg-canvas2">
-          <h2 className="font-display font-bold tracking-tight">Membri del Gruppo</h2>
-          <span className="text-mono text-xs text-muted2">{users.length} membri</span>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-rule text-left bg-canvas2/50">
-                <th className="overline py-2 px-4">Email</th>
-                <th className="overline py-2 px-4">Nome</th>
-                <th className="overline py-2 px-4">IP Recente</th>
-                <th className="overline py-2 px-4">Ruolo</th>
-                <th className="overline py-2 px-4">Iscritto il</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => (
-                <tr key={u.user_id} className="border-b border-rule hover:bg-canvas2">
-                  <td className="py-2 px-4 text-mono text-xs">
-                    <div className="flex items-center gap-2">
-                      <div className={`w-2 h-2 rounded-full ${u.is_online ? "bg-emerald-500 animate-pulse" : "bg-muted3"}`} title={u.is_online ? "Online" : "Offline"} />
-                      {u.email}
-                    </div>
-                  </td>
-                  <td className="py-2 px-4">{u.name || "—"}</td>
-                  <td className="py-2 px-4 text-mono text-xs text-muted2">{u.last_ip || "—"}</td>
-                  <td className="py-2 px-4">
-                    <span className={`text-mono text-[10px] px-2 py-0.5 rounded-sm ${u.is_admin ? "bg-ink text-white" : "bg-canvas3"}`}>
-                      {u.is_admin ? "AMMINISTRATORE" : "MEMBRO GRUPPO"}
-                    </span>
-                  </td>
-                  <td className="py-2 px-4 text-mono text-xs text-muted2">{u.created_at?.slice(0, 10)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
       </div>
     </div>
   );
