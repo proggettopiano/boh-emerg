@@ -74,8 +74,12 @@ async def lifespan(app: FastAPI):
     # --- Startup job recovery ---
     # I job in stato 'processing' o 'queued' al momento del riavvio sono orfani:
     # la BackgroundTask che li stava eseguendo è stata terminata e non riprenderà
-    # mai da sola. Li reimpostiamo a 'queued' così il worker esterno (o
-    # /jobs/process-next) li raccoglie al prossimo ciclo.
+    # mai da sola. Li reimpostiamo a 'queued' e li rilanciamo subito come task
+    # asyncio, senza aspettare una chiamata esterna a /jobs/process-next.
+    stuck_jobs = await db.upload_jobs.find(
+        {"status": {"$in": ["processing", "queued"]}},
+        {"_id": 0, "id": 1},
+    ).to_list(1000)
     stuck_result = await db.upload_jobs.update_many(
         {"status": {"$in": ["processing", "queued"]}},
         {"$set": {"status": "queued", "error": "requeued_at_startup", "updated_at": iso_now()}},
@@ -83,13 +87,18 @@ async def lifespan(app: FastAPI):
     if stuck_result.modified_count > 0:
         logger.warning(
             f"[STARTUP RECOVERY] {stuck_result.modified_count} job rimessi in coda "
-            f"(erano processing/queued al riavvio)"
+            f"(erano processing/queued al riavvio) — rilancio immediato"
         )
         # Allinea anche il campo status sui PDF corrispondenti
         await db.pdfs.update_many(
             {"status": {"$in": ["pending", "processing"]}},
             {"$set": {"status": "pending"}},
         )
+        # Rilancia ogni job come task asyncio indipendente: non blocca lo startup
+        # e non dipende da chiamate esterne al worker endpoint.
+        for _j in stuck_jobs:
+            asyncio.create_task(process_pdf_job(_j["id"]))
+            logger.info(f"[STARTUP RECOVERY] Rilancio job_id={_j['id']}")
     else:
         logger.info("[STARTUP RECOVERY] Nessun job bloccato trovato all'avvio")
 
@@ -175,8 +184,16 @@ async def set_master_drive(value: Optional[dict]):
 
 
 async def resolve_backup_credentials(user: dict) -> Optional[dict]:
-    """Decide dove vanno i backup/upload Drive.
-    SEMPLIFICAZIONE: Solo master_drive, nessun backup per-utente.
+    """Risolve le credenziali Drive per backup e upload.
+
+    POLICY DI STORAGE (decisione di progetto, non un bug):
+    - Si usa un unico account Google condiviso per tutto il gruppo (Master Drive).
+    - Non esiste backup per-utente: ogni PDF finisce nella cartella condivisa
+      del Master Drive, organizzata per user_id.
+    - Se il Master Drive non è configurato, il file rimane solo locale.
+      Su Render (filesystem effimero) questo significa che il file viene perso
+      al prossimo restart: configurare il Master Drive è obbligatorio in produzione.
+    - Per cambiare policy: modificare questa funzione e `resolve_upload_credentials`.
     """
     master = await get_master_drive()
     if master and master.get("refresh_token"):
@@ -1383,58 +1400,78 @@ async def process_next_upload_job(secret: Optional[str] = Query(None)):
 
 @api.post("/jobs/recover-stuck")
 async def recover_stuck_jobs(secret: Optional[str] = Query(None)):
-    """Find and re-queue PDFs stuck in 'queued' or 'processing' for too long.
+    """Trova e ri-accoda i job bloccati da più di 10 minuti.
 
-    This handles cases where:
-    - The background task never ran (e.g. server restart during upload)
-    - The job is orphaned (job record exists but PDF is stuck)
+    Casi gestiti:
+    - Il background task non è mai partito (restart durante l'upload)
+    - Il job è orfano (record esiste ma il PDF è fermo)
 
-    Callers should pass ?secret=<WORKER_SECRET> in production.
+    Usa il campo canonico `status` su `db.pdfs` (non il legacy `processing_status`).
+    In produzione passare ?secret=<WORKER_SECRET>.
     """
     if WORKER_SECRET and secret != WORKER_SECRET:
         raise HTTPException(status_code=403, detail="Worker secret non valido")
 
-    # Find PDFs stuck in processing for > 10 minutes (likely orphaned)
+    # Cerca PDF bloccati in stato pending da più di 10 minuti.
+    # Usa il campo canonico `status`, non il legacy `processing_status`.
     stuck_threshold = datetime.now(timezone.utc) - timedelta(minutes=10)
-    stuck_pdfs = await db.pdfs.find({
-        "processing_status": {"$in": ["queued", "processing"]},
-        "created_at": {"$lt": stuck_threshold.isoformat()},
-    }, {"_id": 0}).to_list(1000)
+    stuck_pdfs = await db.pdfs.find(
+        {
+            "$or": [
+                {"status": {"$in": ["pending", "processing"]}},
+                # Compatibilità con record pre-migrazione che usano ancora processing_status
+                {"status": {"$exists": False}, "processing_status": {"$in": ["queued", "processing"]}},
+            ],
+            "created_at": {"$lt": stuck_threshold.isoformat()},
+        },
+        {"_id": 0},
+    ).to_list(1000)
 
     recovered = []
     orphaned_jobs = 0
     errors = []
+    relaunched = []
 
     for p in stuck_pdfs:
         pdf_id = p["id"]
 
         try:
-            # Check if there's an existing job for this PDF
             existing_job = await db.upload_jobs.find_one({"pdf_id": pdf_id})
 
             if existing_job:
-                # Reset both PDF and job to 'queued' so it can be reprocessed
-                await db.pdfs.update_one({"id": pdf_id}, {"$set": {"processing_status": "queued", "processing_error": None}})
+                # Reimposta job e PDF a queued, poi rilancia subito il processing
+                await db.pdfs.update_one(
+                    {"id": pdf_id},
+                    {"$set": {"status": "pending", "processing_status": "queued", "processing_error": None}},
+                )
                 await db.upload_jobs.update_one(
                     {"id": existing_job["id"]},
                     {"$set": {"status": "queued", "error": "stuck_recovery", "updated_at": iso_now()}},
                 )
+                asyncio.create_task(process_pdf_job(existing_job["id"]))
                 orphaned_jobs += 1
-                logger.info(f"[recover_stuck] reset stuck job {existing_job['id']} and PDF {pdf_id}")
+                relaunched.append(existing_job["id"])
+                logger.info(f"[recover_stuck] reset+rilancio job={existing_job['id']} pdf={pdf_id}")
             else:
-                # No job exists — create a new one
+                # Nessun job esistente: ne crea uno nuovo e lo rilancia
                 job_id = await queue_pdf_processing(pdf_id, p["owner_id"])
+                asyncio.create_task(process_pdf_job(job_id))
                 recovered.append({"pdf_id": pdf_id, "title": p.get("title", ""), "job_id": job_id})
-                logger.info(f"[recover_stuck] created new job {job_id} for stuck PDF {pdf_id}")
+                logger.info(f"[recover_stuck] nuovo job={job_id} per pdf={pdf_id}")
         except Exception as e:
             errors.append({"pdf_id": pdf_id, "error": str(e)})
-            logger.error(f"[recover_stuck] failed to recover PDF {pdf_id}: {e}")
+            logger.error(f"[recover_stuck] fallito per pdf={pdf_id}: {e}")
 
-    await log_event("jobs.recovered", f"Recovered {len(recovered)} PDFs, reset {orphaned_jobs} stuck jobs", meta={"recovered": len(recovered), "orphaned": orphaned_jobs, "errors": len(errors)})
+    await log_event(
+        "jobs.recovered",
+        f"Recovered {len(recovered)} PDF, reset {orphaned_jobs} job bloccati, rilanciati {len(relaunched)}",
+        meta={"recovered": len(recovered), "orphaned": orphaned_jobs, "relaunched": len(relaunched), "errors": len(errors)},
+    )
     return {
         "ok": True,
         "recovered": len(recovered),
         "orphaned_jobs_reset": orphaned_jobs,
+        "relaunched": len(relaunched),
         "errors": len(errors),
         "details": recovered,
         "error_list": errors,
@@ -1698,26 +1735,48 @@ async def get_pdf_file(pdf_id: str, user_id: Optional[str] = Depends(get_optiona
                 )
                 await log_event("pdf.error", f"Restore Drive fallito: {e}", user_id=p["owner_id"], level="error", meta={"pdf_id": pdf_id, "stage": "drive_restore"})
         else:
-            # drive_file_id presente ma nessun refresh token disponibile
+            # drive_file_id presente ma nessun refresh token disponibile:
+            # il Master Drive potrebbe essere stato rimosso dalla configurazione.
             logger.error(
                 f"[FILE MISSING] No refresh token for Drive restore "
                 f"pdf_id={pdf_id} drive_owner={p.get('drive_owner')}"
             )
+            await log_event(
+                "pdf.missing_file",
+                f"File locale assente e credenziali Drive non disponibili: {p.get('title') or pdf_id}",
+                user_id=p["owner_id"],
+                level="error",
+                meta={
+                    "pdf_id": pdf_id,
+                    "drive_file_id": p.get("drive_file_id"),
+                    "drive_owner": p.get("drive_owner"),
+                    "storage_type": p.get("storage_type"),
+                    "status": p.get("status"),
+                    "reason": "no_refresh_token",
+                },
+            )
     else:
-        # Nessun drive_file_id: record orfano (file locale perso, nessun backup)
+        # Nessun drive_file_id: record orfano (file locale perso, nessun backup).
+        # Causa più comune su Render: filesystem effimero + backup Drive non completato.
         logger.error(
             f"[FILE MISSING] Orphan record — no local file and no drive_file_id "
-            f"pdf_id={pdf_id} owner={p['owner_id']} storage_type={p.get('storage_type')}"
+            f"pdf_id={pdf_id} owner={p['owner_id']} storage_type={p.get('storage_type')} "
+            f"status={p.get('status')}"
         )
         await log_event(
             "pdf.missing_file",
             f"File fisico assente e nessun backup Drive: {p.get('title') or pdf_id}",
             user_id=p["owner_id"],
             level="error",
-            meta={"pdf_id": pdf_id, "storage_type": p.get("storage_type"), "status": p.get("status")},
+            meta={
+                "pdf_id": pdf_id,
+                "storage_type": p.get("storage_type"),
+                "status": p.get("status"),
+                "reason": "orphan_no_drive_backup",
+            },
         )
 
-    raise HTTPException(status_code=404, detail="File mancante")
+    raise HTTPException(status_code=404, detail=f"File mancante (pdf_id={pdf_id})")
 
 
 @api.post("/pdfs/{pdf_id}/reload")
