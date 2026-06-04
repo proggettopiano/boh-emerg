@@ -36,12 +36,20 @@ export default function Settings() {
   const changeTheme = (t) => {
     setTheme(t);
     localStorage.setItem("theme", t);
-    if (t === "dark") document.documentElement.classList.add("dark");
-    else if (t === "light") document.documentElement.classList.remove("dark");
-    else {
-      if (window.matchMedia("(prefers-color-scheme: dark)").matches) document.documentElement.classList.add("dark");
-      else document.documentElement.classList.remove("dark");
+    const root = document.documentElement;
+    if (t === "dark") {
+      root.classList.add("dark");
+      root.style.colorScheme = "dark";
+    } else if (t === "light") {
+      root.classList.remove("dark");
+      root.style.colorScheme = "light";
+    } else {
+      const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      root.classList.toggle("dark", isDark);
+      root.style.colorScheme = isDark ? "dark" : "light";
     }
+    // Dispatch event to notify other components if needed
+    window.dispatchEvent(new Event("theme-change"));
   };
 
   return (

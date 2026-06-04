@@ -60,6 +60,10 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       fetch(request)
         .then((response) => {
+          // Se la navigazione fallisce o restituisce 404/500, proviamo a servire la shell dell'app
+          if (!response || response.status >= 400) {
+             return caches.match("/") || response;
+          }
           const copy = response.clone();
           caches.open(APP_CACHE).then((cache) => cache.put("/", copy)).catch(() => {});
           return response;
