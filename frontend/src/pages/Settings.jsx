@@ -102,57 +102,39 @@ export default function Settings() {
         <button onClick={saveProfile} className="btn-primary" data-testid="settings-save-profile">Salva profilo</button>
       </Section>
 
-      <Section title="EMAIL" testId="settings-email-section">
-        <p className="text-mono text-sm text-muted2 mb-3">Attuale: {user.email}</p>
-        <div className="grid sm:grid-cols-2 gap-4 mb-3">
-          <input type="email" placeholder="Nuova email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} className="input-base" data-testid="settings-new-email" />
-          {user.auth_provider === "password" && (
-            <input type="password" placeholder="Password attuale" value={emailPwd} onChange={(e) => setEmailPwd(e.target.value)} className="input-base" data-testid="settings-email-pwd" />
-          )}
-        </div>
-        <button onClick={changeEmail} disabled={!newEmail} className="btn-primary disabled:opacity-40" data-testid="settings-change-email-btn">Cambia email</button>
+      <Section title="ACCOUNT" testId="settings-account-section">
+        <p className="text-sm text-muted2 mb-4">
+          Stai usando un account di gruppo. Le impostazioni di sicurezza (email e password) sono gestite dall'amministratore.
+        </p>
+        <div className="text-mono text-sm text-muted2">Email: {user.email}</div>
       </Section>
 
-      <Section title="PASSWORD" testId="settings-password-section">
-        {user.auth_provider !== "password" && (
-          <p className="text-sm text-muted2 mb-3">Hai effettuato l'accesso con Google. Imposta una password per usare anche il login email.</p>
-        )}
-        <div className="grid sm:grid-cols-2 gap-4 mb-3">
-          {user.auth_provider === "password" && (
-            <input type="password" placeholder="Password attuale" value={curPwd} onChange={(e) => setCurPwd(e.target.value)} className="input-base" data-testid="settings-cur-pwd" />
-          )}
-          <input type="password" placeholder="Nuova password (min 6)" value={newPwd} onChange={(e) => setNewPwd(e.target.value)} className="input-base" data-testid="settings-new-pwd" />
-        </div>
-        <button onClick={changePassword} disabled={newPwd.length < 6} className="btn-primary disabled:opacity-40" data-testid="settings-change-pwd-btn">Aggiorna password</button>
-      </Section>
-
-      <Section title="BACKUP · GOOGLE DRIVE" testId="settings-backup-section">
+      <Section title="BACKUP GRUPPO" testId="settings-backup-section">
         <div className="border border-rule rounded-md p-5 space-y-4">
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="min-w-0">
               <p className="font-medium flex items-center gap-2">
-                {bk?.drive_connected ? <><CheckCircle2 size={16} className="text-emerald-600" /> Master Drive connesso</> : <><CloudOff size={16} className="text-muted2" /> Drive non configurato</>}
+                {bk?.drive_connected ? <><CheckCircle2 size={16} className="text-emerald-600" /> Sincronizzazione Drive Attiva</> : <><CloudOff size={16} className="text-muted2" /> Backup non configurato</>}
               </p>
-              {bk?.drive_email && <p className="text-mono text-xs text-muted2 mt-1">{bk.drive_email}</p>}
+              <p className="text-sm text-muted2 mt-1">
+                Tutti gli spartiti sono salvati automaticamente nel cloud di gruppo.
+              </p>
             </div>
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 border-t border-rule pt-4">
-            <Stat label="Libreria" value="CONDIVISA" mono />
+            <Stat label="Libreria" value="GRUPPO" mono />
             <Stat label="File totali" value={bk?.total_pdfs ?? "—"} />
             <Stat label="Su Drive" value={bk?.backed_up_pdfs ?? "—"} />
             <Stat label="In attesa" value={bk?.pending_pdfs ?? "—"} />
           </div>
 
-          {bk?.last_backup_at && <p className="text-mono text-xs text-muted2">Ultimo backup: {new Date(bk.last_backup_at).toLocaleString("it-IT")}</p>}
+          {bk?.last_backup_at && <p className="text-mono text-xs text-muted2">Ultimo aggiornamento cloud: {new Date(bk.last_backup_at).toLocaleString("it-IT")}</p>}
 
           {user.is_admin && bk?.drive_connected && (
             <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-rule">
               <button onClick={runBackup} disabled={bkBusy} className="btn-ghost border border-rule rounded-sm px-3 py-2 text-sm disabled:opacity-50" data-testid="run-backup-btn">
-                <RefreshCw size={14} className={bkBusy ? "animate-spin" : ""} /> Esegui backup ora
-              </button>
-              <button onClick={testBackup} disabled={bkBusy} className="btn-ghost border border-rule rounded-sm px-3 py-2 text-sm disabled:opacity-50" data-testid="test-backup-btn">
-                <FlaskConical size={14} /> Testa backup
+                <RefreshCw size={14} className={bkBusy ? "animate-spin" : ""} /> Sincronizza ora
               </button>
             </div>
           )}

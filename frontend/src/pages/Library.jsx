@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Trash2, FileText, Upload as UploadIcon, Star, Tag as TagIcon, Plus } from "lucide-react";
+import { Trash2, FileText, Upload as UploadIcon, Star, Tag as TagIcon, Plus, Lock, Unlock, Shield } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import UploadModal from "@/components/UploadModal";
@@ -19,6 +19,8 @@ export default function Library() {
   const loadSeq = useRef(0);
   const mountedRef = useRef(false);
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isAdmin = user?.email?.toLowerCase() === "admin@scorelib.app" || user?.is_admin;
 
   const load = useCallback(async () => {
     const seq = loadSeq.current + 1;
@@ -87,6 +89,17 @@ export default function Library() {
       setItems((arr) => arr.map((x) => (x.id === p.id ? r.data : x)));
     } catch (e) {
       toast.error(e.response?.data?.detail || "Errore preferito");
+    }
+  };
+
+  const toggleProtection = async (p) => {
+    if (!isAdmin) return;
+    try {
+      const r = await api.patch(`/pdfs/${p.id}`, { is_protected: !p.is_protected });
+      setItems((arr) => arr.map((x) => (x.id === p.id ? r.data : x)));
+      toast.success(p.is_protected ? "Spartito reso pubblico" : "Spartito protetto (solo gruppo)");
+    } catch (e) {
+      toast.error("Errore modifica protezione");
     }
   };
 
@@ -164,7 +177,7 @@ export default function Library() {
                   <div className="font-display text-lg font-medium group-hover:underline decoration-2 underline-offset-4 truncate">{p.title}</div>
                   <div className="flex items-center gap-2 flex-wrap mt-0.5">
                     <span className="text-mono text-xs text-muted2">
-                      {p.created_at?.slice(0, 10)} - {p.status === "ready" ? `${p.pages}pp` : p.status === "error" ? "errore indicizzazione" : "indicizzazione in corso"} - {(p.size / 1024).toFixed(0)} KB{p.used_ocr ? " - OCR" : ""}
+                      {p.created_at?.slice(0, 10)} - {p.status === "ready" ? `${p.pages}pp` : p.status === "error" ? "errore indicizzazione" : "indicizzazione in corso"} - {(p.size / 1024).toFixed(0)} KB
                     </span>
                     <span className={`text-mono text-[10px] px-1.5 py-0.5 rounded-sm ${p.storage_type === "google_drive" ? "bg-ink text-white" : "bg-canvas3 text-muted2"}`} title={p.storage_type === "google_drive" ? `Drive - ${p.drive_file_id}` : `Locale - ${p.file_path}`}>
                       {p.storage_type === "google_drive" ? "DRIVE" : "LOCALE"}
@@ -176,6 +189,16 @@ export default function Library() {
                 </div>
               </button>
               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 shrink-0">
+                {isAdmin && (
+                  <button 
+                    onClick={() => toggleProtection(p)} 
+                    className={`btn-ghost ${p.is_protected ? "text-amber-600" : "text-emerald-600"}`} 
+                    title={p.is_protected ? "Protetto (solo gruppo) - Clicca per rendere pubblico" : "Pubblico - Clicca per proteggere"}
+                  >
+                    {p.is_protected ? <Lock size={15} /> : <Unlock size={15} />}
+                  </button>
+                )}
+                {!isAdmin && p.is_protected && <Lock size={15} className="text-muted3 px-2" title="Protetto" />}
                 <button onClick={() => setEditTagsFor(p)} className="btn-ghost" data-testid={`tags-btn-${p.id}`} title="Tag"><TagIcon size={15} /></button>
                 <button onClick={() => remove(p.id, p.title)} className="btn-ghost text-red-600" data-testid={`library-delete-${p.id}`} title="Elimina"><Trash2 size={15} /></button>
               </div>

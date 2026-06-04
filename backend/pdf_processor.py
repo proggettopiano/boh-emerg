@@ -1,21 +1,16 @@
-"""PDF text extraction with OCR fallback for scanned PDFs."""
+"""PDF text extraction (native text only, no OCR)."""
 import logging
-import io
 from typing import List, Tuple
 import fitz  # PyMuPDF
-from PIL import Image
-import pytesseract
 
 logger = logging.getLogger(__name__)
 
-OCR_LANGS = "eng+ita"
-MIN_CHARS_PER_PAGE = 25  # below this, treat page as scanned and run OCR
-
 
 def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool]:
-    """Extract text from each page. Falls back to OCR for image-only pages.
+    """Extract native text from each page.
+    OCR removed as per new group policy.
 
-    Returns (pages_text, total_pages, used_ocr).
+    Returns (pages_text, total_pages, used_ocr=False).
     """
     pages_text: List[str] = []
     used_ocr = False
@@ -29,19 +24,7 @@ def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool]:
         try:
             page = doc[page_num]
             text = page.get_text("text") or ""
-            text = text.strip()
-            if len(text) < MIN_CHARS_PER_PAGE:
-                # OCR fallback
-                try:
-                    pix = page.get_pixmap(dpi=200)
-                    img = Image.open(io.BytesIO(pix.tobytes("png")))
-                    ocr_text = pytesseract.image_to_string(img, lang=OCR_LANGS) or ""
-                    if len(ocr_text.strip()) > len(text):
-                        text = ocr_text.strip()
-                        used_ocr = True
-                except Exception as e:
-                    logger.warning(f"OCR failed on page {page_num + 1}: {e}")
-            pages_text.append(text)
+            pages_text.append(text.strip())
         except Exception as e:
             logger.warning(f"Failed to extract page {page_num + 1}: {e}")
             pages_text.append("")
