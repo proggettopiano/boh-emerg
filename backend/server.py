@@ -10,7 +10,7 @@ import asyncio
 import psutil
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, utc
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
@@ -65,7 +65,7 @@ app = FastAPI(title=APP_NAME, lifespan=lifespan)
 # Configurazione CORS robusta
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # In produzione meglio specificare i domini
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -78,7 +78,13 @@ logger = logging.getLogger("scorelib")
 logging.basicConfig(level=logging.INFO)
 
 # ----------------- Helpers -----------------
-def iso_now(): return datetime.now(timezone.utc).isoformat()
+def iso_now(): return datetime.now(utc).isoformat()
+
+def clean_doc(doc: dict) -> dict:
+    """Rimuove _id o lo converte in stringa per rendere il documento JSON-safe."""
+    if not doc: return doc
+    if "_id" in doc: doc["_id"] = str(doc["_id"])
+    return doc
 
 async def log_event(event_type: str, description: str, user_id: Optional[str] = None, level: str = "info", meta: Optional[dict] = None):
     doc = {
@@ -349,11 +355,12 @@ async def admin_logs(event_type: Optional[str] = None, q: Optional[str] = None, 
     if q: query["description"] = {"$regex": re.escape(q), "$options": "i"}
     items = await db.app_logs.find(query).sort("created_at", -1).limit(limit).to_list(limit)
     types = await db.app_logs.distinct("event_type")
-    return {"items": items, "types": types}
+    return {"items": [clean_doc(i) for i in items], "types": types}
 
 @api.get("/admin/access-requests")
 async def list_access_requests(_: str = Depends(require_admin)):
-    return await db.access_requests.find({}).sort("created_at", -1).to_list(100)
+    reqs = await db.access_requests.find({}).sort("created_at", -1).to_list(100)
+    return [clean_doc(r) for r in reqs]
 
 @api.post("/admin/access-requests/approve")
 async def approve_access(payload: dict, _: str = Depends(require_admin)):

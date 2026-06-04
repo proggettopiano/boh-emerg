@@ -16,6 +16,7 @@ import Library from "@/pages/Library";
 import SharedView from "@/pages/SharedView";
 import PdfViewer from "@/pages/PdfViewer";
 import Settings from "@/pages/Settings";
+import Shared from "@/pages/Shared";
 import AdminLogs from "@/pages/AdminLogs";
 import Admin from "@/pages/Admin";
 import { shouldHideAppChrome } from "@/viewer/viewerChrome";
@@ -94,6 +95,7 @@ function AppShell() {
         <Route path="/login" element={<Login />} />
         <Route path="/" element={<ProtectedRoute><Home /></ProtectedRoute>} />
         <Route path="/library" element={<ProtectedRoute><Library /></ProtectedRoute>} />
+        <Route path="/shared" element={<ProtectedRoute><Shared /></ProtectedRoute>} />
         <Route path="/shared/:token" element={<SharedView />} />
         <Route path="/viewer/:id" element={<ProtectedRoute><PdfViewer /></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
@@ -105,6 +107,22 @@ function AppShell() {
 }
 
 export default function App() {
+  useEffect(() => {
+    const t = localStorage.getItem("theme") || "system";
+    const root = document.documentElement;
+    if (t === "dark") {
+      root.classList.add("dark");
+      root.style.colorScheme = "dark";
+    } else if (t === "light") {
+      root.classList.remove("dark");
+      root.style.colorScheme = "light";
+    } else {
+      const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      root.classList.toggle("dark", isDark);
+      root.style.colorScheme = isDark ? "dark" : "light";
+    }
+  }, []);
+
   return (
     <AuthProvider>
       <BrowserRouter>
