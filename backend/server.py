@@ -61,12 +61,15 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title=APP_NAME, lifespan=lifespan)
+
+# Configurazione CORS robusta
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"], # In produzione meglio specificare i domini
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
 
 api = APIRouter(prefix="/api")
@@ -162,8 +165,11 @@ def user_public(u: dict) -> dict:
     }
 
 async def require_admin(user_id: str = Depends(get_current_user_id)):
-    u = await db.users.find_one({"user_id": user_id}, {"is_admin": 1, "email": 1})
-    if not u or (not u.get("is_admin") and u.get("email", "").lower() != ADMIN_EMAIL):
+    u = await db.users.find_one({"user_id": user_id})
+    if not u:
+        raise HTTPException(status_code=401, detail="Non autenticato")
+    is_admin = u.get("is_admin", False) or u.get("email", "").lower() == ADMIN_EMAIL
+    if not is_admin:
         raise HTTPException(status_code=403, detail="Solo amministratori")
     return user_id
 
@@ -228,7 +234,7 @@ async def backup_status(user_id: str = Depends(get_current_user_id)):
     }
 
 @api.post("/backup/run")
-async def backup_run(user_id: str = Depends(get_current_user_id)):
+async def backup_run(user_id: str = Depends(require_admin)):
     master = await get_master_drive()
     if not master: raise HTTPException(status_code=400, detail="Master Drive non connesso")
     return {"ok": True, "pending": 0}
