@@ -12,15 +12,19 @@ function escapeRegExp(value) {
 function highlight(text, q) {
   if (!text || !q) return text;
   try {
-    const re = new RegExp(`(${escapeRegExp(q)})`, "ig");
+    // Gestione speciale per ricerca accordi [Accordo]
+    const chordMatch = q.match(/^\[(.+)\]$/);
+    const needle = chordMatch ? chordMatch[1].toLowerCase() : q.toLowerCase();
+    const cleanQ = chordMatch ? chordMatch[1] : q;
+    
+    const re = new RegExp(`(${escapeRegExp(cleanQ)})`, "ig");
     const parts = text.split(re);
-    const needle = q.toLowerCase();
     let offset = 0;
     return parts.map((part) => {
       const key = `${offset}-${part}`;
       offset += part.length;
       return part.toLowerCase() === needle
-        ? <mark key={key} className="hl">{part}</mark>
+        ? <mark key={key} className={chordMatch ? "bg-emerald-100 text-emerald-900 px-1 rounded" : "hl"}>{part}</mark>
         : <span key={key}>{part}</span>;
     });
   } catch (err) {

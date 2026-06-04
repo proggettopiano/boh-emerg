@@ -304,11 +304,31 @@ export default function PdfViewer() {
     );
   }, [numPages, visibleRange.start, visibleRange.end]);
 
+  const reloadFile = async () => {
+    setBusy(true);
+    try {
+      await api.post(`/pdfs/${id}/reload`);
+      toast.success("File ricaricato da Drive. Riprovo ad aprire...");
+      window.location.reload();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Errore nel ricaricamento");
+      setBusy(false);
+    }
+  };
+
   if (error) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-12 text-center" data-testid="pdf-viewer-error">
         <p className="text-lg font-display mb-3">{error}</p>
-        <button type="button" onClick={() => navigate(-1)} className="btn-ghost border border-rule rounded-sm px-4 py-2">Indietro</button>
+        <div className="flex gap-3">
+          <button type="button" onClick={() => navigate(-1)} className="btn-ghost border border-rule rounded-sm px-4 py-2">Indietro</button>
+          <button type="button" onClick={reloadFile} disabled={busy} className="btn-primary">
+            {busy ? "Ricaricamento..." : "Ricarica File da Drive"}
+          </button>
+        </div>
+        <p className="mt-4 text-sm text-muted2 max-w-md mx-auto">
+          Se il file è stato perso localmente, puoi forzare il recupero dal backup Google Drive di gruppo.
+        </p>
       </div>
     );
   }

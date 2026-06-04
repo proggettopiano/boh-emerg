@@ -9,17 +9,10 @@ import { getGoogleRedirectUri } from "@/lib/google";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import Header from "@/components/Header";
-import BackupBanner from "@/components/BackupBanner";
 
 import Login from "@/pages/Login";
-import Register from "@/pages/Register";
-import ForgotPassword from "@/pages/ForgotPassword";
-import ResetPassword from "@/pages/ResetPassword";
-import ProfileSetup from "@/pages/ProfileSetup";
 import Home from "@/pages/Home";
 import Library from "@/pages/Library";
-import SharedLibraries from "@/pages/SharedLibraries";
-import SharedLibraryDetail from "@/pages/SharedLibraryDetail";
 import SharedView from "@/pages/SharedView";
 import PdfViewer from "@/pages/PdfViewer";
 import Settings from "@/pages/Settings";
@@ -92,7 +85,6 @@ function ChromeWrapper({ children }) {
 
   return (
     <>
-      {user && !noChrome && <BackupBanner />}
       {user && !noChrome && <Header />}
       {children}
     </>
@@ -111,11 +103,8 @@ function AppShell() {
     <ChromeWrapper>
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route path="/profile-setup" element={<ProtectedRoute requireProfile={false}><ProfileSetup /></ProtectedRoute>} />
         <Route path="/" element={<ProtectedRoute><Home /></ProtectedRoute>} />
         <Route path="/library" element={<ProtectedRoute><Library /></ProtectedRoute>} />
-        <Route path="/libraries" element={<ProtectedRoute><SharedLibraries /></ProtectedRoute>} />
-        <Route path="/libraries/:id" element={<ProtectedRoute><SharedLibraryDetail /></ProtectedRoute>} />
         <Route path="/shared/:token" element={<SharedView />} />
         <Route path="/viewer/:id" element={<ProtectedRoute><PdfViewer /></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
