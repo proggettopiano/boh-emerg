@@ -69,6 +69,29 @@ async def lifespan(app: FastAPI):
         {"$set": {"status": "error"}}
     )
     logger.info("Startup migration: status field backfilled")
+
+    # --- Startup job recovery ---
+    # I job in stato 'processing' o 'queued' al momento del riavvio sono orfani:
+    # la BackgroundTask che li stava eseguendo è stata terminata e non riprenderà
+    # mai da sola. Li reimpostiamo a 'queued' così il worker esterno (o
+    # /jobs/process-next) li raccoglie al prossimo ciclo.
+    stuck_result = await db.upload_jobs.update_many(
+        {"status": {"$in": ["processing", "queued"]}},
+        {"$set": {"status": "queued", "error": "requeued_at_startup", "updated_at": iso_now()}},
+    )
+    if stuck_result.modified_count > 0:
+        logger.warning(
+            f"[STARTUP RECOVERY] {stuck_result.modified_count} job rimessi in coda "
+            f"(erano processing/queued al riavvio)"
+        )
+        # Allinea anche il campo status sui PDF corrispondenti
+        await db.pdfs.update_many(
+            {"status": {"$in": ["pending", "processing"]}},
+            {"$set": {"status": "pending"}},
+        )
+    else:
+        logger.info("[STARTUP RECOVERY] Nessun job bloccato trovato all'avvio")
+
     yield
     _thread_pool.shutdown(wait=False)
 
@@ -151,7 +174,22 @@ async def set_master_drive(value: Optional[dict]):
 
 
 async def resolve_backup_credentials(user: dict) -> Optional[dict]:
-    """Decide where backups go. Returns dict {refresh_token, owner: 'master'|'user', folder_root_id} or None."""
+    """Decide dove vanno i backup/upload Drive.
+
+    POLICY UFFICIALE (single-account master drive):
+    - Se è configurato un master_drive in system_settings, TUTTI i file vanno
+      su quell'account Google, indipendentemente dall'utente che ha fatto l'upload.
+      Ogni utente ottiene una sotto-cartella dedicata (user_id) dentro la root master.
+    - Se il master_drive non è configurato, si usa il Drive personale dell'utente
+      (se ha collegato il proprio account Google).
+    - Se nessuno dei due è disponibile, il file rimane solo in locale.
+
+    Questa è una scelta di progetto deliberata (un solo account Google per tutto il
+    gruppo), non un bug. Per cambiare policy basta rimuovere il documento
+    master_drive da db.system_settings.
+
+    Returns dict {refresh_token, owner: 'master'|'user', folder_root_id} or None.
+    """
     master = await get_master_drive()
     if master and master.get("refresh_token"):
         return {"refresh_token": master["refresh_token"], "owner": "master", "folder_root_id": master.get("folder_root_id"), "email": master.get("email")}
@@ -1567,7 +1605,15 @@ async def get_pdf_file(pdf_id: str, user_id: str = Depends(get_current_user_id))
     fpath = UPLOAD_DIR / p["owner_id"] / f"{pdf_id}.pdf"
     if fpath.exists():
         return FileResponse(fpath, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{p.get("filename", pdf_id)}"'})
-    # local missing — fall back to Drive (master or user)
+
+    # --- File locale mancante: log strutturato prima di qualsiasi fallback ---
+    logger.warning(
+        f"[FILE MISSING] pdf_id={pdf_id} owner={p['owner_id']} "
+        f"storage_type={p.get('storage_type')} drive_file_id={p.get('drive_file_id')} "
+        f"status={p.get('status')} fpath={fpath}"
+    )
+
+    # Fallback a Drive (master o utente) se il file fisico non c'è
     if p.get("drive_file_id"):
         refresh = None
         if p.get("drive_owner") == "master":
@@ -1584,8 +1630,31 @@ async def get_pdf_file(pdf_id: str, user_id: str = Depends(get_current_user_id))
                 await log_event("pdf.sync", f"Restore Drive → cache locale: {p.get('title')}", user_id=p["owner_id"], meta={"pdf_id": pdf_id, "drive_file_id": p["drive_file_id"]})
                 return Response(content=data, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{p.get("filename", pdf_id)}"'})
             except Exception as e:
-                logger.error(f"Drive restore failed: {e}")
+                logger.error(
+                    f"[FILE MISSING] Drive restore failed pdf_id={pdf_id} "
+                    f"drive_file_id={p.get('drive_file_id')} error={e}"
+                )
                 await log_event("pdf.error", f"Restore Drive fallito: {e}", user_id=p["owner_id"], level="error", meta={"pdf_id": pdf_id, "stage": "drive_restore"})
+        else:
+            # drive_file_id presente ma nessun refresh token disponibile
+            logger.error(
+                f"[FILE MISSING] No refresh token for Drive restore "
+                f"pdf_id={pdf_id} drive_owner={p.get('drive_owner')}"
+            )
+    else:
+        # Nessun drive_file_id: record orfano (file locale perso, nessun backup)
+        logger.error(
+            f"[FILE MISSING] Orphan record — no local file and no drive_file_id "
+            f"pdf_id={pdf_id} owner={p['owner_id']} storage_type={p.get('storage_type')}"
+        )
+        await log_event(
+            "pdf.missing_file",
+            f"File fisico assente e nessun backup Drive: {p.get('title') or pdf_id}",
+            user_id=p["owner_id"],
+            level="error",
+            meta={"pdf_id": pdf_id, "storage_type": p.get("storage_type"), "status": p.get("status")},
+        )
+
     raise HTTPException(status_code=404, detail="File mancante")
 
 
