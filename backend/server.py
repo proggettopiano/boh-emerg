@@ -10,7 +10,7 @@ import asyncio
 import psutil
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone, utc
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
@@ -78,7 +78,7 @@ logger = logging.getLogger("scorelib")
 logging.basicConfig(level=logging.INFO)
 
 # ----------------- Helpers -----------------
-def iso_now(): return datetime.now(utc).isoformat()
+def iso_now(): return datetime.now(timezone.utc).isoformat()
 
 def clean_doc(doc: dict) -> dict:
     """Rimuove _id o lo converte in stringa per rendere il documento JSON-safe."""
