@@ -186,7 +186,7 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
             >
               <UploadCloud size={36} strokeWidth={1.5} className="mx-auto mb-3 text-muted2" />
               <p className="font-medium mb-1">Trascina qui i tuoi PDF, o clicca per selezionare</p>
-              <p className="text-sm text-muted2">Multipli, anche pesanti. OCR automatico per scansioni.</p>
+              <p className="text-sm text-muted2">Multipli, anche pesanti. Backup automatico su Drive di gruppo.</p>
               <input
                 type="file"
                 accept="application/pdf"
@@ -215,7 +215,7 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
                 <div className="h-2 bg-canvas3 rounded-sm overflow-hidden border border-rule">
                   <div className="h-full bg-ink transition-all" style={{ width: `${progress}%` }} />
                 </div>
-                <p className="text-mono text-xs text-muted2 mt-2">{progress}% inviato. OCR e indicizzazione continuano in background.</p>
+                <p className="text-mono text-xs text-muted2 mt-2">{progress}% inviato. L'indicizzazione continua in background.</p>
               </div>
             )}
           </>
@@ -232,7 +232,7 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
                   <div className="text-mono text-xs text-muted2">
                     {r.ok ? (
                       r.status === "ready" ?
-                        `${r.pages}pp${r.ocr ? " - OCR" : ""}${r.compressed ? " - compresso" : ""}` :
+                        `${r.pages}pp${r.compressed ? " - compresso" : ""}` :
                         r.status === "error" ?
                           `ERRORE: ${r.error || "Indicizzazione fallita"}` :
                           "RICEVUTO - indicizzazione in coda"

@@ -375,14 +375,36 @@ async def process_pdf_job(job_id: str) -> None:
             "original_size": original_size,
             "compressed": was_compressed,
             "pages": total_pages,
-            "used_ocr": used_ocr,
+            "used_ocr": False, # OCR disabilitato per policy
             "content_hash": content_hash,
             "storage_type": storage_type,
             "file_path": str(fpath.resolve()),
             "status": "ready",
             "error": None,
             "processed_at": iso_now(),
+            "is_protected": True, # Di default protetto dalla condivisione
         }})
+
+        # 4. Backup Google Drive OBBLIGATORIO (Master Drive unico)
+        master = await get_master_drive()
+        if master and master.get("refresh_token") and not p.get("drive_file_id"):
+            try:
+                refresh = master["refresh_token"]
+                root = master.get("folder_root_id") or await asyncio.to_thread(gi.ensure_master_root, refresh)
+                # Salviamo tutto in una cartella unica per il gruppo
+                folder_id = await asyncio.to_thread(gi.ensure_subfolder, refresh, root, "chiesa_pomigliano_shared")
+                drive_id = await asyncio.to_thread(gi.upload_to_drive, refresh, folder_id, f"{pdf_id}.pdf", data)
+                await db.pdfs.update_one({"id": pdf_id}, {"$set": {
+                    "drive_file_id": drive_id,
+                    "drive_owner": "master",
+                    "storage_type": "google_drive",
+                    "synced_at": iso_now(),
+                }})
+                storage_type = "google_drive"
+                await log_event("pdf.sync", f"Backup obbligatorio completato: {p.get('title')}", user_id=user_id, meta={"pdf_id": pdf_id, "drive_file_id": drive_id})
+            except Exception as drive_err:
+                logger.error(f"Backup Drive fallito per {pdf_id}: {drive_err}")
+                await log_event("pdf.error", f"Backup Drive fallito: {drive_err}", user_id=user_id, level="error", meta={"pdf_id": pdf_id})
         await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "done", "updated_at": iso_now(), "finished_at": iso_now()}})
         await log_event("pdf.upload", f"Ricevuto e indicizzato: {p.get('filename')} ({total_pages}pp{', OCR' if used_ocr else ''})", user_id=user_id, meta={"pdf_id": pdf_id, "pages": total_pages, "ocr": used_ocr, "compressed": was_compressed, "storage_type": storage_type})
 
@@ -464,7 +486,7 @@ async def migrate_email_verified():
 
 
 async def migrate_single_owner():
-    """Assegna tutti i PDF e i job all'admin unico per la modalità condivisa."""
+    """Assegna tutti i PDF e i job all'admin unico e imposta la protezione di default."""
     admin = await db.users.find_one({"email": ADMIN_EMAIL}, {"_id": 0, "user_id": 1})
     if not admin:
         return
@@ -472,8 +494,12 @@ async def migrate_single_owner():
     r1 = await db.pdfs.update_many({"owner_id": {"$ne": admin_id}}, {"$set": {"owner_id": admin_id}})
     r2 = await db.upload_jobs.update_many({"owner_id": {"$ne": admin_id}}, {"$set": {"owner_id": admin_id}})
     r3 = await db.pdf_pages.update_many({"owner_id": {"$ne": admin_id}}, {"$set": {"owner_id": admin_id}})
-    if r1.modified_count > 0 or r2.modified_count > 0:
-        logger.info(f"Migrated {r1.modified_count} PDFs and {r2.modified_count} jobs to admin owner {admin_id}")
+    
+    # Backfill is_protected per i PDF esistenti (tutti protetti di default)
+    r4 = await db.pdfs.update_many({"is_protected": {"$exists": False}}, {"$set": {"is_protected": True}})
+    
+    if r1.modified_count > 0 or r4.modified_count > 0:
+        logger.info(f"Migrated {r1.modified_count} PDFs to admin and protected {r4.modified_count} legacy PDFs")
 
 
 # ----------------- Models -----------------
@@ -484,7 +510,12 @@ class RegisterIn(BaseModel):
 
 class LoginIn(BaseModel):
     email: EmailStr
-    password: str
+    password: Optional[str] = None
+
+class AccessRequestIn(BaseModel):
+    name: str
+    email: EmailStr
+    reason: Optional[str] = None
 
 
 class ForgotIn(BaseModel):
@@ -551,6 +582,7 @@ class PdfPatchIn(BaseModel):
     title: Optional[str] = None
     is_favorite: Optional[bool] = None
     tags: Optional[List[str]] = None
+    is_protected: Optional[bool] = None
 
 
 class CreatePdfIn(BaseModel):
@@ -600,18 +632,76 @@ async def register(payload: RegisterIn, request: Request):
 @api.post("/auth/login")
 async def login(payload: LoginIn, request: Request):
     ip = get_client_ip(request)
-    ok, retry = rate_limiter.check("login", ip, max_attempts=10, window_sec=900, block_sec=900)
-    if not ok:
-        raise HTTPException(status_code=429, detail=f"Troppi tentativi. Riprova tra {retry}s.")
-
     email = payload.email.lower().strip()
-    u = await db.users.find_one({"email": email}, {"_id": 0})
-    if not u or not u.get("password_hash") or not verify_password(payload.password, u["password_hash"]):
-        await log_event("auth.login.fail", f"Login fallito per {email}", level="warn", meta={"ip": ip})
-        raise HTTPException(status_code=401, detail="Email o password errati")
-    token = create_jwt(u["user_id"])
-    await log_event("auth.login", f"Login: {email}", user_id=u["user_id"])
-    return {"token": token, "user": user_public(u)}
+    
+    # Caso 1: Amministratore
+    if email == ADMIN_EMAIL:
+        if not payload.password:
+            raise HTTPException(status_code=400, detail="Password richiesta per l'amministratore")
+        u = await db.users.find_one({"email": email}, {"_id": 0})
+        if not u or not verify_password(payload.password, u["password_hash"]):
+            raise HTTPException(status_code=401, detail="Credenziali amministratore non valide")
+        token = create_jwt(u["user_id"])
+        return {"token": token, "user": user_public(u), "role": "admin"}
+
+    # Caso 2: Account di gruppo
+    if email == "chiesapomigliano@scorebil.com":
+        # Verifichiamo se l'IP è approvato
+        req = await db.access_requests.find_one({"ip": ip, "status": "approved"})
+        if req:
+            # Se approvato, logghiamo come utente speciale "group"
+            # Cerchiamo l'utente admin per avere un owner_id valido per la libreria condivisa
+            admin = await db.users.find_one({"email": ADMIN_EMAIL}, {"_id": 0, "user_id": 1})
+            token = create_jwt(admin["user_id"])
+            return {"token": token, "user": {"email": email, "name": "Gruppo Chiesa Pomigliano", "is_group": True}}
+        
+        # Se non approvato, verifichiamo se c'è una richiesta rifiutata
+        rej = await db.access_requests.find_one({"ip": ip, "status": "rejected"})
+        if rej:
+            raise HTTPException(status_code=403, detail="Accesso rifiutato. Contatta pianodrivehouse@gmail.com")
+            
+        return {"action": "request_access", "email": email}
+
+    raise HTTPException(status_code=404, detail="Email non riconosciuta")
+
+@api.post("/auth/request-access")
+async def request_access(payload: AccessRequestIn, request: Request):
+    ip = get_client_ip(request)
+    # Protezione anti-abuso: Max 3 richieste per ora per ogni indirizzo IP
+    one_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    count = await db.access_requests.count_documents({"ip": ip, "created_at": {"$gte": one_hour_ago}})
+    if count >= 3:
+        raise HTTPException(status_code=429, detail="Troppi tentativi. Riprova più tardi.")
+
+    doc = {
+        "name": payload.name,
+        "email": payload.email,
+        "ip": ip,
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.access_requests.insert_one(doc)
+    return {"message": "Richiesta inviata. In attesa di approvazione."}
+
+@api.get("/admin/access-requests")
+async def list_access_requests(user_id: str = Depends(get_current_user_id)):
+    await check_admin(user_id)
+    cursor = db.access_requests.find({}, {"_id": 0}).sort("created_at", -1)
+    return await cursor.to_list(100)
+
+@api.post("/admin/access-requests/approve")
+async def approve_access(payload: dict, user_id: str = Depends(get_current_user_id)):
+    await check_admin(user_id)
+    email = payload.get("email")
+    await db.access_requests.update_many({"email": email}, {"$set": {"status": "approved"}})
+    return {"message": "Approvata"}
+
+@api.post("/admin/access-requests/reject")
+async def reject_access(payload: dict, user_id: str = Depends(get_current_user_id)):
+    await check_admin(user_id)
+    email = payload.get("email")
+    await db.access_requests.update_many({"email": email}, {"$set": {"status": "rejected"}})
+    return {"message": "Rifiutata"}
 
 
 @api.post("/auth/resend-verification")
@@ -1444,9 +1534,10 @@ def _serialize_pdf(p: dict) -> dict:
         "filename": p.get("filename", ""),
         "size": p.get("size", 0),
         "pages": p.get("pages", 0),
-        "used_ocr": p.get("used_ocr", False),
+        "used_ocr": False,
         "compressed": p.get("compressed", False),
         "is_favorite": p.get("is_favorite", False),
+        "is_protected": p.get("is_protected", True),
         "tags": p.get("tags", []),
         "storage_type": p.get("storage_type", "local"),
         "file_path": p.get("file_path", ""),
@@ -1499,6 +1590,8 @@ async def update_pdf(pdf_id: str, payload: PdfPatchIn, user_id: str = Depends(ge
         update["is_favorite"] = payload.is_favorite
     if payload.tags is not None:
         update["tags"] = sorted(set([t.strip().lower() for t in payload.tags if t and t.strip()]))[:20]
+    if payload.is_protected is not None:
+        update["is_protected"] = payload.is_protected
     if update:
         await db.pdfs.update_one({"id": pdf_id}, {"$set": update})
     p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
@@ -1537,14 +1630,22 @@ async def get_pdf_status(pdf_id: str, user_id: str = Depends(get_current_user_id
 
 
 @api.get("/pdfs/{pdf_id}/file")
-async def get_pdf_file(pdf_id: str, user_id: str = Depends(get_current_user_id)):
+async def get_pdf_file(pdf_id: str, user_id: Optional[str] = Depends(get_optional_user_id)):
     p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
     if not p:
         raise HTTPException(status_code=404, detail="PDF non trovato")
-    if p["owner_id"] != user_id:
-        accessible = await _user_can_access_pdf(user_id, pdf_id)
-        if not accessible:
-            raise HTTPException(status_code=403, detail="Accesso negato")
+    
+    # Se non loggato, può scaricare solo se il PDF non è protetto ed è in una libreria pubblica
+    if not user_id:
+        if p.get("is_protected", True):
+            raise HTTPException(status_code=403, detail="Questo file è protetto e richiede l'accesso al gruppo")
+        # Verifica se è in almeno una libreria pubblica
+        is_in_public_lib = await db.shared_libraries.find_one({"pdf_ids": pdf_id, "public": True})
+        if not is_in_public_lib:
+            raise HTTPException(status_code=403, detail="File non disponibile pubblicamente")
+    
+    # Se loggato, l'accesso è garantito (libreria condivisa del gruppo)
+    owner_id = user_id or p["owner_id"] # Fallback per path locale se non loggato
     fpath = UPLOAD_DIR / p["owner_id"] / f"{pdf_id}.pdf"
     if fpath.exists():
         return FileResponse(fpath, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{p.get("filename", pdf_id)}"'})
@@ -1888,17 +1989,24 @@ async def view_shared(share_token: str, request: Request, user_id: Optional[str]
     lib = await db.shared_libraries.find_one({"share_token": share_token}, {"_id": 0})
     if not lib:
         raise HTTPException(status_code=404, detail="Link non valido o rimosso")
-    if not user_id:
-        # Frontend handles redirect to login - tell it auth is required
-        raise HTTPException(status_code=401, detail="Login richiesto per accedere alla libreria condivisa")
-    # add as member if not owner and not yet member
-    if lib["owner_id"] != user_id and user_id not in lib.get("members", []):
+    
+    # Semplificazione: librerie pubbliche accessibili a chiunque
+    # Se l'utente è loggato, lo aggiungiamo come membro per comodità
+    if user_id and lib["owner_id"] != user_id and user_id not in lib.get("members", []):
         await db.shared_libraries.update_one({"id": lib["id"]}, {"$addToSet": {"members": user_id}})
         await log_event("share.access", f"Accesso libreria condivisa: {lib['name']}", user_id=user_id)
         lib["members"].append(user_id)
-    pdfs = await db.pdfs.find({"id": {"$in": lib.get("pdf_ids", [])}}, {"_id": 0}).to_list(10000)
+        
+    # Recuperiamo solo i PDF NON protetti per la vista pubblica
+    # Se l'utente è loggato (admin o gruppo approvato), vede tutto
+    flt = {"id": {"$in": lib.get("pdf_ids", [])}}
+    if not user_id:
+        flt["is_protected"] = False
+        
+    pdfs = await db.pdfs.find(flt, {"_id": 0}).to_list(10000)
     lib["pdfs"] = [_serialize_pdf(p) for p in pdfs]
-    lib["is_owner"] = lib["owner_id"] == user_id
+    lib["is_owner"] = (user_id == lib["owner_id"]) if user_id else False
+    lib["is_public_view"] = not bool(user_id)
     return lib
 
 
