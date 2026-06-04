@@ -114,7 +114,8 @@ export default function Admin() {
               <tr>
                 <th className="py-3 px-4 overline">Richiedente</th>
                 <th className="py-3 px-4 overline">Motivazione</th>
-                <th className="py-3 px-4 overline">Data</th>
+                <th className="py-3 px-4 overline">IP</th>
+                <th className="py-3 px-4 overline">Data / Ora</th>
                 <th className="py-3 px-4 overline text-right">Azioni</th>
               </tr>
             </thead>
@@ -126,7 +127,10 @@ export default function Admin() {
                     <div className="text-xs text-muted3 text-mono">{r.email}</div>
                   </td>
                   <td className="py-3 px-4 text-muted2 italic">"{r.reason || "Nessuna motivazione"}"</td>
-                  <td className="py-3 px-4 text-xs text-mono">{r.created_at?.slice(0, 10)}</td>
+                  <td className="py-3 px-4 text-xs text-mono">{r.ip || "—"}</td>
+                  <td className="py-3 px-4 text-xs text-mono">
+                    {r.created_at ? new Date(r.created_at).toLocaleString("it-IT") : "—"}
+                  </td>
                   <td className="py-3 px-4 text-right">
                     <div className="flex justify-end gap-2">
                       <button 
@@ -198,6 +202,7 @@ export default function Admin() {
               <tr className="border-b border-rule text-left bg-canvas2/50">
                 <th className="overline py-2 px-4">Email</th>
                 <th className="overline py-2 px-4">Nome</th>
+                <th className="overline py-2 px-4">IP Recente</th>
                 <th className="overline py-2 px-4">Ruolo</th>
                 <th className="overline py-2 px-4">Iscritto il</th>
               </tr>
@@ -205,8 +210,14 @@ export default function Admin() {
             <tbody>
               {users.map((u) => (
                 <tr key={u.user_id} className="border-b border-rule hover:bg-canvas2">
-                  <td className="py-2 px-4 text-mono text-xs">{u.email}</td>
+                  <td className="py-2 px-4 text-mono text-xs">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full ${u.is_online ? "bg-emerald-500 animate-pulse" : "bg-muted3"}`} title={u.is_online ? "Online" : "Offline"} />
+                      {u.email}
+                    </div>
+                  </td>
                   <td className="py-2 px-4">{u.name || "—"}</td>
+                  <td className="py-2 px-4 text-mono text-xs text-muted2">{u.last_ip || "—"}</td>
                   <td className="py-2 px-4">
                     <span className={`text-mono text-[10px] px-2 py-0.5 rounded-sm ${u.is_admin ? "bg-ink text-white" : "bg-canvas3"}`}>
                       {u.is_admin ? "AMMINISTRATORE" : "MEMBRO GRUPPO"}

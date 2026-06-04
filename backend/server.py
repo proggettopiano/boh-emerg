@@ -348,7 +348,7 @@ async def process_pdf_job(job_id: str) -> None:
         _step = "STEP 7"
         logger.info(f"[TRACE] before extract_pages job_id={job_id} pdf_id={pdf_id} size={len(data)}")
         logger.info(f"[STEP 7] extract start job_id={job_id} pdf_id={pdf_id} ts={iso_now()}")
-        pages_text, total_pages, used_ocr = await asyncio.to_thread(extract_pages, data)
+        pages_text, total_pages, used_ocr, chords = await asyncio.to_thread(extract_pages, data)
         logger.info(f"[TRACE] after extract_pages job_id={job_id} pdf_id={pdf_id} pages={total_pages} ocr={used_ocr}")
         mem_after = process.memory_info().rss / (1024 * 1024)
         logger.info(f"PDF {pdf_id}: RAM before={mem_before:.1f}MB, after={mem_after:.1f}MB, delta={mem_after-mem_before:.1f}MB")
@@ -376,6 +376,7 @@ async def process_pdf_job(job_id: str) -> None:
             "compressed": was_compressed,
             "pages": total_pages,
             "used_ocr": False, # OCR disabilitato per policy
+            "chords": chords,
             "content_hash": content_hash,
             "storage_type": storage_type,
             "file_path": str(fpath.resolve()),
@@ -486,20 +487,32 @@ async def migrate_email_verified():
 
 
 async def migrate_single_owner():
-    """Assegna tutti i PDF e i job all'admin unico e imposta la protezione di default."""
+    """Assegna tutti i PDF all'admin unico, imposta la protezione e estrae gli accordi mancanti."""
     admin = await db.users.find_one({"email": ADMIN_EMAIL}, {"_id": 0, "user_id": 1})
     if not admin:
         return
     admin_id = admin["user_id"]
-    r1 = await db.pdfs.update_many({"owner_id": {"$ne": admin_id}}, {"$set": {"owner_id": admin_id}})
-    r2 = await db.upload_jobs.update_many({"owner_id": {"$ne": admin_id}}, {"$set": {"owner_id": admin_id}})
-    r3 = await db.pdf_pages.update_many({"owner_id": {"$ne": admin_id}}, {"$set": {"owner_id": admin_id}})
     
-    # Backfill is_protected per i PDF esistenti (tutti protetti di default)
-    r4 = await db.pdfs.update_many({"is_protected": {"$exists": False}}, {"$set": {"is_protected": True}})
+    # 1. Migrazione owner
+    await db.pdfs.update_many({"owner_id": {"$ne": admin_id}}, {"$set": {"owner_id": admin_id}})
+    await db.upload_jobs.update_many({"owner_id": {"$ne": admin_id}}, {"$set": {"owner_id": admin_id}})
+    await db.pdf_pages.update_many({"owner_id": {"$ne": admin_id}}, {"$set": {"owner_id": admin_id}})
     
-    if r1.modified_count > 0 or r4.modified_count > 0:
-        logger.info(f"Migrated {r1.modified_count} PDFs to admin and protected {r4.modified_count} legacy PDFs")
+    # 2. Protezione di default
+    await db.pdfs.update_many({"is_protected": {"$exists": False}}, {"$set": {"is_protected": True}})
+    
+    # 3. Estrazione accordi per PDF esistenti
+    from pdf_processor import extract_chords
+    pdfs_no_chords = await db.pdfs.find({"chords": {"$exists": False}}).to_list(1000)
+    if pdfs_no_chords:
+        logger.info(f"[MIGRATE] Estrazione accordi per {len(pdfs_no_chords)} PDF...")
+        for p in pdfs_no_chords:
+            all_text = ""
+            async for pg in db.pdf_pages.find({"pdf_id": p["id"]}):
+                all_text += (pg.get("text") or "") + " "
+            chords = extract_chords(all_text)
+            await db.pdfs.update_one({"id": p["id"]}, {"$set": {"chords": chords}})
+        logger.info("[MIGRATE] Estrazione accordi completata.")
 
 
 # ----------------- Models -----------------
@@ -641,6 +654,11 @@ async def login(payload: LoginIn, request: Request):
         u = await db.users.find_one({"email": email}, {"_id": 0})
         if not u or not verify_password(payload.password, u["password_hash"]):
             raise HTTPException(status_code=401, detail="Credenziali amministratore non valide")
+        # Update last login and IP
+        await db.users.update_one(
+            {"user_id": u["user_id"]}, 
+            {"$set": {"last_login": iso_now(), "last_ip": ip, "last_active": iso_now()}}
+        )
         token = create_jwt(u["user_id"])
         return {"token": token, "user": user_public(u), "role": "admin"}
 
@@ -1702,6 +1720,32 @@ async def get_pdf_file(pdf_id: str, user_id: Optional[str] = Depends(get_optiona
     raise HTTPException(status_code=404, detail="File mancante")
 
 
+@api.post("/pdfs/{pdf_id}/reload")
+async def reload_pdf_file(pdf_id: str, user_id: str = Depends(get_current_user_id)):
+    """Forza il ricaricamento del file da Drive se il locale è 404."""
+    p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="PDF non trovato")
+    
+    if not p.get("drive_file_id"):
+        raise HTTPException(status_code=400, detail="Il file non ha un backup su Drive")
+
+    refresh = await get_drive_refresh_for_pdf(p)
+    if not refresh:
+        raise HTTPException(status_code=500, detail="Credenziali Drive non disponibili")
+
+    try:
+        data = await asyncio.to_thread(gi.download_from_drive, refresh, p["drive_file_id"])
+        fpath = Path(p.get("file_path") or (UPLOAD_DIR / user_id / f"{pdf_id}.pdf"))
+        await asyncio.to_thread(lambda: fpath.parent.mkdir(parents=True, exist_ok=True))
+        await asyncio.to_thread(fpath.write_bytes, data)
+        await log_event("pdf.reload", f"File ricaricato forzatamente da Drive: {p.get('title')}", user_id=user_id)
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"Manual Drive reload failed for {pdf_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Errore nel recupero da Drive: {str(e)}")
+
+
 @api.delete("/pdfs/{pdf_id}")
 async def delete_pdf(pdf_id: str, user_id: str = Depends(get_current_user_id)):
     p = await db.pdfs.find_one({"id": pdf_id, "owner_id": user_id}, {"_id": 0})
@@ -1798,13 +1842,35 @@ async def search(
     if not accessible_pdf_ids:
         return {"results": []}
 
+    # Supporto ricerca per accordi: [Do], [Re], etc.
+    chord_match = re.match(r"^\[(.+)\]$", q)
+    if chord_match:
+        chord_to_find = chord_match.group(1).capitalize()
+        # Cerca i PDF che hanno questo accordo nell'array 'chords'
+        async for p in db.pdfs.find(
+            {"id": {"$in": list(accessible_pdf_ids)}, "chords": chord_to_find},
+            {"_id": 0}
+        ):
+            results.append({
+                "pdf_id": p["id"],
+                "title": p.get("title", ""),
+                "filename": p.get("filename", ""),
+                "page": 1,
+                "snippet": f"Contiene l'accordo: {chord_to_find}",
+                "match_query": q,
+                "source": pdf_source.get(p["id"], "personal"),
+                "created_at": p.get("created_at"),
+                "match_in": "chord",
+            })
+        return {"results": results[:50]}
+
     safe_q = re.escape(q)
 
     # Search pages text for matches; also include title matches
     seen_pdf_ids: set = set()
     results = []
 
-    # 1) page text search (regex case-insensitive). For larger libs, MongoDB text index is better but regex works for partial words.
+    # 1) page text search (regex case-insensitive)
     cursor = db.pdf_pages.find(
         {"pdf_id": {"$in": list(accessible_pdf_ids)}, "text": {"$regex": safe_q, "$options": "i"}},
         {"_id": 0},
@@ -2096,10 +2162,21 @@ async def admin_logs(
 @api.get("/admin/users")
 async def admin_users(_: str = Depends(require_admin)):
     out = []
+    now = datetime.now(timezone.utc)
     async for u in db.users.find({}, {"_id": 0, "password_hash": 0, "google_refresh_token": 0}):
         pdf_count = await db.pdfs.count_documents({"owner_id": u["user_id"]})
         backed = await db.pdfs.count_documents({"owner_id": u["user_id"], "drive_file_id": {"$nin": [None, ""]}})
         is_google = bool(u.get("auth_provider") == "google" or u.get("google_email"))
+        
+        # Calcola stato online (attivo negli ultimi 5 minuti)
+        last_active = u.get("last_active")
+        is_online = False
+        if last_active:
+            try:
+                la_dt = datetime.fromisoformat(last_active.replace("Z", "+00:00"))
+                is_online = (now - la_dt).total_seconds() < 300
+            except: pass
+            
         out.append({
             "user_id": u["user_id"],
             "email": u["email"],
@@ -2113,6 +2190,8 @@ async def admin_users(_: str = Depends(require_admin)):
             "backed_up_pdfs": backed,
             "last_backup_at": u.get("last_backup_at"),
             "created_at": u.get("created_at"),
+            "last_ip": u.get("last_ip"),
+            "is_online": is_online,
         })
     out.sort(key=lambda x: x.get("created_at") or "", reverse=True)
     return {"users": out, "total": len(out)}

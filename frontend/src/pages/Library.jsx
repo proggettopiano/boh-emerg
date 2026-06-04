@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Trash2, FileText, Upload as UploadIcon, Star, Tag as TagIcon, Plus, Lock, Unlock, Shield } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 import UploadModal from "@/components/UploadModal";
 import TagEditor from "@/components/TagEditor";
 
@@ -118,7 +119,6 @@ export default function Library() {
           <p className="text-mono text-sm text-muted2 mt-2"><span data-testid="library-count">{countText}</span></p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button onClick={createBlankPdf} className="btn-ghost border border-rule rounded-sm px-4 py-3" data-testid="library-create-pdf-btn"><Plus size={16} /> Crea PDF</button>
           <button onClick={() => setOpenUpload(true)} className="btn-primary" data-testid="library-upload-btn"><UploadIcon size={16} /> Carica PDF</button>
         </div>
       </div>
