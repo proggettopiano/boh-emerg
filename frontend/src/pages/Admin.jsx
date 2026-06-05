@@ -6,6 +6,18 @@ import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { startGoogleOAuth } from "@/lib/google";
 
+const getErrorMessage = (error) => {
+  if (!error) return "Errore sconosciuto";
+  const detail = error.response?.data?.detail;
+  if (!detail) return "Errore sconosciuto";
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const msgs = detail.map(d => typeof d === "string" ? d : (d.msg || JSON.stringify(d)));
+    return msgs.join("; ");
+  }
+  return JSON.stringify(detail);
+};
+
 export default function Admin() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -32,7 +44,7 @@ export default function Admin() {
       setRequests(r.data || []);
       setUsers(u.data.users || []);
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Errore caricamento dati");
+      toast.error(getErrorMessage(e));
     } finally { setBusy(false); }
   };
 
@@ -42,7 +54,7 @@ export default function Admin() {
       toast.success(`Richiesta ${action === "approve" ? "approvata" : "rifiutata"}`);
       load();
     } catch (e) {
-      toast.error("Errore nell'elaborazione della richiesta");
+      toast.error(getErrorMessage(e));
     }
   };
 
@@ -50,7 +62,7 @@ export default function Admin() {
   const disconnectMaster = async () => {
     if (!window.confirm("Scollegare il Master Drive? Tutti i backup del gruppo si fermeranno.")) return;
     try { await api.post("/admin/master-drive/disconnect"); toast.success("Disconnesso"); load(); }
-    catch (e) { toast.error("Errore"); }
+    catch (e) { toast.error(getErrorMessage(e)); }
   };
 
   const changeTheme = (t) => {

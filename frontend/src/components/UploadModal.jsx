@@ -20,6 +20,18 @@ function updateUploadResult(results, clientKey, patch) {
   return results?.map((item) => (item.client_key === clientKey ? { ...item, ...patch } : item));
 }
 
+function getErrorMessage(error) {
+  if (!error) return "Errore sconosciuto";
+  const detail = error.response?.data?.detail;
+  if (!detail) return "Errore sconosciuto";
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const msgs = detail.map(d => typeof d === "string" ? d : (d.msg || JSON.stringify(d)));
+    return msgs.join("; ");
+  }
+  return JSON.stringify(detail);
+}
+
 function resultKey(result) {
   return result.client_key || result.pdf_id || result.existing_id || `${result.name}-${result.error || "ok"}`;
 }
@@ -179,7 +191,7 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
       onComplete?.();
     } catch (e) {
       if (isCanceled(e)) return;
-      toast.error(e.response?.data?.detail || "Errore upload");
+      toast.error(getErrorMessage(e));
     } finally {
       if (mountedRef.current) setBusy(false);
     }
