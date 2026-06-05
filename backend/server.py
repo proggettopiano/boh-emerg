@@ -161,6 +161,13 @@ class PdfPatchIn(BaseModel):
     tags: Optional[List[str]] = None
     is_protected: Optional[bool] = None
 
+class CreateLibraryIn(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+class AddPdfsIn(BaseModel):
+    pdf_ids: List[str]
+
 # ----------------- Auth -----------------
 def user_public(u: dict) -> dict:
     return {
@@ -341,42 +348,332 @@ async def get_pdf_file(pdf_id: str, token: Optional[str] = Query(None), user_id:
     if fpath.exists(): return FileResponse(fpath, media_type="application/pdf", filename=p["filename"])
     raise HTTPException(status_code=404, detail="File non trovato")
 
-@api.get("/shared/{token}")
-async def view_shared(token: str, user_id: Optional[str] = Depends(get_optional_user_id)):
-    # Support both shared library tokens and single public PDF IDs.
-    lib = await db.shared_libraries.find_one({"share_token": token}, {"_id": 0})
-    if lib:
-        if lib.get("is_protected") and not user_id:
-            raise HTTPException(status_code=401, detail="Login richiesto per la libreria condivisa")
-        if user_id and lib["owner_id"] != user_id and user_id not in lib.get("members", []):
-            await db.shared_libraries.update_one({"id": lib["id"]}, {"$addToSet": {"members": user_id}})
-        pdfs = await db.pdfs.find({"id": {"$in": lib.get("pdf_ids", [])}}, {"_id": 0}).to_list(1000)
-        lib["pdfs"] = [_serialize_pdf(p) for p in pdfs]
-        lib["is_owner"] = user_id == lib["owner_id"] if user_id else False
-        return lib
-
-    p = await db.pdfs.find_one({"id": token}, {"_id": 0})
-    if not p:
-        raise HTTPException(status_code=404, detail="Link non valido o documento non trovato")
-    if p.get("is_protected") and not user_id:
-        raise HTTPException(status_code=401, detail="Login richiesto per accedere al PDF protetto")
-    return {
-        "name": p.get("title", "Documento condiviso"),
-        "description": p.get("description", "") or "",
-        "pdfs": [_serialize_pdf(p)],
-        "is_owner": user_id == p.get("owner_id") if user_id else False,
+@api.post("/libraries")
+async def create_library(payload: CreateLibraryIn, user_id: str = Depends(get_current_user_id)):
+    lib_id = str(uuid.uuid4())
+    share_token = secrets.token_urlsafe(16)
+    doc = {
+        "id": lib_id,
+        "name": payload.name.strip() or "Libreria",
+        "description": payload.description or "",
+        "owner_id": user_id,
+        "pdf_ids": [],
+        "members": [],
+        "share_token": share_token,
+        "public": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
+    await db.shared_libraries.insert_one(doc)
+    await log_event("library.create", f"Libreria creata: {doc['name']}", user_id=user_id)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/libraries")
+async def list_libraries(user_id: str = Depends(get_current_user_id)):
+    cursor = db.shared_libraries.find(
+        {"$or": [{"owner_id": user_id}, {"members": user_id}], "hidden_by_users": {"$ne": user_id}},
+        {"_id": 0},
+    ).sort("created_at", -1)
+    items = await cursor.to_list(1000)
+    return {"items": items}
+
+
+@api.get("/libraries/hidden")
+async def list_hidden_libraries(user_id: str = Depends(get_current_user_id)):
+    cursor = db.shared_libraries.find(
+        {"hidden_by_users": user_id},
+        {"_id": 0},
+    ).sort("created_at", -1)
+    items = await cursor.to_list(1000)
+    return {"items": items}
+
+
+@api.get("/libraries/{lib_id}")
+async def get_library(lib_id: str, user_id: str = Depends(get_current_user_id)):
+    lib = await db.shared_libraries.find_one({"id": lib_id}, {"_id": 0})
+    if not lib:
+        raise HTTPException(status_code=404, detail="Libreria non trovata")
+    if lib["owner_id"] != user_id and user_id not in lib.get("members", []) and not lib.get("public"):
+        raise HTTPException(status_code=403, detail="Accesso negato")
+    pdfs = await db.pdfs.find({"id": {"$in": lib.get("pdf_ids", [])}}, {"_id": 0}).to_list(10000)
+    lib["pdfs"] = [_serialize_pdf(p) for p in pdfs]
+    lib["is_owner"] = lib["owner_id"] == user_id
+    return lib
+
+
+@api.post("/libraries/{lib_id}/pdfs")
+async def add_to_library(lib_id: str, payload: AddPdfsIn, user_id: str = Depends(get_current_user_id)):
+    lib = await db.shared_libraries.find_one({"id": lib_id, "owner_id": user_id}, {"_id": 0})
+    if not lib:
+        raise HTTPException(status_code=404, detail="Libreria non trovata")
+    valid = await db.pdfs.find({"id": {"$in": payload.pdf_ids}, "owner_id": user_id}, {"_id": 0, "id": 1}).to_list(1000)
+    valid_ids = [v["id"] for v in valid]
+    await db.shared_libraries.update_one({"id": lib_id}, {"$addToSet": {"pdf_ids": {"$each": valid_ids}}})
+    return {"ok": True, "added": valid_ids}
+
+
+@api.delete("/libraries/{lib_id}/pdfs/{pdf_id}")
+async def remove_from_library(lib_id: str, pdf_id: str, user_id: str = Depends(get_current_user_id)):
+    res = await db.shared_libraries.update_one(
+        {"id": lib_id, "owner_id": user_id},
+        {"$pull": {"pdf_ids": pdf_id}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Libreria non trovata")
+    return {"ok": True}
+
+
+@api.delete("/libraries/{lib_id}")
+async def delete_library(lib_id: str, user_id: str = Depends(get_current_user_id)):
+    res = await db.shared_libraries.delete_one({"id": lib_id, "owner_id": user_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Libreria non trovata")
+    await log_event("library.delete", f"Libreria cancellata: {lib_id}", user_id=user_id)
+    return {"ok": True}
+
+
+@api.post("/libraries/{lib_id}/hide")
+async def hide_library(lib_id: str, user_id: str = Depends(get_current_user_id)):
+    lib = await db.shared_libraries.find_one({"id": lib_id}, {"_id": 0})
+    if not lib:
+        raise HTTPException(status_code=404, detail="Libreria non trovata")
+    if lib["owner_id"] == user_id:
+        raise HTTPException(status_code=403, detail="Il proprietario non può nascondere la propria libreria")
+    if user_id not in lib.get("members", []):
+        raise HTTPException(status_code=403, detail="Solo membri possono nascondere la libreria")
+    await db.shared_libraries.update_one({"id": lib_id}, {"$addToSet": {"hidden_by_users": user_id}})
+    await log_event("shared_library_hidden", f"Libreria nascosta: {lib['name']}", user_id=user_id)
+    return {"ok": True}
+
+
+@api.delete("/libraries/{lib_id}/hide")
+async def unhide_library(lib_id: str, user_id: str = Depends(get_current_user_id)):
+    lib = await db.shared_libraries.find_one({"id": lib_id}, {"_id": 0})
+    if not lib:
+        raise HTTPException(status_code=404, detail="Libreria non trovata")
+    await db.shared_libraries.update_one({"id": lib_id}, {"$pull": {"hidden_by_users": user_id}})
+    await log_event("shared_library_restored", f"Libreria ripristinata: {lib['name']}", user_id=user_id)
+    return {"ok": True}
+
+
+@api.get("/shared/{token}")
+async def view_shared(token: str, request: Request, user_id: Optional[str] = Depends(get_optional_user_id)):
+    lib = await db.shared_libraries.find_one({"share_token": token}, {"_id": 0})
+    if not lib:
+        raise HTTPException(status_code=404, detail="Link non valido o rimosso")
+    if lib.get("is_protected") and not user_id:
+        raise HTTPException(status_code=401, detail="Login richiesto per accedere alla libreria condivisa")
+    # add as member if not owner and not yet member
+    if lib["owner_id"] != user_id and user_id not in lib.get("members", []):
+        await db.shared_libraries.update_one({"id": lib["id"]}, {"$addToSet": {"members": user_id}})
+        await log_event("share.access", f"Accesso libreria condivisa: {lib['name']}", user_id=user_id)
+        lib["members"].append(user_id)
+    pdfs = await db.pdfs.find({"id": {"$in": lib.get("pdf_ids", [])}}, {"_id": 0}).to_list(10000)
+    lib["pdfs"] = [_serialize_pdf(p) for p in pdfs]
+    lib["is_owner"] = lib["owner_id"] == user_id
+    return lib
+
+
+@api.post("/pdfs/{pdf_id}/import")
+async def import_shared_pdf(pdf_id: str, user_id: str = Depends(get_current_user_id)):
+    """Import a shared PDF into user's personal library (creates a copy)."""
+    p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="PDF non trovato")
+    if p["owner_id"] == user_id:
+        return {"ok": True, "pdf_id": pdf_id, "already_owned": True}
+    accessible = await _user_can_access_pdf(user_id, pdf_id)
+    if not accessible:
+        raise HTTPException(status_code=403, detail="Accesso negato")
+    if p.get("content_hash"):
+        existing = await db.pdfs.find_one({"owner_id": user_id, "content_hash": p["content_hash"]}, {"_id": 0, "id": 1})
+        if existing:
+            return {"ok": True, "pdf_id": existing["id"], "already_owned": True}
+    src = UPLOAD_DIR / p["owner_id"] / f"{pdf_id}.pdf"
+    data = None
+    if src.exists():
+        data = src.read_bytes()
+    elif p.get("drive_file_id"):
+        refresh = None
+        if p.get("drive_owner") == "master":
+            master = await get_master_drive()
+            refresh = master.get("refresh_token") if master else None
+        else:
+            owner = await db.users.find_one({"user_id": p["owner_id"]}, {"_id": 0})
+            refresh = (owner or {}).get("google_refresh_token")
+        if refresh:
+            try:
+                data = await asyncio.to_thread(gi.download_from_drive, refresh, p["drive_file_id"])
+            except Exception as e:
+                await log_event("pdf.error", f"Import da Drive fallito: {e}", user_id=user_id, level="error", meta={"pdf_id": pdf_id, "drive_file_id": p.get("drive_file_id"), "stage": "import_drive_download"})
+    if data is None:
+        raise HTTPException(status_code=404, detail="File mancante")
+    new_id = str(uuid.uuid4())
+    user_dir = UPLOAD_DIR / user_id
+    user_dir.mkdir(parents=True, exist_ok=True)
+    dst = user_dir / f"{new_id}.pdf"
+    dst.write_bytes(data)
+    file_path_str = str(dst.resolve())
+    new_doc = {
+        **p,
+        "id": new_id,
+        "owner_id": user_id,
+        "drive_file_id": None,
+        "drive_owner": None,
+        "storage_type": "local",
+        "file_path": file_path_str,
+        "synced_at": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    new_doc.pop("_id", None)
+    await db.pdfs.insert_one(new_doc)
+    pages = await db.pdf_pages.find({"pdf_id": pdf_id}, {"_id": 0}).to_list(10000)
+    if pages:
+        new_pages = [{**pg, "pdf_id": new_id, "owner_id": user_id} for pg in pages]
+        await db.pdf_pages.insert_many(new_pages)
+    await log_event("pdf.save", f"PDF condiviso importato su disco: {file_path_str}", user_id=user_id, meta={"pdf_id": new_id, "source_pdf_id": pdf_id, "path": file_path_str, "filename": p.get("filename")})
+    await log_event("pdf.storage", f"Storage finale: LOCAL - path={file_path_str}", user_id=user_id, meta={"pdf_id": new_id, "storage_type": "local", "file_path": file_path_str})
+    await log_event("pdf.import", f"Importato PDF condiviso: {p.get('title')}", user_id=user_id, meta={"pdf_id": new_id, "source_pdf_id": pdf_id})
+    return {"ok": True, "pdf_id": new_id}
+
+
+async def _user_can_access_pdf(user_id: str, pdf_id: str) -> bool:
+    """User can access a non-owned pdf if it belongs to a shared library they have access to."""
+    libs = await db.shared_libraries.find(
+        {"pdf_ids": pdf_id, "hidden_by_users": {"$ne": user_id}, "$or": [{"owner_id": user_id}, {"members": user_id}, {"public": True}]},
+        {"_id": 0, "id": 1},
+    ).to_list(100)
+    return len(libs) > 0
+
 
 # ----------------- Search -----------------
 @api.get("/search")
-async def search(q: str = Query(..., min_length=1), user_id: str = Depends(get_current_user_id)):
-    safe_q = re.escape(q.strip())
+async def search(
+    q: str = Query(..., min_length=1),
+    library_id: Optional[str] = None,
+    user_id: str = Depends(get_current_user_id),
+):
+    q = q.strip()
+    if len(q) < 1:
+        return {"results": []}
+    await log_event("search", f"Ricerca: '{q}'" + (f" in libreria {library_id}" if library_id else ""), user_id=user_id)
+
+    # Determine accessible PDF set: owned + shared library memberships
+    owned_filter = {"owner_id": user_id}
+    accessible_pdf_ids: set = set()
+    pdfs_meta: Dict[str, dict] = {}
+    pdf_source: Dict[str, str] = {}  # pdf_id -> 'personal' | 'shared:<lib_id>'
+
+    # personal pdfs
+    async for p in db.pdfs.find(owned_filter, {"_id": 0}):
+        accessible_pdf_ids.add(p["id"])
+        pdfs_meta[p["id"]] = p
+        pdf_source[p["id"]] = "personal"
+
+    # shared libraries: owner or members
+    lib_filter = {"hidden_by_users": {"$ne": user_id}, "$or": [{"owner_id": user_id}, {"members": user_id}, {"public": True}]}
+    if library_id:
+        lib_filter = {"id": library_id, **lib_filter}
+    async for lib in db.shared_libraries.find(lib_filter, {"_id": 0}):
+        for pid in lib.get("pdf_ids", []):
+            if pid not in accessible_pdf_ids:
+                p = await db.pdfs.find_one({"id": pid}, {"_id": 0})
+                if p:
+                    accessible_pdf_ids.add(pid)
+                    pdfs_meta[pid] = p
+                    pdf_source[pid] = f"shared:{lib['name']}"
+            elif pdf_source.get(pid) == "personal":
+                # already personal -> dedupe priority: personal wins
+                pass
+
+    if library_id:
+        # restrict to this library only
+        lib = await db.shared_libraries.find_one({"id": library_id}, {"_id": 0})
+        if not lib:
+            raise HTTPException(status_code=404, detail="Libreria non trovata")
+        if lib["owner_id"] != user_id and user_id not in lib.get("members", []) and not lib.get("public"):
+            raise HTTPException(status_code=403, detail="Accesso negato")
+        scope_ids = set(lib.get("pdf_ids", []))
+        accessible_pdf_ids &= scope_ids
+
+    if not accessible_pdf_ids:
+        return {"results": []}
+
+    safe_q = re.escape(q)
+
+    # Search pages text for matches; also include title matches
+    seen_pdf_ids: set = set()
     results = []
-    cursor = db.pdf_pages.find({"text": {"$regex": safe_q, "$options": "i"}}).limit(100)
+
+    # 1) page text search (regex case-insensitive). For larger libs, MongoDB text index is better but regex works for partial words.
+    cursor = db.pdf_pages.find(
+        {"pdf_id": {"$in": list(accessible_pdf_ids)}, "text": {"$regex": safe_q, "$options": "i"}},
+        {"_id": 0},
+    ).limit(500)
+    page_hits: Dict[str, dict] = {}
     async for pg in cursor:
-        p = await db.pdfs.find_one({"id": pg["pdf_id"]})
-        if p: results.append({"pdf_id": p["id"], "title": p["title"], "page": pg["page"], "snippet": make_snippet(pg["text"], q), "is_protected": p.get("is_protected", False)})
-    return {"results": results}
+        pid = pg["pdf_id"]
+        if pid in page_hits:
+            continue
+        page_hits[pid] = pg
+
+    for pid, pg in page_hits.items():
+        if pid not in pdfs_meta:
+            continue
+        p = pdfs_meta[pid]
+        snippet = make_snippet(pg["text"], q)
+        results.append({
+            "pdf_id": pid,
+            "title": p.get("title", ""),
+            "filename": p.get("filename", ""),
+            "page": pg["page"],
+            "snippet": snippet,
+            "match_query": q,
+            "source": pdf_source.get(pid, "personal"),
+            "created_at": p.get("created_at"),
+            "match_in": "content",
+        })
+        seen_pdf_ids.add(pid)
+
+    # 2) title matches
+    async for p in db.pdfs.find(
+        {"id": {"$in": list(accessible_pdf_ids)}, "title": {"$regex": safe_q, "$options": "i"}},
+        {"_id": 0},
+    ):
+        if p["id"] in seen_pdf_ids:
+            continue
+        results.append({
+            "pdf_id": p["id"],
+            "title": p.get("title", ""),
+            "filename": p.get("filename", ""),
+            "page": 1,
+            "snippet": "",
+            "match_query": q,
+            "source": pdf_source.get(p["id"], "personal"),
+            "created_at": p.get("created_at"),
+            "match_in": "title",
+        })
+        seen_pdf_ids.add(p["id"])
+
+    # dedup by content_hash: keep personal over shared
+    by_hash: Dict[str, dict] = {}
+    final: List[dict] = []
+    for r in results:
+        p = pdfs_meta.get(r["pdf_id"], {})
+        h = p.get("content_hash") or r["pdf_id"]
+        existing = by_hash.get(h)
+        if not existing:
+            by_hash[h] = r
+            final.append(r)
+        else:
+            # prefer personal
+            if existing["source"] != "personal" and r["source"] == "personal":
+                final = [x for x in final if x is not existing]
+                by_hash[h] = r
+                final.append(r)
+    final.sort(key=lambda x: (0 if x["match_in"] == "title" else 1, x.get("created_at") or ""), reverse=False)
+    return {"results": final[:50]}
 
 # ----------------- Admin -----------------
 @api.get("/admin/stats")

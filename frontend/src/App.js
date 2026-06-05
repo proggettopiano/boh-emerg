@@ -9,21 +9,29 @@ import { getGoogleRedirectUri } from "@/lib/google";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import Header from "@/components/Header";
+import BackupBanner from "@/components/BackupBanner";
 
 import Login from "@/pages/Login";
+import Register from "@/pages/Register";
+import ForgotPassword from "@/pages/ForgotPassword";
+import ResetPassword from "@/pages/ResetPassword";
+import ProfileSetup from "@/pages/ProfileSetup";
 import Home from "@/pages/Home";
 import Library from "@/pages/Library";
+import SharedLibraries from "@/pages/SharedLibraries";
+import SharedLibraryDetail from "@/pages/SharedLibraryDetail";
 import SharedView from "@/pages/SharedView";
 import PdfViewer from "@/pages/PdfViewer";
 import Settings from "@/pages/Settings";
-import Shared from "@/pages/Shared";
 import AdminLogs from "@/pages/AdminLogs";
 import Admin from "@/pages/Admin";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import { shouldHideAppChrome } from "@/viewer/viewerChrome";
 
 function GoogleOAuthReturn() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { setUser, loginWithToken, user: currentUser } = useAuth();
   const processed = useRef(false);
   const [status, setStatus] = useState("Connessione a Google in corso...");
 
@@ -34,24 +42,16 @@ function GoogleOAuthReturn() {
     const params = new URLSearchParams(location.search);
     const code = params.get("code");
     const error = params.get("error");
-    const mode = sessionStorage.getItem("google_oauth_mode");
+    const mode = sessionStorage.getItem("google_oauth_mode") || "login";
     sessionStorage.removeItem("google_oauth_mode");
 
     if (error) {
-      setStatus(`Errore Google: ${error}`);
-      setTimeout(() => navigate("/login", { replace: true }), 2000);
+      navigate("/login", { replace: true });
       return;
     }
 
     if (!code) {
-      setStatus("Codice di autorizzazione mancante. Reindirizzo al login...");
-      setTimeout(() => navigate("/login", { replace: true }), 2000);
-      return;
-    }
-
-    if (!mode) {
-      setStatus("Modalità OAuth non riconosciuta. Reindirizzo al login...");
-      setTimeout(() => navigate("/login", { replace: true }), 2000);
+      navigate("/login", { replace: true });
       return;
     }
 
@@ -59,7 +59,6 @@ function GoogleOAuthReturn() {
       try {
         const redirect_uri = getGoogleRedirectUri();
 
-        // Solo la modalità "master" è supportata per la connessione Drive dell'admin
         if (mode === "master") {
           await api.post("/admin/master-drive/connect", {
             code,
@@ -69,14 +68,19 @@ function GoogleOAuthReturn() {
           return;
         }
 
-        // Login Google rimosso per gli utenti normali
-        navigate("/login", { replace: true });
+        const r = await api.post("/auth/google", {
+          code,
+          redirect_uri,
+        });
+
+        loginWithToken(r.data.token, r.data.user);
+        navigate(r.data.user.profile_completed ? "/" : "/profile-setup", { replace: true });
       } catch (e) {
         setStatus("Errore Google");
         setTimeout(() => navigate("/login", { replace: true }), 2000);
       }
     })();
-  }, [location.search, navigate]);
+  }, [location.search, loginWithToken, navigate]);
 
   return <div>{status}</div>;
 }
@@ -88,6 +92,7 @@ function ChromeWrapper({ children }) {
 
   return (
     <>
+      {user && !noChrome && <BackupBanner />}
       {user && !noChrome && <Header />}
       {children}
     </>
@@ -106,9 +111,15 @@ function AppShell() {
     <ChromeWrapper>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
+        <Route path="/forgot" element={<ForgotPassword />} />
+        <Route path="/reset" element={<ResetPassword />} />
+
+        <Route path="/profile-setup" element={<ProtectedRoute requireProfile={false}><ProfileSetup /></ProtectedRoute>} />
         <Route path="/" element={<ProtectedRoute><Home /></ProtectedRoute>} />
         <Route path="/library" element={<ProtectedRoute><Library /></ProtectedRoute>} />
-        <Route path="/shared" element={<ProtectedRoute><Shared /></ProtectedRoute>} />
+        <Route path="/libraries" element={<ProtectedRoute><SharedLibraries /></ProtectedRoute>} />
+        <Route path="/libraries/:id" element={<ProtectedRoute><SharedLibraryDetail /></ProtectedRoute>} />
         <Route path="/shared/:token" element={<SharedView />} />
         <Route path="/viewer/:id" element={<ProtectedRoute><PdfViewer /></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
@@ -120,22 +131,6 @@ function AppShell() {
 }
 
 export default function App() {
-  useEffect(() => {
-    const t = localStorage.getItem("theme") || "system";
-    const root = document.documentElement;
-    if (t === "dark") {
-      root.classList.add("dark");
-      root.style.colorScheme = "dark";
-    } else if (t === "light") {
-      root.classList.remove("dark");
-      root.style.colorScheme = "light";
-    } else {
-      const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-      root.classList.toggle("dark", isDark);
-      root.style.colorScheme = isDark ? "dark" : "light";
-    }
-  }, []);
-
   return (
     <AuthProvider>
       <BrowserRouter>
