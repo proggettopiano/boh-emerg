@@ -1,13 +1,19 @@
-"""PDF text extraction logic based on stable-pdf-v1 (NO OCR)."""
+"""PDF text extraction with OCR fallback for scanned PDFs."""
 import logging
+import io
 from typing import List, Tuple
 import fitz  # PyMuPDF
+from PIL import Image
+import pytesseract
 
 logger = logging.getLogger(__name__)
 
+OCR_LANGS = "eng+ita"
+MIN_CHARS_PER_PAGE = 25  # below this, treat page as scanned and run OCR
+
+
 def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool]:
-    """Extract text from each page. OCR logic removed for stability.
-    This follows the stable-pdf-v1 structure but removes the pytesseract dependency.
+    """Extract text from each page. Falls back to OCR for image-only pages.
 
     Returns (pages_text, total_pages, used_ocr).
     """
@@ -23,11 +29,22 @@ def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool]:
         try:
             page = doc[page_num]
             text = page.get_text("text") or ""
-            pages_text.append(text.strip())
+            text = text.strip()
+            if len(text) < MIN_CHARS_PER_PAGE:
+                # OCR fallback
+                try:
+                    pix = page.get_pixmap(dpi=200)
+                    img = Image.open(io.BytesIO(pix.tobytes("png")))
+                    ocr_text = pytesseract.image_to_string(img, lang=OCR_LANGS) or ""
+                    if len(ocr_text.strip()) > len(text):
+                        text = ocr_text.strip()
+                        used_ocr = True
+                except Exception as e:
+                    logger.warning(f"OCR failed on page {page_num + 1}: {e}")
+            pages_text.append(text)
         except Exception as e:
             logger.warning(f"Failed to extract page {page_num + 1}: {e}")
             pages_text.append("")
-            
     total = len(doc)
     doc.close()
     return pages_text, total, used_ocr

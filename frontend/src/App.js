@@ -17,6 +17,7 @@ import SharedView from "@/pages/SharedView";
 import PdfViewer from "@/pages/PdfViewer";
 import Settings from "@/pages/Settings";
 import Shared from "@/pages/Shared";
+import SharedLibraryDetail from "@/pages/SharedLibraryDetail";
 import AdminLogs from "@/pages/AdminLogs";
 import Admin from "@/pages/Admin";
 import { shouldHideAppChrome } from "@/viewer/viewerChrome";
@@ -109,6 +110,7 @@ function AppShell() {
         <Route path="/" element={<ProtectedRoute><Home /></ProtectedRoute>} />
         <Route path="/library" element={<ProtectedRoute><Library /></ProtectedRoute>} />
         <Route path="/shared" element={<ProtectedRoute><Shared /></ProtectedRoute>} />
+        <Route path="/libraries/:id" element={<ProtectedRoute><SharedLibraryDetail /></ProtectedRoute>} />
         <Route path="/shared/:token" element={<SharedView />} />
         <Route path="/viewer/:id" element={<ProtectedRoute><PdfViewer /></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
