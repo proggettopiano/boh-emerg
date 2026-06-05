@@ -47,6 +47,12 @@
     --border: 0 0% 15%;
     --input: 0 0% 15%;
     --ring: 0 0% 100%;
+    --canvas: #1a1a1a;
+    --canvas2: #262626;
+    --canvas3: #2d2d2d;
+    --rule: #404040;
+    --muted2: #b3b3b3;
+    --muted3: #808080;
   }
 }
 

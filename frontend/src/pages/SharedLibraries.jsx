@@ -5,6 +5,18 @@ import { toast } from "sonner";
 import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 
+const getErrorMessage = (error) => {
+  if (!error) return "Errore sconosciuto";
+  const detail = error.response?.data?.detail;
+  if (!detail) return "Errore sconosciuto";
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const msgs = detail.map(d => typeof d === "string" ? d : (d.msg || JSON.stringify(d)));
+    return msgs.join("; ");
+  }
+  return JSON.stringify(detail);
+};
+
 export default function SharedLibraries() {
   const { user } = useAuth();
   const [items, setItems] = useState([]);
@@ -31,7 +43,7 @@ export default function SharedLibraries() {
   const create = async (e) => {
     e.preventDefault();
     try { await api.post("/libraries", { name, description: desc }); setShow(false); setName(""); setDesc(""); toast.success("Libreria creata"); load(); }
-    catch (e) { toast.error(e.response?.data?.detail || "Errore"); }
+    catch (e) { toast.error(getErrorMessage(e)); }
   };
   const del = async (id) => { if (!window.confirm("Eliminare la libreria condivisa?")) return; await api.delete(`/libraries/${id}`); load(); };
   const leaveLibrary = async (id, libName) => {
@@ -42,7 +54,7 @@ export default function SharedLibraries() {
       load();
       loadHidden();
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Errore");
+      toast.error(getErrorMessage(e));
     }
   };
   const unhide = async (id) => { await api.delete(`/libraries/${id}/hide`); toast.success("Libreria ripristinata"); load(); loadHidden(); };

@@ -209,8 +209,10 @@ async def login(payload: LoginIn, request: Request):
             raise HTTPException(status_code=400, detail="Password richiesta")
         u = await db.users.find_one({"email": email})
         if not u or not verify_password(payload.password, u["password_hash"]):
+            await log_event("auth.login_failed", f"Tentativo login admin fallito", level="warn", meta={"email": email, "ip": ip})
             raise HTTPException(status_code=401, detail="Credenziali non valide")
         token = create_jwt(u["user_id"])
+        await log_event("auth.login_admin", f"Admin login: {email}", user_id=u["user_id"], meta={"ip": ip})
         return {"token": token, "user": user_public(u), "role": "admin"}
 
     if email == "chiesapomigliano@scorebil.com":
@@ -218,10 +220,13 @@ async def login(payload: LoginIn, request: Request):
         if req:
             admin = await db.users.find_one({"email": ADMIN_EMAIL}, {"user_id": 1})
             token = create_jwt(admin["user_id"])
+            await log_event("auth.login_group", f"Gruppo login: {email}", user_id=admin["user_id"], meta={"ip": ip, "email": email})
             return {"token": token, "user": {"email": email, "name": "Gruppo Chiesa Pomigliano", "is_group": True}}
         
         rej = await db.access_requests.find_one({"ip": ip, "status": "rejected"})
-        if rej: raise HTTPException(status_code=403, detail="Accesso rifiutato.")
+        if rej:
+            await log_event("auth.login_rejected", f"Accesso rifiutato per {email}", level="warn", meta={"ip": ip, "email": email})
+            raise HTTPException(status_code=403, detail="Accesso rifiutato.")
         return {"action": "request_access", "email": email}
 
     raise HTTPException(status_code=404, detail="Email non riconosciuta")
@@ -331,6 +336,7 @@ async def upload_pdf(
     # Verify user is member of group
     grp = await db.groups.find_one({"id": group_id, "members": user_id}, {"_id": 0, "id": 1})
     if not grp:
+        await log_event("pdf.upload_denied", f"Tentativo upload in gruppo non autorizzato", user_id=user_id, level="warn", meta={"group_id": group_id})
         raise HTTPException(status_code=403, detail="Non sei membro di questo gruppo")
     
     if not files:
@@ -373,6 +379,9 @@ async def upload_pdf(
 
         results.append({"ok": True, "pdf_id": pdf_id, "name": filename, "compressed": was_compressed})
 
+    if results:
+        await log_event("pdf.uploaded", f"Upload completato: {len(results)} file nel gruppo {group_id}", user_id=user_id, meta={"group_id": group_id, "count": len(results)})
+    
     return {"results": results}
 
 @api.get("/pdfs/{pdf_id}/status")
@@ -641,28 +650,21 @@ async def admin_users(_: str = Depends(require_admin)):
     reqs = await db.access_requests.find({"status": "approved"}).to_list(1000)
     return {"users": [{"email": r["email"], "name": r["name"], "created_at": r["created_at"]} for r in reqs]}
 
-@api.get("/admin/logs")
-async def admin_logs(event_type: Optional[str] = None, q: Optional[str] = None, limit: int = 100, _: str = Depends(require_admin)):
-    query = {}
-    if event_type: query["event_type"] = event_type
-    if q: query["description"] = {"$regex": re.escape(q), "$options": "i"}
-    items = await db.app_logs.find(query).sort("created_at", -1).limit(limit).to_list(limit)
-    types = await db.app_logs.distinct("event_type")
-    return {"items": [clean_doc(i) for i in items], "types": types}
-
 @api.get("/admin/access-requests")
 async def list_access_requests(_: str = Depends(require_admin)):
     reqs = await db.access_requests.find({}).sort("created_at", -1).to_list(100)
     return [clean_doc(r) for r in reqs]
 
 @api.post("/admin/access-requests/approve")
-async def approve_access(payload: dict, _: str = Depends(require_admin)):
+async def approve_access(payload: dict, user_id: str = Depends(require_admin)):
     await db.access_requests.update_one({"email": payload["email"]}, {"$set": {"status": "approved"}})
+    await log_event("access.approved", f"Richiesta accesso approvata: {payload['email']}", user_id=user_id, meta={"email": payload["email"]})
     return {"ok": True}
 
 @api.post("/admin/access-requests/reject")
-async def reject_access(payload: dict, _: str = Depends(require_admin)):
+async def reject_access(payload: dict, user_id: str = Depends(require_admin)):
     await db.access_requests.update_one({"email": payload["email"]}, {"$set": {"status": "rejected"}})
+    await log_event("access.rejected", f"Richiesta accesso rifiutata: {payload['email']}", user_id=user_id, meta={"email": payload["email"]})
     return {"ok": True}
 
 @api.get("/admin/master-drive/status")
