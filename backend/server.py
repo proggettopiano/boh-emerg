@@ -341,6 +341,32 @@ async def get_pdf_file(pdf_id: str, token: Optional[str] = Query(None), user_id:
     if fpath.exists(): return FileResponse(fpath, media_type="application/pdf", filename=p["filename"])
     raise HTTPException(status_code=404, detail="File non trovato")
 
+@api.get("/shared/{token}")
+async def view_shared(token: str, user_id: Optional[str] = Depends(get_optional_user_id)):
+    # Support both shared library tokens and single public PDF IDs.
+    lib = await db.shared_libraries.find_one({"share_token": token}, {"_id": 0})
+    if lib:
+        if lib.get("is_protected") and not user_id:
+            raise HTTPException(status_code=401, detail="Login richiesto per la libreria condivisa")
+        if user_id and lib["owner_id"] != user_id and user_id not in lib.get("members", []):
+            await db.shared_libraries.update_one({"id": lib["id"]}, {"$addToSet": {"members": user_id}})
+        pdfs = await db.pdfs.find({"id": {"$in": lib.get("pdf_ids", [])}}, {"_id": 0}).to_list(1000)
+        lib["pdfs"] = [_serialize_pdf(p) for p in pdfs]
+        lib["is_owner"] = user_id == lib["owner_id"] if user_id else False
+        return lib
+
+    p = await db.pdfs.find_one({"id": token}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Link non valido o documento non trovato")
+    if p.get("is_protected") and not user_id:
+        raise HTTPException(status_code=401, detail="Login richiesto per accedere al PDF protetto")
+    return {
+        "name": p.get("title", "Documento condiviso"),
+        "description": p.get("description", "") or "",
+        "pdfs": [_serialize_pdf(p)],
+        "is_owner": user_id == p.get("owner_id") if user_id else False,
+    }
+
 # ----------------- Search -----------------
 @api.get("/search")
 async def search(q: str = Query(..., min_length=1), user_id: str = Depends(get_current_user_id)):
