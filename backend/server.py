@@ -126,11 +126,11 @@ async def ensure_indexes():
     await safe_create_index(db.app_logs, "created_at")
     await safe_create_index(db.access_requests, "email")
     await safe_create_index(db.access_requests, "ip")
-await safe_create_index(db.shared_libraries, "id", unique=True)
-await safe_create_index(db.shared_libraries, "share_token", unique=True)
+    await safe_create_index(db.shared_libraries, "id", unique=True)
+    await safe_create_index(db.shared_libraries, "share_token", unique=True)
 
-await safe_create_index(db.groups, "id", unique=True)
-await safe_create_index(db.groups, [("members", 1)])
+    await safe_create_index(db.groups, "id", unique=True)
+    await safe_create_index(db.groups, [("members", 1)])
 
 async def seed_admin():
     admin = await db.users.find_one({"email": ADMIN_EMAIL})
@@ -485,18 +485,6 @@ async def delete_library(lib_id: str, user_id: str = Depends(require_admin)):
 async def view_shared(token: str, user_id: Optional[str] = Depends(get_optional_user_id)):
     # 1. Try as library share token
     lib = await db.shared_libraries.find_one({"share_token": token}, {"_id": 0})
-<<<<<<< HEAD
-    if lib:
-        pdf_ids = lib.get("pdf_ids", [])
-        pdfs = await db.pdfs.find({"id": {"$in": pdf_ids}}, {"_id": 0}).to_list(1000)
-        
-        # In public view, we only show non-protected PDFs unless user is logged in
-        if not user_id:
-            pdfs = [p for p in pdfs if not p.get("is_protected")]
-            
-        lib["pdfs"] = [_serialize_pdf(p) for p in pdfs]
-        return lib
-=======
     if not lib:
         raise HTTPException(status_code=404, detail="Link non valido o rimosso")
     if lib.get("is_protected") and not user_id:
@@ -605,19 +593,6 @@ async def _user_can_access_pdf(user_id: str, pdf_id: str) -> bool:
     # User not in group and not owner → no access
     # (shared libraries do not bypass group membership)
     return False
->>>>>>> 1ba1857 (feat: add group system + pdf access control)
-
-    # 2. Try as single PDF ID (legacy or direct share)
-    p = await db.pdfs.find_one({"id": token}, {"_id": 0})
-    if p:
-        if p.get("is_protected") and not user_id:
-            raise HTTPException(status_code=401, detail="Questo file è protetto e richiede l'accesso al gruppo.")
-        return {
-            "name": p.get("title", "Documento"),
-            "pdfs": [_serialize_pdf(p)]
-        }
-    
-    raise HTTPException(status_code=404, detail="Link non valido")
 
 # ----------------- Search -----------------
 @api.get("/search")
