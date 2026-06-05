@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Tuple, Optional, Dict, Any
 
 import aiofiles
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, UploadFile, File, Form, Query, BackgroundTasks
@@ -125,6 +125,8 @@ async def ensure_indexes():
     await safe_create_index(db.app_logs, "created_at")
     await safe_create_index(db.access_requests, "email")
     await safe_create_index(db.access_requests, "ip")
+    await safe_create_index(db.shared_libraries, "id", unique=True)
+    await safe_create_index(db.shared_libraries, "share_token", unique=True)
 
 async def seed_admin():
     admin = await db.users.find_one({"email": ADMIN_EMAIL})
@@ -160,6 +162,13 @@ class PdfPatchIn(BaseModel):
     is_favorite: Optional[bool] = None
     tags: Optional[List[str]] = None
     is_protected: Optional[bool] = None
+
+class CreateLibraryIn(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+class AddPdfsIn(BaseModel):
+    pdf_ids: List[str]
 
 # ----------------- Auth -----------------
 def user_public(u: dict) -> dict:
@@ -329,6 +338,7 @@ async def delete_pdf(pdf_id: str, user_id: str = Depends(require_admin)):
     if p and os.path.exists(p["file_path"]): os.remove(p["file_path"])
     await db.pdfs.delete_one({"id": pdf_id})
     await db.pdf_pages.delete_many({"pdf_id": pdf_id})
+    await db.shared_libraries.update_many({}, {"$pull": {"pdf_ids": pdf_id}})
     return {"ok": True}
 
 @api.get("/pdfs/{pdf_id}/file")
@@ -341,31 +351,85 @@ async def get_pdf_file(pdf_id: str, token: Optional[str] = Query(None), user_id:
     if fpath.exists(): return FileResponse(fpath, media_type="application/pdf", filename=p["filename"])
     raise HTTPException(status_code=404, detail="File non trovato")
 
+# ----------------- Libraries -----------------
+@api.post("/libraries")
+async def create_library(payload: CreateLibraryIn, user_id: str = Depends(get_current_user_id)):
+    lib_id = str(uuid.uuid4())
+    share_token = secrets.token_urlsafe(16)
+    doc = {
+        "id": lib_id,
+        "name": payload.name.strip() or "Libreria",
+        "description": payload.description or "",
+        "owner_id": user_id,
+        "pdf_ids": [],
+        "members": [],
+        "share_token": share_token,
+        "public": True,
+        "created_at": iso_now(),
+    }
+    await db.shared_libraries.insert_one(doc)
+    await log_event("library.create", f"Libreria creata: {doc['name']}", user_id=user_id)
+    return clean_doc(doc)
+
+@api.get("/libraries")
+async def list_libraries(user_id: str = Depends(get_current_user_id)):
+    cursor = db.shared_libraries.find({}, {"_id": 0}).sort("created_at", -1)
+    items = await cursor.to_list(1000)
+    return {"items": items}
+
+@api.get("/libraries/{lib_id}")
+async def get_library(lib_id: str, user_id: str = Depends(get_current_user_id)):
+    lib = await db.shared_libraries.find_one({"id": lib_id}, {"_id": 0})
+    if not lib: raise HTTPException(status_code=404, detail="Libreria non trovata")
+    pdfs = await db.pdfs.find({"id": {"$in": lib.get("pdf_ids", [])}}, {"_id": 0}).to_list(1000)
+    lib["pdfs"] = [_serialize_pdf(p) for p in pdfs]
+    lib["is_owner"] = lib["owner_id"] == user_id
+    return lib
+
+@api.post("/libraries/{lib_id}/pdfs")
+async def add_to_library(lib_id: str, payload: AddPdfsIn, user_id: str = Depends(get_current_user_id)):
+    lib = await db.shared_libraries.find_one({"id": lib_id})
+    if not lib: raise HTTPException(status_code=404, detail="Libreria non trovata")
+    await db.shared_libraries.update_one({"id": lib_id}, {"$addToSet": {"pdf_ids": {"$each": payload.pdf_ids}}})
+    return {"ok": True}
+
+@api.delete("/libraries/{lib_id}/pdfs/{pdf_id}")
+async def remove_from_library(lib_id: str, pdf_id: str, user_id: str = Depends(get_current_user_id)):
+    await db.shared_libraries.update_one({"id": lib_id}, {"$pull": {"pdf_ids": pdf_id}})
+    return {"ok": True}
+
+@api.delete("/libraries/{lib_id}")
+async def delete_library(lib_id: str, user_id: str = Depends(require_admin)):
+    await db.shared_libraries.delete_one({"id": lib_id})
+    return {"ok": True}
+
+# ----------------- Shared -----------------
 @api.get("/shared/{token}")
 async def view_shared(token: str, user_id: Optional[str] = Depends(get_optional_user_id)):
-    # Support both shared library tokens and single public PDF IDs.
+    # 1. Try as library share token
     lib = await db.shared_libraries.find_one({"share_token": token}, {"_id": 0})
     if lib:
-        if lib.get("is_protected") and not user_id:
-            raise HTTPException(status_code=401, detail="Login richiesto per la libreria condivisa")
-        if user_id and lib["owner_id"] != user_id and user_id not in lib.get("members", []):
-            await db.shared_libraries.update_one({"id": lib["id"]}, {"$addToSet": {"members": user_id}})
-        pdfs = await db.pdfs.find({"id": {"$in": lib.get("pdf_ids", [])}}, {"_id": 0}).to_list(1000)
+        pdf_ids = lib.get("pdf_ids", [])
+        pdfs = await db.pdfs.find({"id": {"$in": pdf_ids}}, {"_id": 0}).to_list(1000)
+        
+        # In public view, we only show non-protected PDFs unless user is logged in
+        if not user_id:
+            pdfs = [p for p in pdfs if not p.get("is_protected")]
+            
         lib["pdfs"] = [_serialize_pdf(p) for p in pdfs]
-        lib["is_owner"] = user_id == lib["owner_id"] if user_id else False
         return lib
 
+    # 2. Try as single PDF ID (legacy or direct share)
     p = await db.pdfs.find_one({"id": token}, {"_id": 0})
-    if not p:
-        raise HTTPException(status_code=404, detail="Link non valido o documento non trovato")
-    if p.get("is_protected") and not user_id:
-        raise HTTPException(status_code=401, detail="Login richiesto per accedere al PDF protetto")
-    return {
-        "name": p.get("title", "Documento condiviso"),
-        "description": p.get("description", "") or "",
-        "pdfs": [_serialize_pdf(p)],
-        "is_owner": user_id == p.get("owner_id") if user_id else False,
-    }
+    if p:
+        if p.get("is_protected") and not user_id:
+            raise HTTPException(status_code=401, detail="Questo file è protetto e richiede l'accesso al gruppo.")
+        return {
+            "name": p.get("title", "Documento"),
+            "pdfs": [_serialize_pdf(p)]
+        }
+    
+    raise HTTPException(status_code=404, detail="Link non valido")
 
 # ----------------- Search -----------------
 @api.get("/search")
@@ -448,7 +512,7 @@ async def process_pdf_job(job_id):
         pdf = await db.pdfs.find_one({"id": job["pdf_id"]})
         fpath = Path(pdf["file_path"])
         if fpath.exists():
-            pages_text, total, _, _ = extract_pages(fpath.read_bytes())
+            pages_text, total, _ = extract_pages(fpath.read_bytes())
             for i, txt in enumerate(pages_text):
                 await db.pdf_pages.update_one({"pdf_id": pdf["id"], "page": i+1}, {"$set": {"text": txt}}, upsert=True)
             await db.pdfs.update_one({"id": pdf["id"]}, {"$set": {"status": "ready", "pages": total}})

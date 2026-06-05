@@ -59,13 +59,13 @@ export default function SharedView() {
         )}
         {(lib.pdfs || []).map((p, idx) => (
           <li key={idx} className="flex items-center justify-between gap-3 py-4 border-b border-rule group hover:bg-canvas2 px-2 -mx-2 transition-colors">
-            <button onClick={() => navigate(`/viewer/${p.id}`)} className="text-left flex-1 flex items-center gap-3 min-w-0">
+            <div className="text-left flex-1 flex items-center gap-3 min-w-0">
               <FileText size={18} strokeWidth={1.5} className="text-muted2" />
               <div className="min-w-0">
-                <div className="font-medium hover:underline truncate text-lg">{p.title}</div>
+                <div className="font-medium truncate text-lg">{p.title}</div>
                 <div className="text-mono text-xs text-muted2">{p.pages} pagine</div>
               </div>
-            </button>
+            </div>
             <a 
               href={`${api.defaults.baseURL}/pdfs/${p.id}/file`} 
               target="_blank" 
