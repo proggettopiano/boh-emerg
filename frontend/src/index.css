@@ -28,6 +28,26 @@
     --ring: 0 0% 4%;
     --radius: 0.375rem;
   }
+  
+  html.dark {
+    --background: 0 0% 4%;
+    --foreground: 0 0% 100%;
+    --card: 0 0% 8%;
+    --card-foreground: 0 0% 100%;
+    --popover: 0 0% 8%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 0 0% 100%;
+    --primary-foreground: 0 0% 4%;
+    --secondary: 0 0% 15%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 0 0% 20%;
+    --muted-foreground: 0 0% 70%;
+    --accent: 0 0% 20%;
+    --accent-foreground: 0 0% 100%;
+    --border: 0 0% 15%;
+    --input: 0 0% 15%;
+    --ring: 0 0% 100%;
+  }
 }
 
 @layer base {
@@ -69,9 +89,11 @@
     @apply inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-[#525252] hover:text-ink transition-colors;
   }
   .input-base {
-    @apply w-full bg-canvas2 border border-rule px-4 py-3 rounded-sm outline-none transition-colors;
+    @apply w-full bg-canvas2 border border-rule px-4 py-3 rounded-sm outline-none transition-colors text-ink;
   }
   .input-base:focus { border-color: #0A0A0A; background: #FFFFFF; }
+  html.dark .input-base { background-color: #1a1a1a; color: #ffffff; }
+  html.dark .input-base:focus { background-color: #262626; border-color: #ffffff; }
   .piano-bars {
     background-image: repeating-linear-gradient(90deg, #0A0A0A 0 4px, transparent 4px 14px);
   }
