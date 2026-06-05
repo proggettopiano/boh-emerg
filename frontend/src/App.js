@@ -34,11 +34,24 @@ function GoogleOAuthReturn() {
     const params = new URLSearchParams(location.search);
     const code = params.get("code");
     const error = params.get("error");
-    const mode = sessionStorage.getItem("google_oauth_mode") || "login";
+    const mode = sessionStorage.getItem("google_oauth_mode");
     sessionStorage.removeItem("google_oauth_mode");
 
-    if (error || !code) {
-      navigate("/login", { replace: true });
+    if (error) {
+      setStatus(`Errore Google: ${error}`);
+      setTimeout(() => navigate("/login", { replace: true }), 2000);
+      return;
+    }
+
+    if (!code) {
+      setStatus("Codice di autorizzazione mancante. Reindirizzo al login...");
+      setTimeout(() => navigate("/login", { replace: true }), 2000);
+      return;
+    }
+
+    if (!mode) {
+      setStatus("Modalità OAuth non riconosciuta. Reindirizzo al login...");
+      setTimeout(() => navigate("/login", { replace: true }), 2000);
       return;
     }
 
