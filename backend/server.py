@@ -119,14 +119,18 @@ async def ensure_indexes():
     await safe_create_index(db.users, "user_id", unique=True)
     await safe_create_index(db.users, "email", unique=True)
     await safe_create_index(db.pdfs, "id", unique=True)
+    await safe_create_index(db.pdfs, "group_id")
     await safe_create_index(db.pdf_pages, [("pdf_id", 1), ("page", 1)], unique=True)
     await safe_create_index(db.pdf_pages, "text")
     await safe_create_index(db.upload_jobs, "id", unique=True)
     await safe_create_index(db.app_logs, "created_at")
     await safe_create_index(db.access_requests, "email")
     await safe_create_index(db.access_requests, "ip")
-    await safe_create_index(db.shared_libraries, "id", unique=True)
-    await safe_create_index(db.shared_libraries, "share_token", unique=True)
+await safe_create_index(db.shared_libraries, "id", unique=True)
+await safe_create_index(db.shared_libraries, "share_token", unique=True)
+
+await safe_create_index(db.groups, "id", unique=True)
+await safe_create_index(db.groups, [("members", 1)])
 
 async def seed_admin():
     admin = await db.users.find_one({"email": ADMIN_EMAIL})
@@ -169,6 +173,12 @@ class CreateLibraryIn(BaseModel):
 
 class AddPdfsIn(BaseModel):
     pdf_ids: List[str]
+
+class CreateGroupIn(BaseModel):
+    name: str
+
+class AddGroupMemberIn(BaseModel):
+    member_id: str
 
 # ----------------- Auth -----------------
 def user_public(u: dict) -> dict:
@@ -270,6 +280,41 @@ def _serialize_pdf(p: dict) -> dict:
         "created_at": p.get("created_at"),
     }
 
+# ----------------- Groups -----------------
+@api.post("/groups")
+async def create_group(payload: CreateGroupIn, user_id: str = Depends(get_current_user_id)):
+    group_id = str(uuid.uuid4())
+    doc = {
+        "id": group_id,
+        "name": payload.name.strip() or "Gruppo",
+        "owner_id": user_id,
+        "members": [user_id],
+        "created_at": iso_now(),
+    }
+    await db.groups.insert_one(doc)
+    await log_event("group.create", f"Gruppo creato: {doc['name']}", user_id=user_id, meta={"group_id": group_id})
+    doc.pop("_id", None)
+    return doc
+
+@api.get("/groups")
+async def list_groups(user_id: str = Depends(get_current_user_id)):
+    cursor = db.groups.find(
+        {"$or": [{"owner_id": user_id}, {"members": user_id}]},
+        {"_id": 0}
+    ).sort("created_at", -1)
+    items = await cursor.to_list(1000)
+    return {"items": items}
+
+@api.post("/groups/{group_id}/members")
+async def add_group_member(group_id: str, payload: AddGroupMemberIn, user_id: str = Depends(get_current_user_id)):
+    grp = await db.groups.find_one({"id": group_id, "owner_id": user_id}, {"_id": 0})
+    if not grp:
+        raise HTTPException(status_code=403, detail="Solo il proprietario può aggiungere membri")
+    await db.groups.update_one({"id": group_id}, {"$addToSet": {"members": payload.member_id}})
+    await log_event("group.member_added", f"Membro aggiunto al gruppo", user_id=user_id, meta={"group_id": group_id, "member_id": payload.member_id})
+    return {"ok": True}
+
+# ----------------- PDFs -----------------
 @api.get("/pdfs")
 async def list_pdfs(user_id: str = Depends(get_current_user_id)):
     cursor = db.pdfs.find({}, {"_id": 0}).sort("created_at", -1)
@@ -277,7 +322,17 @@ async def list_pdfs(user_id: str = Depends(get_current_user_id)):
     return {"items": [_serialize_pdf(i) for i in items]}
 
 @api.post("/pdfs/upload")
-async def upload_pdf(background_tasks: BackgroundTasks, files: List[UploadFile] = File(...), user_id: str = Depends(get_current_user_id)):
+async def upload_pdf(
+    files: List[UploadFile] = File(...),
+    group_id: str = Query(...),
+    background_tasks: BackgroundTasks = None,
+    user_id: str = Depends(get_current_user_id)
+):
+    # Verify user is member of group
+    grp = await db.groups.find_one({"id": group_id, "members": user_id}, {"_id": 0, "id": 1})
+    if not grp:
+        raise HTTPException(status_code=403, detail="Non sei membro di questo gruppo")
+    
     if not files:
         raise HTTPException(status_code=400, detail="Nessun file inviato")
 
@@ -300,13 +355,20 @@ async def upload_pdf(background_tasks: BackgroundTasks, files: List[UploadFile] 
             "file_path": str(fpath),
             "size": len(pdf_bytes),
             "status": "pending",
+            "group_id": group_id,
             "owner_id": user_id,
             "compressed": was_compressed,
             "created_at": iso_now(),
         })
 
         job_id = str(uuid.uuid4())
-        await db.upload_jobs.insert_one({"id": job_id, "pdf_id": pdf_id, "status": "queued", "created_at": iso_now()})
+        await db.upload_jobs.insert_one({
+            "id": job_id,
+            "pdf_id": pdf_id,
+            "group_id": group_id,
+            "status": "queued",
+            "created_at": iso_now()
+        })
         background_tasks.add_task(process_pdf_job, job_id)
 
         results.append({"ok": True, "pdf_id": pdf_id, "name": filename, "compressed": was_compressed})
@@ -317,16 +379,27 @@ async def upload_pdf(background_tasks: BackgroundTasks, files: List[UploadFile] 
 async def get_pdf_status(pdf_id: str, user_id: str = Depends(get_current_user_id)):
     p = await db.pdfs.find_one({"id": pdf_id}, {"status": 1, "pages": 1})
     if not p: raise HTTPException(status_code=404, detail="Non trovato")
+    # Check access
+    can_access = await _user_can_access_pdf(user_id, pdf_id)
+    if not can_access: raise HTTPException(status_code=403, detail="Accesso negato")
     return p
 
 @api.get("/pdfs/{pdf_id}")
 async def get_pdf(pdf_id: str, user_id: str = Depends(get_current_user_id)):
     p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
     if not p: raise HTTPException(status_code=404, detail="PDF non trovato")
+    # Check access
+    can_access = await _user_can_access_pdf(user_id, pdf_id)
+    if not can_access: raise HTTPException(status_code=403, detail="Accesso negato")
     return _serialize_pdf(p)
 
 @api.patch("/pdfs/{pdf_id}")
 async def patch_pdf(pdf_id: str, payload: PdfPatchIn, user_id: str = Depends(get_current_user_id)):
+    p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
+    if not p: raise HTTPException(status_code=404, detail="PDF non trovato")
+    # Check access
+    can_access = await _user_can_access_pdf(user_id, pdf_id)
+    if not can_access: raise HTTPException(status_code=403, detail="Accesso negato")
     update = payload.model_dump(exclude_none=True)
     if update: await db.pdfs.update_one({"id": pdf_id}, {"$set": update})
     p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
@@ -347,6 +420,10 @@ async def get_pdf_file(pdf_id: str, token: Optional[str] = Query(None), user_id:
     p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
     if not p: raise HTTPException(status_code=404, detail="PDF non trovato")
     if p.get("is_protected") and not user_id: raise HTTPException(status_code=401, detail="Protetto")
+    # Check access
+    if user_id:
+        can_access = await _user_can_access_pdf(user_id, pdf_id)
+        if not can_access: raise HTTPException(status_code=403, detail="Accesso negato")
     fpath = Path(p["file_path"])
     if fpath.exists(): return FileResponse(fpath, media_type="application/pdf", filename=p["filename"])
     raise HTTPException(status_code=404, detail="File non trovato")
@@ -408,6 +485,7 @@ async def delete_library(lib_id: str, user_id: str = Depends(require_admin)):
 async def view_shared(token: str, user_id: Optional[str] = Depends(get_optional_user_id)):
     # 1. Try as library share token
     lib = await db.shared_libraries.find_one({"share_token": token}, {"_id": 0})
+<<<<<<< HEAD
     if lib:
         pdf_ids = lib.get("pdf_ids", [])
         pdfs = await db.pdfs.find({"id": {"$in": pdf_ids}}, {"_id": 0}).to_list(1000)
@@ -418,6 +496,116 @@ async def view_shared(token: str, user_id: Optional[str] = Depends(get_optional_
             
         lib["pdfs"] = [_serialize_pdf(p) for p in pdfs]
         return lib
+=======
+    if not lib:
+        raise HTTPException(status_code=404, detail="Link non valido o rimosso")
+    if lib.get("is_protected") and not user_id:
+        raise HTTPException(status_code=401, detail="Login richiesto per accedere alla libreria condivisa")
+    # add as member if not owner and not yet member
+    if lib["owner_id"] != user_id and user_id not in lib.get("members", []):
+        await db.shared_libraries.update_one({"id": lib["id"]}, {"$addToSet": {"members": user_id}})
+        await log_event("share.access", f"Accesso libreria condivisa: {lib['name']}", user_id=user_id)
+        lib["members"].append(user_id)
+    pdfs = await db.pdfs.find({"id": {"$in": lib.get("pdf_ids", [])}}, {"_id": 0}).to_list(10000)
+    lib["pdfs"] = [_serialize_pdf(p) for p in pdfs]
+    lib["is_owner"] = lib["owner_id"] == user_id
+    return lib
+
+
+@api.post("/pdfs/{pdf_id}/import")
+async def import_shared_pdf(pdf_id: str, user_id: str = Depends(get_current_user_id)):
+    """Import a shared PDF into user's personal library (creates a copy)."""
+    p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="PDF non trovato")
+    if p["owner_id"] == user_id:
+        return {"ok": True, "pdf_id": pdf_id, "already_owned": True}
+    accessible = await _user_can_access_pdf(user_id, pdf_id)
+    if not accessible:
+        raise HTTPException(status_code=403, detail="Accesso negato")
+    if p.get("content_hash"):
+        existing = await db.pdfs.find_one({"owner_id": user_id, "content_hash": p["content_hash"]}, {"_id": 0, "id": 1})
+        if existing:
+            return {"ok": True, "pdf_id": existing["id"], "already_owned": True}
+    src = UPLOAD_DIR / p["owner_id"] / f"{pdf_id}.pdf"
+    data = None
+    if src.exists():
+        data = src.read_bytes()
+    elif p.get("drive_file_id"):
+        refresh = None
+        if p.get("drive_owner") == "master":
+            master = await get_master_drive()
+            refresh = master.get("refresh_token") if master else None
+        else:
+            owner = await db.users.find_one({"user_id": p["owner_id"]}, {"_id": 0})
+            refresh = (owner or {}).get("google_refresh_token")
+        if refresh:
+            try:
+                data = await asyncio.to_thread(gi.download_from_drive, refresh, p["drive_file_id"])
+            except Exception as e:
+                await log_event("pdf.error", f"Import da Drive fallito: {e}", user_id=user_id, level="error", meta={"pdf_id": pdf_id, "drive_file_id": p.get("drive_file_id"), "stage": "import_drive_download"})
+    if data is None:
+        raise HTTPException(status_code=404, detail="File mancante")
+    new_id = str(uuid.uuid4())
+    user_dir = UPLOAD_DIR / user_id
+    user_dir.mkdir(parents=True, exist_ok=True)
+    dst = user_dir / f"{new_id}.pdf"
+    dst.write_bytes(data)
+    file_path_str = str(dst.resolve())
+    new_doc = {
+        **p,
+        "id": new_id,
+        "owner_id": user_id,
+        "drive_file_id": None,
+        "drive_owner": None,
+        "storage_type": "local",
+        "file_path": file_path_str,
+        "synced_at": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    new_doc.pop("_id", None)
+    await db.pdfs.insert_one(new_doc)
+    pages = await db.pdf_pages.find({"pdf_id": pdf_id}, {"_id": 0}).to_list(10000)
+    if pages:
+        new_pages = [{**pg, "pdf_id": new_id, "owner_id": user_id} for pg in pages]
+        await db.pdf_pages.insert_many(new_pages)
+    await log_event("pdf.save", f"PDF condiviso importato su disco: {file_path_str}", user_id=user_id, meta={"pdf_id": new_id, "source_pdf_id": pdf_id, "path": file_path_str, "filename": p.get("filename")})
+    await log_event("pdf.storage", f"Storage finale: LOCAL - path={file_path_str}", user_id=user_id, meta={"pdf_id": new_id, "storage_type": "local", "file_path": file_path_str})
+    await log_event("pdf.import", f"Importato PDF condiviso: {p.get('title')}", user_id=user_id, meta={"pdf_id": new_id, "source_pdf_id": pdf_id})
+    return {"ok": True, "pdf_id": new_id}
+
+
+async def _user_can_access_pdf(user_id: str, pdf_id: str) -> bool:
+    """
+    HARD GATE: user must be in PDF's group OR be the owner.
+    Group membership is the primary access boundary (group-first model).
+    Shared libraries are secondary context (soft filter, not a gate).
+    
+    Returns True if user has access, False otherwise.
+    """
+    p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0, "owner_id": 1, "group_id": 1})
+    if not p:
+        return False
+    
+    # Owner can always access their PDF
+    if p.get("owner_id") == user_id:
+        return True
+    
+    # HARD GATE: Check if user is in the PDF's group
+    group_id = p.get("group_id")
+    if group_id:
+        grp = await db.groups.find_one(
+            {"id": group_id, "members": user_id},
+            {"_id": 0, "id": 1}
+        )
+        if grp:
+            # User is in the group → has access
+            return True
+    
+    # User not in group and not owner → no access
+    # (shared libraries do not bypass group membership)
+    return False
+>>>>>>> 1ba1857 (feat: add group system + pdf access control)
 
     # 2. Try as single PDF ID (legacy or direct share)
     p = await db.pdfs.find_one({"id": token}, {"_id": 0})
