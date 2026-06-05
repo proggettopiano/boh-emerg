@@ -34,7 +34,8 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 UPLOAD_DIR = ROOT_DIR / "uploads"
-UPLOAD_DIR.mkdir(exist_ok=True)
+UPLOAD_DIR.mkdir(exist_ok=True, parents=True)
+MAX_UPLOAD_SIZE_BYTES = int(os.environ.get("MAX_UPLOAD_SIZE_BYTES", 50 * 1024 * 1024))
 
 mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
@@ -267,25 +268,41 @@ async def list_pdfs(user_id: str = Depends(get_current_user_id)):
     return {"items": [_serialize_pdf(i) for i in items]}
 
 @api.post("/pdfs/upload")
-async def upload_pdf(background_tasks: BackgroundTasks, file: UploadFile = File(...), user_id: str = Depends(get_current_user_id)):
-    content = await file.read()
-    if len(content) > 50 * 1024 * 1024: raise HTTPException(status_code=413, detail="File troppo grande")
-    
-    pdf_id = f"pdf_{uuid.uuid4().hex[:12]}"
-    filename = re.sub(r"[^\w\-\.]", "_", file.filename)
-    fpath = UPLOAD_DIR / f"{pdf_id}_{filename}"
-    fpath.write_bytes(content)
-    
-    await db.pdfs.insert_one({
-        "id": pdf_id, "title": filename, "filename": filename, "file_path": str(fpath),
-        "size": len(content), "status": "pending", "owner_id": user_id, "created_at": iso_now()
-    })
-    
-    job_id = str(uuid.uuid4())
-    await db.upload_jobs.insert_one({"id": job_id, "pdf_id": pdf_id, "status": "queued", "created_at": iso_now()})
-    background_tasks.add_task(process_pdf_job, job_id)
-    
-    return {"results": [{"ok": True, "pdf_id": pdf_id}]}
+async def upload_pdf(background_tasks: BackgroundTasks, files: List[UploadFile] = File(...), user_id: str = Depends(get_current_user_id)):
+    if not files:
+        raise HTTPException(status_code=400, detail="Nessun file inviato")
+
+    results = []
+    for file in files:
+        content = await file.read()
+        if len(content) > MAX_UPLOAD_SIZE_BYTES:
+            raise HTTPException(status_code=413, detail=f"File troppo grande: massimo {MAX_UPLOAD_SIZE_BYTES // (1024 * 1024)} MB")
+
+        pdf_bytes, was_compressed = compress_pdf(content)
+        pdf_id = f"pdf_{uuid.uuid4().hex[:12]}"
+        filename = re.sub(r"[^\w\-\.]", "_", file.filename)
+        fpath = UPLOAD_DIR / f"{pdf_id}_{filename}"
+        fpath.write_bytes(pdf_bytes)
+
+        await db.pdfs.insert_one({
+            "id": pdf_id,
+            "title": filename,
+            "filename": filename,
+            "file_path": str(fpath),
+            "size": len(pdf_bytes),
+            "status": "pending",
+            "owner_id": user_id,
+            "compressed": was_compressed,
+            "created_at": iso_now(),
+        })
+
+        job_id = str(uuid.uuid4())
+        await db.upload_jobs.insert_one({"id": job_id, "pdf_id": pdf_id, "status": "queued", "created_at": iso_now()})
+        background_tasks.add_task(process_pdf_job, job_id)
+
+        results.append({"ok": True, "pdf_id": pdf_id, "name": filename, "compressed": was_compressed})
+
+    return {"results": results}
 
 @api.get("/pdfs/{pdf_id}/status")
 async def get_pdf_status(pdf_id: str, user_id: str = Depends(get_current_user_id)):

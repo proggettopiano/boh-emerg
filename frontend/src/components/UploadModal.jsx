@@ -7,6 +7,8 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const MAX_UPLOAD_SIZE_MB = 50;
+
 function makeFileId(file) {
   const randomPart = typeof crypto !== "undefined" && crypto.randomUUID
     ? crypto.randomUUID()
@@ -44,14 +46,14 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
       if (signal.aborted) return;
 
       try {
-        const statusRes = await api.get(`/pdfs/${pdfId}/status`, { signal });
-        const { status, error, page_count } = statusRes.data;
+          const statusRes = await api.get(`/pdfs/${pdfId}/status`, { signal });
+        const { status, error, pages } = statusRes.data;
         const processingStatus = status === "ready" ? "ready" : status === "error" ? "error" : "pending";
 
         setResults((prev) => updateUploadResult(prev, clientKey, {
           status: processingStatus,
           error,
-          pages: page_count,
+          pages,
         }));
 
         if (status === "ready" || status === "error") {
@@ -91,11 +93,15 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
   const handleFiles = (list) => {
     const picked = Array.from(list || []);
     const valid = picked.filter((f) => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"));
-    const invalid = picked.length - valid.length;
-    if (invalid > 0) toast.error(`${invalid} file ignorati: carica solo PDF validi.`);
+    const oversized = valid.filter((file) => file.size > MAX_UPLOAD_SIZE_MB * 1024 * 1024);
+    const invalid = picked.length - valid.length + oversized.length;
+    if (invalid > 0) {
+      toast.error(`${invalid} file ignorati: carica solo PDF validi fino a ${MAX_UPLOAD_SIZE_MB} MB.`);
+    }
     setFiles((prev) => {
       const seen = new Set(prev.map(({ file }) => `${file.name}-${file.size}-${file.lastModified}`));
       const next = valid
+        .filter((file) => file.size <= MAX_UPLOAD_SIZE_MB * 1024 * 1024)
         .filter((file) => !seen.has(`${file.name}-${file.size}-${file.lastModified}`))
         .map((file) => ({ id: makeFileId(file), file }));
       return [...prev, ...next];
@@ -118,9 +124,6 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
 
       const completed = await api.post("/pdfs/upload", formData, {
         signal: ctrl.signal,
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
         onUploadProgress: (evt) => {
           if (!mountedRef.current || !evt.total) return;
           setProgress(Math.min(100, Math.round((evt.loaded / evt.total) * 100)));
@@ -186,7 +189,7 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
             >
               <UploadCloud size={36} strokeWidth={1.5} className="mx-auto mb-3 text-muted2" />
               <p className="font-medium mb-1">Trascina qui i tuoi PDF, o clicca per selezionare</p>
-              <p className="text-sm text-muted2">Multipli, anche pesanti. Backup automatico su Drive di gruppo.</p>
+              <p className="text-sm text-muted2">Multipli, fino a {MAX_UPLOAD_SIZE_MB} MB per file. I PDF vengono inviati e indicizzati in background.</p>
               <input
                 type="file"
                 accept="application/pdf"
