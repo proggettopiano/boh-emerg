@@ -605,6 +605,29 @@ async def search(q: str = Query(..., min_length=1), user_id: str = Depends(get_c
         if p: results.append({"pdf_id": p["id"], "title": p["title"], "page": pg["page"], "snippet": make_snippet(pg["text"], q), "is_protected": p.get("is_protected", False)})
     return {"results": results}
 
+# ----------------- Admin Logs -----------------
+@api.get("/admin/logs")
+async def get_admin_logs(event_type: str = Query("all"), q: str = Query(""), sort: str = Query("date_desc"), limit: int = Query(500), user_id: str = Depends(get_current_user_id)):
+    u = await db.users.find_one({"user_id": user_id})
+    is_admin = u.get("is_admin") or u.get("email", "").lower() == ADMIN_EMAIL
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="Accesso non autorizzato")
+    
+    query = {}
+    if event_type != "all":
+        query["event_type"] = event_type
+    if q:
+        query["description"] = {"$regex": q, "$options": "i"}
+    
+    sort_dir = -1 if "desc" in sort.lower() else 1
+    cursor = db.app_logs.find(query, {"_id": 0}).sort("created_at", sort_dir).limit(limit)
+    items = await cursor.to_list(limit)
+    
+    all_types = await db.app_logs.distinct("event_type")
+    
+    return {"items": items, "types": sorted(all_types or [])}
+
+
 # ----------------- Admin -----------------
 @api.get("/admin/stats")
 async def admin_stats(_: str = Depends(require_admin)):
