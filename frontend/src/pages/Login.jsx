@@ -6,7 +6,7 @@ import { useAuth } from "@/context/AuthContext";
 import AuthShell from "@/components/AuthShell";
 
 export default function Login() {
-  const [mode, setMode] = useState("login"); // "login" | "request"
+  const [mode, setMode] = useState("request"); // default to request access
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -55,12 +55,12 @@ export default function Login() {
   if (success) {
     return (
       <AuthShell title="Richiesta Inviata" subtitle="Grazie per l'interesse.">
-        <div className="text-center space-y-4 py-6">
-          <p className="text-ink">
+        <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-6 text-center space-y-4 py-6">
+          <p className="text-ink text-base font-semibold">
             La tua richiesta di accesso per <strong>{email}</strong> è stata inoltrata.
           </p>
           <p className="text-muted3 text-sm">
-            Potrai accedere non appena l'amministratore avrà approvato il tuo indirizzo IP.
+            Potrai accedere non appena l'amministratore avrà approvato il tuo indirizzo email.
           </p>
           <button onClick={() => { setSuccess(false); setMode("login"); }} className="btn-secondary w-full">
             Torna al login
@@ -69,13 +69,10 @@ export default function Login() {
       </AuthShell>
     );
   }
-
-  const isGroupEmail = email.toLowerCase() === "chiesapomigliano@scorebil.com";
-
   return (
     <AuthShell 
-      title={mode === "login" ? "Accedi" : "Richiedi Accesso"} 
-      subtitle={mode === "login" ? "Entra nella libreria della Chiesa Pomigliano" : "Unisciti al gruppo per visualizzare tutti gli spartiti"}
+      title={mode === "login" ? "Accedi" : "Richiedi Accesso"}
+      subtitle={mode === "login" ? "Accedi al tuo account" : "Richiedi l'accesso per visualizzare la libreria"}
     >
       {mode === "login" ? (
         <form onSubmit={handleLogin} className="space-y-4">
@@ -87,29 +84,31 @@ export default function Login() {
               className="input-base" placeholder="tu@esempio.com" 
             />
           </div>
-          
-          {/* Mostra la password solo se NON è l'email di gruppo (quindi è admin o altro account con password) */}
-          {!isGroupEmail && email.length > 0 && (
-            <div>
-              <label className="overline block mb-2">Password</label>
-              <input 
-                type="password" required value={password} 
-                onChange={(e) => setPassword(e.target.value)} 
-                className="input-base" placeholder="********" 
-              />
-            </div>
-          )}
+          <div>
+            <label className="overline block mb-2">Password</label>
+            <input 
+              type="password" required value={password} 
+              onChange={(e) => setPassword(e.target.value)} 
+              className="input-base" placeholder="********" 
+            />
+          </div>
 
           <button type="submit" disabled={busy} className="btn-primary w-full">
-            {busy ? "Accesso in corso..." : (isGroupEmail ? "Entra come Gruppo" : "Accedi")}
+            {busy ? "Accesso in corso..." : "Accedi"}
           </button>
           
-          <div className="pt-4 text-center">
+          <div className="pt-4 text-center space-y-2">
             <button 
               type="button" onClick={() => setMode("request")}
               className="text-sm text-ink hover:underline font-medium"
             >
               Non hai l'accesso? Richiedilo qui
+            </button>
+            <button
+              type="button" onClick={() => setMode("login")}
+              className="text-sm text-ink hover:underline font-medium"
+            >
+              Sei l'admin? Accedi qui
             </button>
           </div>
         </form>
@@ -134,12 +133,18 @@ export default function Login() {
           <button type="submit" disabled={busy} className="btn-primary w-full">
             {busy ? "Invio richiesta..." : "Invia Richiesta"}
           </button>
-          <div className="pt-4 text-center">
+          <div className="pt-4 text-center space-y-2">
             <button 
               type="button" onClick={() => setMode("login")}
               className="text-sm text-ink hover:underline font-medium"
             >
               Torna al login
+            </button>
+            <button
+              type="button" onClick={() => setMode("login")}
+              className="text-sm text-ink hover:underline font-medium"
+            >
+              Sei l'admin? Accedi qui
             </button>
           </div>
         </form>

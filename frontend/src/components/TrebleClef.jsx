@@ -4,7 +4,7 @@ import React from "react";
  * Treble Clef — minimal, monochrome SVG.
  * Pure black, hairline strokes. Replaces the piano-bars logo.
  */
-export default function TrebleClef({ size = 28, color = "#0A0A0A", className = "", strokeWidth = 1.5 }) {
+export default function TrebleClef({ size = 28, color = "currentColor", className = "", strokeWidth = 1.5 }) {
   return (
     <svg
       width={size}

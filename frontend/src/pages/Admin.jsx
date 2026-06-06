@@ -82,8 +82,8 @@ export default function Admin() {
         <div>
           <p className="overline mb-2 flex items-center gap-2"><Shield size={12} /> AMMINISTRATORE</p>
           <h1 className="font-display font-black text-4xl md:text-5xl tracking-tighter">Pannello Amministratore</h1>
-          <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-md p-2 mt-2">
-            Account Amministratore · Gestione completa del sistema attiva.
+          <p className="text-sm font-semibold text-white bg-emerald-700 rounded-md p-2 mt-2">
+            Accesso amministrativo: operazioni sensibili abilitate.
           </p>
         </div>
         <div className="flex gap-2">
@@ -162,7 +162,7 @@ export default function Admin() {
                     <td className="py-3 px-4 text-xs text-mono">{r.ip || "—"}</td>
                     <td className="py-3 px-4">
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        r.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : 
+                        r.status === 'approved' ? 'bg-amber-600 text-white' : 
                         r.status === 'rejected' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
                       }`}>
                         {r.status.toUpperCase()}
