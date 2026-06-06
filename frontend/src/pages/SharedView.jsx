@@ -40,7 +40,7 @@ export default function SharedView() {
     <div className="max-w-6xl mx-auto px-6 md:px-12 py-12">
       <p className="overline mb-2">LIBRERIA CONDIVISA</p>
       <h1 className="font-display font-black text-4xl tracking-tighter mb-1">{lib.name}</h1>
-      {lib.description && <p className="text-[#525252] mb-6 max-w-2xl">{lib.description}</p>}
+      {lib.description && <p className="text-muted2 mb-6 max-w-2xl">{lib.description}</p>}
       
       <div className="bg-amber-50 border border-amber-200 rounded-md p-4 mb-8 text-sm text-amber-800">
         <div className="flex gap-2">

@@ -65,7 +65,7 @@ export default function SharedLibraries() {
         <div>
           <p className="overline mb-2">COLLABORAZIONE</p>
           <h1 className="font-display font-black text-4xl md:text-5xl tracking-tighter">Librerie condivise</h1>
-          <p className="text-[#525252] mt-2 max-w-xl">Raccogli spartiti e condividi un link con altri musicisti.</p>
+          <p className="text-muted2 mt-2 max-w-xl">Raccogli spartiti e condividi un link con altri musicisti.</p>
         </div>
         <button onClick={() => setShow(true)} className="btn-primary" data-testid="new-library-btn"><Plus size={16} /> Nuova libreria</button>
       </div>
@@ -148,8 +148,8 @@ export default function SharedLibraries() {
       )}
 
       {show && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setShow(false)} data-testid="new-library-modal">
-          <form onClick={(e) => e.stopPropagation()} onSubmit={create} className="bg-white border border-rule rounded-md w-full max-w-md p-6 space-y-4">
+        <div className="fixed inset-0 z-50 bg-overlay flex items-center justify-center p-4" onClick={() => setShow(false)} data-testid="new-library-modal">
+          <form onClick={(e) => e.stopPropagation()} onSubmit={create} className="bg-card border border-rule rounded-md w-full max-w-md p-6 space-y-4">
             <h2 className="font-display text-2xl font-bold tracking-tight">Nuova libreria</h2>
             <div>
               <label className="overline block mb-2">Nome</label>

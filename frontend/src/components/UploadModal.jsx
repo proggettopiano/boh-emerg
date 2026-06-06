@@ -46,9 +46,6 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
   const [busy, setBusy] = useState(false);
   const [drag, setDrag] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [groups, setGroups] = useState([]);
-  const [selectedGroup, setSelectedGroup] = useState("");
-  const [loadingGroups, setLoadingGroups] = useState(false);
   const abortRef = useRef(null);
   const mountedRef = useRef(false);
 
@@ -97,22 +94,6 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
     };
   }, []);
 
-  useEffect(() => {
-    if (open) {
-      setLoadingGroups(true);
-      api.get("/groups").then((r) => {
-        if (mountedRef.current) {
-          const items = r.data?.items || [];
-          setGroups(items);
-          if (items.length > 0) setSelectedGroup(items[0].id);
-        }
-      }).catch((e) => {
-        if (mountedRef.current) toast.error("Errore caricamento gruppi");
-      }).finally(() => {
-        if (mountedRef.current) setLoadingGroups(false);
-      });
-    }
-  }, [open]);
 
   useEffect(() => {
     if (!open) {
@@ -143,22 +124,19 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
 
   const upload = async () => {
     if (!files.length) return;
-    if (!selectedGroup) {
-      toast.error("Seleziona un gruppo prima di caricare");
-      return;
-    }
     setBusy(true);
     setProgress(0);
     abortRef.current?.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
+
     try {
       const formData = new FormData();
       files.forEach(({ file }) => {
         formData.append("files", file);
       });
 
-      const completed = await api.post(`/pdfs/upload?group_id=${encodeURIComponent(selectedGroup)}`, formData, {
+      const completed = await api.post(`/pdfs/upload`, formData, {
         signal: ctrl.signal,
         onUploadProgress: (evt) => {
           if (!mountedRef.current || !evt.total) return;
@@ -208,27 +186,14 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={close} data-testid="upload-modal">
-      <div className="bg-white border border-rule rounded-md w-full max-w-2xl p-6" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 bg-overlay flex items-center justify-center p-4" onClick={close} data-testid="upload-modal">
+      <div className="bg-card border border-rule rounded-md w-full max-w-2xl p-6" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-6">
           <h2 className="font-display text-2xl font-bold tracking-tight">Carica PDF</h2>
           <button onClick={close} className="btn-ghost" data-testid="upload-close-btn"><X size={18} /></button>
         </div>
         {!results && (
           <>
-            <div className="mb-6 border border-rule rounded-sm p-4 bg-canvas2">
-              <label className="block text-sm font-medium mb-2">Seleziona gruppo</label>
-              <select value={selectedGroup} onChange={(e) => setSelectedGroup(e.target.value)} disabled={loadingGroups || groups.length === 0} className="w-full border border-rule rounded-sm px-3 py-2 bg-white">
-                {loadingGroups && <option value="">Caricamento gruppi...</option>}
-                {!loadingGroups && groups.length === 0 && <option value="">Nessun gruppo disponibile</option>}
-                {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-              </select>
-              {!loadingGroups && groups.length === 0 && (
-                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-sm p-2 mt-2">
-                  Nessun gruppo disponibile. Crea un gruppo prima di caricare PDF.
-                </p>
-              )}
-            </div>
             <label
               className={`block border-2 border-dashed rounded-md p-12 text-center cursor-pointer transition-colors ${drag ? "border-ink bg-canvas3" : "border-muted3 bg-canvas2 hover:bg-canvas3"}`}
               onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
@@ -260,7 +225,7 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
             )}
             <div className="mt-6 flex justify-end gap-3">
               <button onClick={close} className="btn-ghost border border-rule rounded-sm px-4 py-2" data-testid="upload-cancel-btn">Annulla</button>
-              <button onClick={upload} disabled={busy || !files.length} className="btn-primary disabled:opacity-40" data-testid="upload-start-btn">{busy ? "Caricamento..." : `Carica ${files.length || ""}`}</button>
+              <button onClick={upload} disabled={busy || !files.length} className="btn-primary disabled:opacity-40" data-testid="upload-start-btn">{busy ? "Caricamento..." : "Carica"}</button>
             </div>
             {busy && (
               <div className="mt-4" data-testid="upload-progress">

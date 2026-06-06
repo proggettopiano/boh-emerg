@@ -119,7 +119,6 @@ async def ensure_indexes():
     await safe_create_index(db.users, "user_id", unique=True)
     await safe_create_index(db.users, "email", unique=True)
     await safe_create_index(db.pdfs, "id", unique=True)
-    await safe_create_index(db.pdfs, "group_id")
     await safe_create_index(db.pdf_pages, [("pdf_id", 1), ("page", 1)], unique=True)
     await safe_create_index(db.pdf_pages, "text")
     await safe_create_index(db.upload_jobs, "id", unique=True)
@@ -128,9 +127,6 @@ async def ensure_indexes():
     await safe_create_index(db.access_requests, "ip")
     await safe_create_index(db.shared_libraries, "id", unique=True)
     await safe_create_index(db.shared_libraries, "share_token", unique=True)
-
-    await safe_create_index(db.groups, "id", unique=True)
-    await safe_create_index(db.groups, [("members", 1)])
 
 async def seed_admin():
     admin = await db.users.find_one({"email": ADMIN_EMAIL})
@@ -174,12 +170,6 @@ class CreateLibraryIn(BaseModel):
 class AddPdfsIn(BaseModel):
     pdf_ids: List[str]
 
-class CreateGroupIn(BaseModel):
-    name: str
-
-class AddGroupMemberIn(BaseModel):
-    member_id: str
-
 # ----------------- Auth -----------------
 def user_public(u: dict) -> dict:
     return {
@@ -215,21 +205,29 @@ async def login(payload: LoginIn, request: Request):
         await log_event("auth.login_admin", f"Admin login: {email}", user_id=u["user_id"], meta={"ip": ip})
         return {"token": token, "user": user_public(u), "role": "admin"}
 
-    if email == "chiesapomigliano@scorebil.com":
-        req = await db.access_requests.find_one({"ip": ip, "status": "approved"})
-        if req:
-            admin = await db.users.find_one({"email": ADMIN_EMAIL}, {"user_id": 1})
-            token = create_jwt(admin["user_id"])
-            await log_event("auth.login_group", f"Gruppo login: {email}", user_id=admin["user_id"], meta={"ip": ip, "email": email})
-            return {"token": token, "user": {"email": email, "name": "Gruppo Chiesa Pomigliano", "is_group": True}}
-        
-        rej = await db.access_requests.find_one({"ip": ip, "status": "rejected"})
-        if rej:
-            await log_event("auth.login_rejected", f"Accesso rifiutato per {email}", level="warn", meta={"ip": ip, "email": email})
-            raise HTTPException(status_code=403, detail="Accesso rifiutato.")
-        return {"action": "request_access", "email": email}
+    req = await db.access_requests.find_one({"email": email, "status": "approved"})
+    if req:
+        user = await db.users.find_one({"email": email})
+        if not user:
+            user_id = f"user_{uuid.uuid4().hex[:12]}"
+            user = {
+                "user_id": user_id,
+                "email": email,
+                "name": req.get("name", ""),
+                "is_admin": False,
+                "created_at": iso_now(),
+            }
+            await db.users.insert_one(user)
+        token = create_jwt(user["user_id"])
+        await log_event("auth.login", f"Accesso utente approvato: {email}", user_id=user["user_id"], meta={"ip": ip, "email": email})
+        return {"token": token, "user": user_public(user), "role": "user"}
 
-    raise HTTPException(status_code=404, detail="Email non riconosciuta")
+    rej = await db.access_requests.find_one({"email": email, "status": "rejected"})
+    if rej:
+        await log_event("auth.login_rejected", f"Accesso rifiutato per {email}", level="warn", meta={"ip": ip, "email": email})
+        raise HTTPException(status_code=403, detail="Accesso rifiutato.")
+
+    return {"action": "request_access", "email": email}
 
 @api.post("/auth/request-access")
 async def request_access(payload: AccessRequestIn, request: Request):
@@ -285,40 +283,6 @@ def _serialize_pdf(p: dict) -> dict:
         "created_at": p.get("created_at"),
     }
 
-# ----------------- Groups -----------------
-@api.post("/groups")
-async def create_group(payload: CreateGroupIn, user_id: str = Depends(get_current_user_id)):
-    group_id = str(uuid.uuid4())
-    doc = {
-        "id": group_id,
-        "name": payload.name.strip() or "Gruppo",
-        "owner_id": user_id,
-        "members": [user_id],
-        "created_at": iso_now(),
-    }
-    await db.groups.insert_one(doc)
-    await log_event("group.create", f"Gruppo creato: {doc['name']}", user_id=user_id, meta={"group_id": group_id})
-    doc.pop("_id", None)
-    return doc
-
-@api.get("/groups")
-async def list_groups(user_id: str = Depends(get_current_user_id)):
-    cursor = db.groups.find(
-        {"$or": [{"owner_id": user_id}, {"members": user_id}]},
-        {"_id": 0}
-    ).sort("created_at", -1)
-    items = await cursor.to_list(1000)
-    return {"items": items}
-
-@api.post("/groups/{group_id}/members")
-async def add_group_member(group_id: str, payload: AddGroupMemberIn, user_id: str = Depends(get_current_user_id)):
-    grp = await db.groups.find_one({"id": group_id, "owner_id": user_id}, {"_id": 0})
-    if not grp:
-        raise HTTPException(status_code=403, detail="Solo il proprietario può aggiungere membri")
-    await db.groups.update_one({"id": group_id}, {"$addToSet": {"members": payload.member_id}})
-    await log_event("group.member_added", f"Membro aggiunto al gruppo", user_id=user_id, meta={"group_id": group_id, "member_id": payload.member_id})
-    return {"ok": True}
-
 # ----------------- PDFs -----------------
 @api.get("/pdfs")
 async def list_pdfs(user_id: str = Depends(get_current_user_id)):
@@ -329,16 +293,9 @@ async def list_pdfs(user_id: str = Depends(get_current_user_id)):
 @api.post("/pdfs/upload")
 async def upload_pdf(
     files: List[UploadFile] = File(...),
-    group_id: str = Query(...),
     background_tasks: BackgroundTasks = None,
     user_id: str = Depends(get_current_user_id)
 ):
-    # Verify user is member of group
-    grp = await db.groups.find_one({"id": group_id, "members": user_id}, {"_id": 0, "id": 1})
-    if not grp:
-        await log_event("pdf.upload_denied", f"Tentativo upload in gruppo non autorizzato", user_id=user_id, level="warn", meta={"group_id": group_id})
-        raise HTTPException(status_code=403, detail="Non sei membro di questo gruppo")
-    
     if not files:
         raise HTTPException(status_code=400, detail="Nessun file inviato")
 
@@ -361,7 +318,6 @@ async def upload_pdf(
             "file_path": str(fpath),
             "size": len(pdf_bytes),
             "status": "pending",
-            "group_id": group_id,
             "owner_id": user_id,
             "compressed": was_compressed,
             "created_at": iso_now(),
@@ -371,7 +327,6 @@ async def upload_pdf(
         await db.upload_jobs.insert_one({
             "id": job_id,
             "pdf_id": pdf_id,
-            "group_id": group_id,
             "status": "queued",
             "created_at": iso_now()
         })
@@ -380,7 +335,7 @@ async def upload_pdf(
         results.append({"ok": True, "pdf_id": pdf_id, "name": filename, "compressed": was_compressed})
 
     if results:
-        await log_event("pdf.uploaded", f"Upload completato: {len(results)} file nel gruppo {group_id}", user_id=user_id, meta={"group_id": group_id, "count": len(results)})
+        await log_event("pdf.uploaded", f"Upload completato: {len(results)} file", user_id=user_id, meta={"count": len(results)})
     
     return {"results": results}
 
@@ -574,34 +529,20 @@ async def import_shared_pdf(pdf_id: str, user_id: str = Depends(get_current_user
 
 async def _user_can_access_pdf(user_id: str, pdf_id: str) -> bool:
     """
-    HARD GATE: user must be in PDF's group OR be the owner.
-    Group membership is the primary access boundary (group-first model).
-    Shared libraries are secondary context (soft filter, not a gate).
-    
-    Returns True if user has access, False otherwise.
+    Access rules:
+    - admin sees everything
+    - approved users see everything
+    - otherwise no access
     """
-    p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0, "owner_id": 1, "group_id": 1})
-    if not p:
+    u = await db.users.find_one({"user_id": user_id})
+    if not u:
         return False
-    
-    # Owner can always access their PDF
-    if p.get("owner_id") == user_id:
+
+    if u.get("is_admin", False) or u.get("email", "").lower() == ADMIN_EMAIL:
         return True
-    
-    # HARD GATE: Check if user is in the PDF's group
-    group_id = p.get("group_id")
-    if group_id:
-        grp = await db.groups.find_one(
-            {"id": group_id, "members": user_id},
-            {"_id": 0, "id": 1}
-        )
-        if grp:
-            # User is in the group → has access
-            return True
-    
-    # User not in group and not owner → no access
-    # (shared libraries do not bypass group membership)
-    return False
+
+    approved = await db.access_requests.find_one({"email": u.get("email", "").lower(), "status": "approved"})
+    return bool(approved)
 
 # ----------------- Search -----------------
 @api.get("/search")

@@ -28,8 +28,8 @@ export default function TagEditor({ pdf, onUpdate, onClose }) {
   const remaining = SUGGESTIONS.filter((s) => !tags.includes(s));
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose} data-testid="tag-editor-modal">
-      <div className="bg-white border border-rule rounded-md w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 bg-overlay flex items-center justify-center p-4" onClick={onClose} data-testid="tag-editor-modal">
+      <div className="bg-card border border-rule rounded-md w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-display text-xl font-bold tracking-tight flex items-center gap-2"><TagIcon size={18} /> Tag</h2>
           <button onClick={onClose} className="btn-ghost"><X size={16} /></button>

@@ -40,7 +40,7 @@ export default function ResendVerification() {
           {busy ? "Invio…" : "Reinvia email"}
         </button>
       </form>
-      <div className="mt-6 text-sm text-[#525252]">
+      <div className="mt-6 text-sm text-muted2">
         Hai già verificato? <Link to="/login" className="underline hover:text-ink">Accedi</Link>
       </div>
     </AuthShell>

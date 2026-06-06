@@ -126,7 +126,7 @@ export default function SharedLibraryDetail() {
           value={q} 
           onChange={(e) => setQ(e.target.value)} 
           placeholder="Cerca spartiti in questa libreria..." 
-          className="w-full pl-12 pr-4 py-4 bg-white border border-rule rounded-md focus:outline-none focus:border-ink transition-colors shadow-sm" 
+          className="w-full pl-12 pr-4 py-4 bg-card border border-rule rounded-md focus:outline-none focus:border-ink transition-colors shadow-sm"
         />
       </div>
 
@@ -188,8 +188,8 @@ function AddPdfsModal({ allPdfs, existing, onClose, onAdd }) {
   const candidates = allPdfs.filter((pdf) => !existing.includes(pdf.id));
   
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white border border-rule rounded-md w-full max-w-xl shadow-2xl" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 bg-overlay flex items-center justify-center p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-card border border-rule rounded-md w-full max-w-xl shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="p-6 border-b border-rule flex items-center justify-between">
           <h2 className="font-display text-2xl font-black tracking-tight uppercase">Aggiungi Spartiti</h2>
           <button onClick={onClose} className="text-muted3 hover:text-ink">Chiudi</button>

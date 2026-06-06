@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Shield, Cloud, Users, FileText, AlertTriangle, RefreshCw, ScrollText, Unlink, HardDriveUpload, Check, X, Moon, Sun, Monitor, CheckCircle } from "lucide-react";
+import { Shield, Cloud, Users, FileText, AlertTriangle, RefreshCw, ScrollText, Unlink, HardDriveUpload, Check, X, CheckCircle } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
@@ -26,7 +26,6 @@ export default function Admin() {
   const [users, setUsers] = useState([]);
   const [busy, setBusy] = useState(false);
   const [master, setMaster] = useState(null);
-  const [theme, setTheme] = useState(localStorage.getItem("theme") || "system");
 
   const isAdmin = user?.is_admin;
 
@@ -60,22 +59,11 @@ export default function Admin() {
 
   const connectMaster = async () => { try { await startGoogleOAuth("master"); } catch { toast.error("Errore OAuth"); } };
   const disconnectMaster = async () => {
-    if (!window.confirm("Scollegare il Master Drive? Tutti i backup del gruppo si fermeranno.")) return;
+    if (!window.confirm("Scollegare il Master Drive? Tutti i backup automatici si fermeranno.")) return;
     try { await api.post("/admin/master-drive/disconnect"); toast.success("Disconnesso"); load(); }
     catch (e) { toast.error(getErrorMessage(e)); }
   };
 
-  const changeTheme = (t) => {
-    setTheme(t);
-    localStorage.setItem("theme", t);
-    if (t === "dark") document.documentElement.classList.add("dark");
-    else if (t === "light") document.documentElement.classList.remove("dark");
-    else {
-      if (window.matchMedia("(prefers-color-scheme: dark)").matches) document.documentElement.classList.add("dark");
-      else document.documentElement.classList.remove("dark");
-    }
-  };
-  
   useEffect(() => { if (isAdmin) load(); }, [isAdmin]);
 
   if (!isAdmin) {
@@ -93,7 +81,7 @@ export default function Admin() {
       <div className="flex items-end justify-between flex-wrap gap-4 mb-10">
         <div>
           <p className="overline mb-2 flex items-center gap-2"><Shield size={12} /> AMMINISTRATORE</p>
-          <h1 className="font-display font-black text-4xl md:text-5xl tracking-tighter">Gestione Gruppo</h1>
+          <h1 className="font-display font-black text-4xl md:text-5xl tracking-tighter">Pannello Amministratore</h1>
           <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-md p-2 mt-2">
             Account Amministratore · Gestione completa del sistema attiva.
           </p>
@@ -111,8 +99,8 @@ export default function Admin() {
       <div className="space-y-12">
         {/* Stats Quick Look */}
         {stats && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Stat icon={<Users size={16} />} label="Membri Gruppo" value={stats.users_total} />
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <Stat icon={<Users size={16} />} label="Utenti registrati" value={stats.users_total} />
             <Stat icon={<FileText size={16} />} label="Spartiti Totali" value={stats.pdfs_total} />
             <Stat icon={<Cloud size={16} />} label="Backup Drive" value={master?.connected ? "ATTIVO" : "OFF"} accent={!master?.connected} />
             <Stat icon={<AlertTriangle size={16} />} label="Richieste Pendenti" value={requests.filter(r => r.status === 'pending').length} accent={requests.filter(r => r.status === 'pending').length > 0} />
@@ -122,9 +110,9 @@ export default function Admin() {
         {/* Membri e Online status */}
         <section>
           <h2 className="font-display font-bold text-xl mb-4 flex items-center gap-2">
-            <Users size={20} /> Membri del Gruppo
+            <Users size={20} /> Utenti approvati
           </h2>
-          <div className="border border-rule rounded-md bg-white divide-y divide-rule">
+          <div className="border border-rule rounded-md bg-card divide-y divide-rule">
             {users.length > 0 ? (
               users.map((u, idx) => (
                 <div key={idx} className="p-4 flex items-center justify-between">
@@ -144,7 +132,7 @@ export default function Admin() {
                 </div>
               ))
             ) : (
-              <div className="p-4 text-center text-muted3 italic text-sm">Nessun membro approvato</div>
+              <div className="p-4 text-center text-muted3 italic text-sm">Nessun utente approvato</div>
             )}
           </div>
         </section>
@@ -154,7 +142,7 @@ export default function Admin() {
           <h2 className="font-display font-bold text-xl mb-4 flex items-center gap-2">
             <AlertTriangle size={20} /> Richieste di Accesso
           </h2>
-          <div className="border border-rule rounded-md overflow-hidden bg-white">
+          <div className="border border-rule rounded-md overflow-hidden bg-card">
             <table className="w-full text-sm">
               <thead className="bg-canvas2 border-b border-rule text-left">
                 <tr>
@@ -198,24 +186,12 @@ export default function Admin() {
           </div>
         </section>
 
-        {/* Tema */}
-        <section>
-          <h2 className="font-display font-bold text-xl mb-4 flex items-center gap-2">
-            <Monitor size={20} /> Tema
-          </h2>
-          <div className="grid grid-cols-3 gap-3">
-            <ThemeBtn active={theme === "light"} onClick={() => changeTheme("light")} icon={<Sun size={16} />} label="Chiaro" />
-            <ThemeBtn active={theme === "dark"} onClick={() => changeTheme("dark")} icon={<Moon size={16} />} label="Scuro" />
-            <ThemeBtn active={theme === "system"} onClick={() => changeTheme("system")} icon={<Monitor size={16} />} label="Sistema" />
-          </div>
-        </section>
-
         {/* Master Drive panel */}
         <section>
           <h2 className="font-display font-bold text-xl mb-4 flex items-center gap-2">
             <Cloud size={20} /> Google Drive Master
           </h2>
-          <div className="border border-rule rounded-md p-5 bg-white">
+          <div className="border border-rule rounded-md p-5 bg-card">
             <div className="flex items-start justify-between flex-wrap gap-4 mb-3">
               <div>
                 <p className="text-sm text-muted2 max-w-2xl">
@@ -249,25 +225,11 @@ export default function Admin() {
 
 function Stat({ icon, label, value, accent }) {
   return (
-    <div className={`border border-rule rounded-md p-4 ${accent ? "bg-amber-50 border-amber-300" : "bg-white"}`}>
+    <div className={`border border-rule rounded-md p-4 ${accent ? "bg-amber-50 border-amber-300" : "bg-card"}`}>
       <div className="flex items-center gap-2 text-muted2 text-xs uppercase tracking-wider font-mono mb-2">
         {icon} {label}
       </div>
       <div className="font-display text-3xl font-bold tracking-tighter">{value}</div>
     </div>
-  );
-}
-
-function ThemeBtn({ active, onClick, icon, label }) {
-  return (
-    <button 
-      onClick={onClick}
-      className={`flex flex-col items-center gap-2 p-4 rounded-md border transition-all ${
-        active ? "bg-ink text-white border-ink" : "bg-white border-rule hover:border-ink"
-      }`}
-    >
-      {icon}
-      <span className="text-xs font-mono uppercase">{label}</span>
-    </button>
   );
 }

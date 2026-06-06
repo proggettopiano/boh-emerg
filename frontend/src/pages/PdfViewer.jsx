@@ -327,7 +327,7 @@ export default function PdfViewer() {
           </button>
         </div>
         <p className="mt-4 text-sm text-muted2 max-w-md mx-auto">
-          Se il file è stato perso localmente, puoi forzare il recupero dal backup Google Drive di gruppo.
+          Se il file è stato perso localmente, puoi forzare il recupero dal backup Google Drive del sistema.
         </p>
       </div>
     );
@@ -400,7 +400,7 @@ export default function PdfViewer() {
                     if (el) pageRefs.current[pageNumber] = el;
                     else delete pageRefs.current[pageNumber];
                   }}
-                  className="absolute left-0 right-0 mx-auto bg-white shadow-md border border-rule overflow-visible"
+                  className="absolute left-0 right-0 mx-auto bg-card shadow-md border border-rule overflow-visible"
                   style={{
                     top: (pageNumber - 1) * slotHeight,
                     width: containerWidth,
@@ -423,8 +423,8 @@ export default function PdfViewer() {
                   <div
                     style={{
                       ...PDF_FULL_BLEED,
-                      background: "#fafafa",
-                      borderTop: "1px solid #e5e5e5",
+                      background: "var(--canvas3)",
+                      borderTop: "1px solid var(--rule)",
                       minHeight: PAGE_FOOTER_H,
                       display: "flex",
                       alignItems: "center",
@@ -440,7 +440,7 @@ export default function PdfViewer() {
                       style={{
                         ...PDF_FULL_BLEED,
                         height: PAGE_GAP,
-                        background: "#f0f0f0",
+                        background: "var(--canvas2)",
                       }}
                       aria-hidden="true"
                     />

@@ -82,7 +82,7 @@ export default function Shared() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {items.map((l) => (
-            <div key={l.id} className="border border-rule rounded-md p-5 bg-white hover:border-ink transition-colors group relative">
+            <div key={l.id} className="border border-rule rounded-md p-5 bg-card hover:border-ink transition-colors group relative">
               <div className="flex items-start justify-between mb-3">
                 <div className="p-2 bg-canvas2 rounded-sm text-ink">
                   <Users size={20} />
@@ -115,8 +115,8 @@ export default function Shared() {
       )}
 
       {showCreate && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setShowCreate(false)}>
-          <form onClick={(e) => e.stopPropagation()} onSubmit={create} className="bg-white border border-rule rounded-md w-full max-w-md p-6 space-y-4">
+        <div className="fixed inset-0 z-50 bg-overlay flex items-center justify-center p-4" onClick={() => setShowCreate(false)}>
+          <form onClick={(e) => e.stopPropagation()} onSubmit={create} className="bg-card border border-rule rounded-md w-full max-w-md p-6 space-y-4">
             <h2 className="font-display text-2xl font-bold tracking-tight">Nuova libreria</h2>
             <div>
               <label className="overline block mb-2">Nome</label>
