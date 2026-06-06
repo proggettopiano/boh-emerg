@@ -19,13 +19,13 @@ export const AuthProvider = ({ children }) => {
     }
     try {
       const r = await api.get("/auth/me", signal ? { signal } : undefined);
-      if (mountedRef.current) setUser(r.data);
+      if (mountedRef.current && !signal.aborted) setUser(r.data);
     } catch (e) {
-      if (e.name === "CanceledError" || e.name === "AbortError" || e.code === "ERR_CANCELED") return;
+      if (e.name === "CanceledError" || e.name === "AbortError" || e.code === "ERR_CANCELED" || e.isCancel) return;
       localStorage.removeItem("scorelib_token");
       if (mountedRef.current) setUser(null);
     } finally {
-      if (mountedRef.current) setLoading(false);
+      if (mountedRef.current && !signal.aborted) setLoading(false);
     }
   }, []);
 

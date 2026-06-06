@@ -127,8 +127,8 @@
   html.dark .btn-ghost:hover { color: hsl(var(--foreground)) !important; }
   /* Ensure primary buttons remain readable in dark mode */
   html.dark .btn-primary {
-    background: #F97316 !important; /* amber-500 */
-    color: #FFFFFF !important;
+    background: hsl(var(--foreground)) !important;
+    color: hsl(var(--background)) !important;
     box-shadow: 0 4px 0 0 rgba(0,0,0,0.18);
   }
   html.dark .overline { color: hsl(var(--muted2)); }
@@ -148,10 +148,10 @@
     border-color: var(--border) !important;
   }
   html.dark .viewer-toolbar-controls { background: rgba(255, 255, 255, 0.08) !important; }
-  html.dark .viewer-toolbar-controls--search { background: rgba(245, 158, 11, 0.08) !important; }
+  html.dark .viewer-toolbar-controls--search { background: var(--card) !important; }
   html.dark .viewer-toolbar-controls--search .viewer-toolbar-label,
   html.dark .viewer-toolbar-controls--search .viewer-toolbar-meta {
-    color: #F7C948 !important;
+    color: var(--foreground) !important;
   }
   html.dark .viewer-tool-btn { background: var(--popover) !important; color: var(--foreground) !important; }
   html.dark .viewer-page-input,
@@ -219,10 +219,22 @@
     flex: 0 1 auto;
   }
   .viewer-toolbar-controls--search {
-    background: hsl(var(--accent-foreground) / 0.08);
+    background: hsl(var(--accent-foreground) / 0.12);
     border-top: 1px solid hsl(var(--accent) / 0.4);
     flex-direction: column;
     align-items: stretch;
+  }
+  .viewer-toolbar-controls--search .viewer-toolbar-label,
+  .viewer-toolbar-controls--search .viewer-toolbar-meta,
+  .viewer-toolbar-controls--search .viewer-search-query {
+    color: hsl(var(--foreground));
+  }
+  .viewer-toolbar-controls--search .viewer-tool-btn {
+    color: hsl(var(--foreground));
+    border-color: hsl(var(--border));
+  }
+  .viewer-toolbar-controls--search .viewer-tool-btn:hover:not(:disabled) {
+    background: hsl(var(--canvas3));
   }
   .viewer-toolbar-group {
     display: flex;
@@ -246,7 +258,7 @@
     color: hsl(var(--muted2));
   }
   .viewer-toolbar-controls--search .viewer-toolbar-label {
-    color: hsl(var(--accent));
+    color: hsl(var(--foreground));
   }
   .viewer-toolbar-meta {
     font-size: 0.875rem;
@@ -255,7 +267,7 @@
     white-space: nowrap;
   }
   .viewer-toolbar-controls--search .viewer-toolbar-meta {
-    color: hsl(var(--accent));
+    color: hsl(var(--foreground));
   }
   .viewer-toolbar-divider {
     width: 1px;
@@ -274,7 +286,7 @@
   .viewer-search-query {
     font-size: 0.875rem;
     font-weight: 600;
-    color: hsl(var(--accent));
+    color: hsl(var(--foreground));
     flex: 1 1 auto;
     min-width: 0;
     max-width: none;
@@ -301,8 +313,8 @@
     color: hsl(var(--foreground));
   }
   .viewer-toolbar-controls--search .viewer-tool-btn {
-    border-color: hsl(var(--accent) / 0.35);
-    color: hsl(var(--accent));
+    border-color: hsl(var(--border));
+    color: hsl(var(--foreground));
   }
   .viewer-tool-btn:hover:not(:disabled) {
     background: hsl(var(--canvas3));
