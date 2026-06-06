@@ -172,12 +172,14 @@ class AddPdfsIn(BaseModel):
 
 # ----------------- Auth -----------------
 def user_public(u: dict) -> dict:
+    is_admin = u.get("is_admin", False) or u.get("email", "").lower() == ADMIN_EMAIL
     return {
         "user_id": u["user_id"],
         "email": u["email"],
         "name": u.get("name", ""),
-        "is_admin": u.get("is_admin", False) or u.get("email", "").lower() == ADMIN_EMAIL,
+        "is_admin": is_admin,
         "created_at": u.get("created_at"),
+        "role": "admin" if is_admin else "user",
     }
 
 async def require_admin(user_id: str = Depends(get_current_user_id)):
@@ -203,7 +205,7 @@ async def login(payload: LoginIn, request: Request):
             raise HTTPException(status_code=401, detail="Credenziali non valide")
         token = create_jwt(u["user_id"])
         await log_event("auth.login_admin", f"Admin login: {email}", user_id=u["user_id"], meta={"ip": ip})
-        return {"token": token, "user": user_public(u), "role": "admin"}
+        return {"token": token, "user": user_public(u)}
 
     req = await db.access_requests.find_one({"email": email, "status": "approved"})
     if req:
@@ -220,7 +222,7 @@ async def login(payload: LoginIn, request: Request):
             await db.users.insert_one(user)
         token = create_jwt(user["user_id"])
         await log_event("auth.login", f"Accesso utente approvato: {email}", user_id=user["user_id"], meta={"ip": ip, "email": email})
-        return {"token": token, "user": user_public(user), "role": "user"}
+        return {"token": token, "user": user_public(user)}
 
     rej = await db.access_requests.find_one({"email": email, "status": "rejected"})
     if rej:

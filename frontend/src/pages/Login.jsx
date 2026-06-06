@@ -6,7 +6,7 @@ import { useAuth } from "@/context/AuthContext";
 import AuthShell from "@/components/AuthShell";
 
 export default function Login() {
-  const [mode, setMode] = useState("request"); // default to request access
+  const [mode, setMode] = useState("login"); // default to login
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -97,18 +97,12 @@ export default function Login() {
             {busy ? "Accesso in corso..." : "Accedi"}
           </button>
           
-          <div className="pt-4 text-center space-y-2">
+          <div className="pt-4 text-center">
             <button 
               type="button" onClick={() => setMode("request")}
               className="text-sm text-ink hover:underline font-medium"
             >
               Non hai l'accesso? Richiedilo qui
-            </button>
-            <button
-              type="button" onClick={() => setMode("login")}
-              className="text-sm text-ink hover:underline font-medium"
-            >
-              Sei l'admin? Accedi qui
             </button>
           </div>
         </form>
@@ -133,18 +127,12 @@ export default function Login() {
           <button type="submit" disabled={busy} className="btn-primary w-full">
             {busy ? "Invio richiesta..." : "Invia Richiesta"}
           </button>
-          <div className="pt-4 text-center space-y-2">
+          <div className="pt-4 text-center">
             <button 
               type="button" onClick={() => setMode("login")}
               className="text-sm text-ink hover:underline font-medium"
             >
               Torna al login
-            </button>
-            <button
-              type="button" onClick={() => setMode("login")}
-              className="text-sm text-ink hover:underline font-medium"
-            >
-              Sei l'admin? Accedi qui
             </button>
           </div>
         </form>
