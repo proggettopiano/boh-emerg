@@ -24,9 +24,9 @@ export default function AuthShell({ title, subtitle, children, footer, testId })
         <div className="w-full max-w-md" data-testid={testId}>
           <div className="md:hidden mb-6"><TrebleClef size={36} /></div>
           <h1 className="font-display font-black text-4xl tracking-tighter mb-2">{title}</h1>
-          {subtitle && <p className="text-[#525252] mb-8">{subtitle}</p>}
+          {subtitle && <p className="text-muted2 mb-8">{subtitle}</p>}
           {children}
-          {footer && <div className="mt-8 text-sm text-[#525252]">{footer}</div>}
+          {footer && <div className="mt-8 text-sm text-muted2">{footer}</div>}
         </div>
       </main>
     </div>

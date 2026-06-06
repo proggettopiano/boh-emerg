@@ -86,9 +86,9 @@ export default function Library() {
   const toggleProtection = async (p) => {
     if (!isAdmin) return;
     try {
-      const r = await api.patch(`/pdfs/${p.id}`, { is_protected: !p.is_protected });
-      setItems((arr) => arr.map((x) => (x.id === p.id ? r.data : x)));
-      toast.success(p.is_protected ? "Spartito reso pubblico" : "Spartito protetto (solo gruppo)");
+    const r = await api.patch(`/pdfs/${p.id}`, { is_protected: !p.is_protected });
+    setItems((arr) => arr.map((x) => (x.id === p.id ? r.data : x)));
+    toast.success(p.is_protected ? "Spartito reso pubblico" : "Spartito protetto (accesso limitato)");
     } catch (e) {
       toast.error("Errore modifica protezione");
     }
@@ -104,7 +104,7 @@ export default function Library() {
     <div className="max-w-6xl mx-auto px-6 md:px-12 py-12">
       <div className="flex items-end justify-between flex-wrap gap-4 mb-10">
         <div>
-          <p className="overline mb-2">ARCHIVIO DI GRUPPO</p>
+          <p className="overline mb-2">ARCHIVIO</p>
           <h1 className="font-display font-black text-4xl md:text-5xl tracking-tighter">Libreria</h1>
           <p className="text-mono text-sm text-muted2 mt-2"><span>{countText}</span></p>
         </div>
@@ -121,14 +121,14 @@ export default function Library() {
           <Star size={14} fill={favOnly ? "#FFFFFF" : "none"} /> Preferiti
         </button>
         {tags.length > 0 && (
-          <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} className="border border-rule rounded-sm px-3 py-1.5 text-sm bg-white">
+          <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} className="border border-rule rounded-sm px-3 py-1.5 text-sm bg-card">
             <option value="">Tutti i tag</option>
             {tags.map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
         )}
         <div className="ml-auto flex items-center gap-2">
           <span className="overline">ORDINA</span>
-          <select value={sort} onChange={(e) => setSort(e.target.value)} className="border border-rule rounded-sm px-3 py-1.5 text-sm bg-white">
+          <select value={sort} onChange={(e) => setSort(e.target.value)} className="border border-rule rounded-sm px-3 py-1.5 text-sm bg-card">
             <option value="date_desc">Più recenti</option>
             <option value="date_asc">Meno recenti</option>
             <option value="name_asc">Nome A-Z</option>
@@ -182,7 +182,7 @@ export default function Library() {
                   <button 
                     onClick={() => toggleProtection(p)} 
                     className={`btn-ghost ${p.is_protected ? "text-amber-600" : "text-emerald-600"}`} 
-                    title={p.is_protected ? "Protetto (solo gruppo) - Clicca per rendere pubblico" : "Pubblico - Clicca per proteggere"}
+                    title={p.is_protected ? "Protetto (accesso limitato) - Clicca per rendere pubblico" : "Pubblico - Clicca per proteggere"}
                   >
                     {p.is_protected ? <Lock size={15} /> : <Unlock size={15} />}
                   </button>

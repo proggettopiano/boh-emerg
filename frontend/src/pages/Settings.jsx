@@ -60,7 +60,7 @@ export default function Settings() {
         
         {!isAdmin ? (
           <p className="text-sm text-amber-700 bg-amber-50 border border-amber-100 rounded-md p-3 mt-4">
-            Stai usando un account di gruppo. Le impostazioni di sicurezza sono gestite dall'amministratore.
+            Stai usando un account approvato. Le impostazioni di sicurezza sono gestite dall'amministratore.
           </p>
         ) : (
           <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-md p-3 mt-4">
@@ -73,9 +73,9 @@ export default function Settings() {
         {/* Nomi persone dell'account */}
         <section>
           <h2 className="font-display font-bold text-xl mb-4 flex items-center gap-2">
-            <Users size={20} /> Membri del Gruppo
+            <Users size={20} /> Utenti approvati
           </h2>
-          <div className="border border-rule rounded-md bg-white divide-y divide-rule">
+          <div className="border border-rule rounded-md bg-card divide-y divide-rule">
             {users.length > 0 ? (
               users.map((u, idx) => (
                 <div key={idx} className="p-4 flex items-center justify-between">
@@ -97,7 +97,7 @@ export default function Settings() {
                   <div className="w-8 h-8 rounded-full bg-canvas3 flex items-center justify-center text-xs font-bold">
                     {user?.name?.split(' ').map(n => n[0]).join('').toUpperCase() || "U"}
                   </div>
-                  <span className="font-medium">{user?.name || "Utente Gruppo"}</span>
+                  <span className="font-medium">{user?.name || "Utente"}</span>
                 </div>
                 <div className="flex items-center gap-1.5 text-[10px] text-muted2 uppercase tracking-wider font-mono">
                   <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
@@ -125,7 +125,7 @@ export default function Settings() {
           <h2 className="font-display font-bold text-xl mb-4 flex items-center gap-2">
             <Cloud size={20} /> Google Drive Master
           </h2>
-          <div className="border border-rule rounded-md p-5 bg-white">
+          <div className="border border-rule rounded-md p-5 bg-card">
             {backup?.drive_connected ? (
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -133,7 +133,7 @@ export default function Settings() {
                     <CheckCircle size={16} /> BACKUP AUTOMATICO ATTIVO
                   </div>
                   <p className="text-sm text-muted2">
-                    Tutti gli spartiti sono sincronizzati sul Drive di gruppo.
+                    Tutti gli spartiti sono sincronizzati sul Drive del sistema.
                   </p>
                   <div className="mt-4 grid grid-cols-2 gap-4">
                     <div><div className="overline text-[10px]">Spartiti</div><div className="text-xl font-bold">{backup.total_pdfs}</div></div>
@@ -166,7 +166,7 @@ function ThemeBtn({ active, onClick, icon, label }) {
     <button 
       onClick={onClick}
       className={`flex flex-col items-center gap-2 p-4 rounded-md border transition-all ${
-        active ? "bg-ink text-white border-ink" : "bg-white border-rule hover:border-ink"
+        active ? "bg-ink text-white border-ink" : "bg-card border-rule hover:border-ink"
       }`}
     >
       {icon}

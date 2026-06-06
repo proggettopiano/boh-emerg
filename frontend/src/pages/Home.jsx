@@ -80,10 +80,10 @@ export default function Home() {
         <h1 className="font-display font-black text-4xl sm:text-5xl lg:text-6xl tracking-tighter mb-3">
           Trova ogni spartito.<br />In un battito.
         </h1>
-        <p className="text-[#525252]">Premi <kbd className="text-mono text-xs border border-rule rounded px-1.5 py-0.5">/</kbd> per cercare ovunque.</p>
+        <p className="text-muted2">Premi <kbd className="text-mono text-xs border border-rule rounded px-1.5 py-0.5">/</kbd> per cercare ovunque.</p>
       </div>
 
-      <div className="bg-white border-2 border-ink rounded-md mb-3" style={{ boxShadow: "0 6px 0 0 #0A0A0A" }}>
+      <div className="bg-card border-2 border-ink rounded-md mb-3" style={{ boxShadow: "0 6px 0 0 rgba(0,0,0,0.18)" }}>
         <div className="flex items-center gap-3 px-5">
           <SearchIcon size={20} className="text-muted2" strokeWidth={1.75} />
           <input
@@ -98,7 +98,7 @@ export default function Home() {
       </div>
 
       <div className="flex items-center justify-between text-sm text-muted2 mb-8">
-        <span>{countLoading ? "Caricamento libreria..." : `${count} PDF nella libreria di gruppo`}</span>
+        <span>{countLoading ? "Caricamento libreria..." : `${count} PDF nella libreria globale`}</span>
         <button onClick={() => setOpenUpload(true)} className="btn-primary !py-2 !px-4 text-sm">
           <UploadIcon size={16} /> Carica PDF
         </button>
@@ -126,7 +126,7 @@ export default function Home() {
                     </span>
                   )}
                 </div>
-                {r.snippet && <p className="text-[#525252] leading-relaxed">{highlight(r.snippet, q)}</p>}
+                {r.snippet && <p className="text-muted2 leading-relaxed">{highlight(r.snippet, q)}</p>}
               </button>
             </li>
           ))}

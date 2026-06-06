@@ -29,7 +29,7 @@ module.exports = {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
-        ink: "#0A0A0A",
+        ink: "hsl(var(--ink))",
         canvas: "var(--canvas, #FFFFFF)",
         canvas2: "var(--canvas2, #FAFAFA)",
         canvas3: "var(--canvas3, #F5F5F5)",
