@@ -1,14 +1,17 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import AuthShell from "@/components/AuthShell";
 
+const ADMIN_EMAIL = process.env.REACT_APP_ADMIN_EMAIL?.toLowerCase() || "admin@scorelib.app";
+
 export default function Login() {
   const [mode, setMode] = useState("login"); // default to login
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordRequired, setPasswordRequired] = useState(false);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -16,23 +19,36 @@ export default function Login() {
   const location = useLocation();
   const { loginWithToken } = useAuth();
 
+  const normalizedEmail = email.toLowerCase().trim();
+  const isAdminEmail = normalizedEmail === ADMIN_EMAIL;
+  const shouldShowPassword = isAdminEmail || passwordRequired;
+
+  useEffect(() => {
+    if (!isAdminEmail) {
+      setPassword("");
+      setPasswordRequired(false);
+    }
+  }, [isAdminEmail]);
+
   const handleLogin = async (e) => {
     e.preventDefault();
     setBusy(true);
     try {
-      const r = await api.post("/auth/login", { email, password });
-      
-      if (r.data.action === "request_access") {
-        setMode("request");
-        setEmail(r.data.email);
-        return;
+      const payload = { email };
+      if (shouldShowPassword) {
+        payload.password = password;
       }
-
+      const r = await api.post("/auth/login", payload);
       loginWithToken(r.data.token, r.data.user);
       const from = location.state?.from || "/";
       navigate(from, { replace: true });
     } catch (err) {
-      toast.error(err?.response?.data?.detail || "Credenziali non valide");
+      if (err?.response?.status === 400 && err?.response?.data?.detail === "Password richiesta") {
+        setPasswordRequired(true);
+        toast.error("Password richiesta per accesso admin. Inseriscila e riprova.");
+      } else {
+        toast.error(err?.response?.data?.detail || "Credenziali non valide");
+      }
     } finally {
       setBusy(false);
     }
@@ -84,26 +100,31 @@ export default function Login() {
               className="input-base" placeholder="tu@esempio.com" 
             />
           </div>
-          <div>
-            <label className="overline block mb-2">Password</label>
-            <input 
-              type="password" required value={password} 
-              onChange={(e) => setPassword(e.target.value)} 
-              className="input-base" placeholder="********" 
-            />
-          </div>
+          {shouldShowPassword && (
+            <div>
+              <label className="overline block mb-2">Password</label>
+              <input 
+                type="password" required value={password} 
+                onChange={(e) => setPassword(e.target.value)} 
+                className="input-base" placeholder="********" 
+              />
+            </div>
+          )}
 
           <button type="submit" disabled={busy} className="btn-primary w-full">
             {busy ? "Accesso in corso..." : "Accedi"}
           </button>
           
-          <div className="pt-4 text-center">
+          <div className="pt-4 text-center space-y-2">
             <button 
               type="button" onClick={() => setMode("request")}
               className="text-sm text-ink hover:underline font-medium"
             >
               Non hai l'accesso? Richiedilo qui
             </button>
+            {!shouldShowPassword && email && (
+              <p className="text-xs text-muted3">La password verrà richiesta solo per l’account amministratore.</p>
+            )}
           </div>
         </form>
       ) : (

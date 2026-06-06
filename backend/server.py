@@ -195,7 +195,7 @@ async def require_admin(user_id: str = Depends(get_current_user_id)):
 async def login(payload: LoginIn, request: Request):
     ip = get_client_ip(request)
     email = payload.email.lower().strip()
-    
+
     if email == ADMIN_EMAIL:
         if not payload.password:
             raise HTTPException(status_code=400, detail="Password richiesta")
@@ -207,8 +207,8 @@ async def login(payload: LoginIn, request: Request):
         await log_event("auth.login_admin", f"Admin login: {email}", user_id=u["user_id"], meta={"ip": ip})
         return {"token": token, "user": user_public(u)}
 
-    req = await db.access_requests.find_one({"email": email, "status": "approved"})
-    if req:
+    req = await db.access_requests.find_one({"email": email})
+    if req and req.get("status") == "approved":
         user = await db.users.find_one({"email": email})
         if not user:
             user_id = f"user_{uuid.uuid4().hex[:12]}"
@@ -224,12 +224,8 @@ async def login(payload: LoginIn, request: Request):
         await log_event("auth.login", f"Accesso utente approvato: {email}", user_id=user["user_id"], meta={"ip": ip, "email": email})
         return {"token": token, "user": user_public(user)}
 
-    rej = await db.access_requests.find_one({"email": email, "status": "rejected"})
-    if rej:
-        await log_event("auth.login_rejected", f"Accesso rifiutato per {email}", level="warn", meta={"ip": ip, "email": email})
-        raise HTTPException(status_code=403, detail="Accesso rifiutato.")
-
-    return {"action": "request_access", "email": email}
+    await log_event("auth.login_denied", f"Tentativo login non approvato: {email}", level="warn", meta={"email": email, "ip": ip, "status": req.get("status") if req else "missing"})
+    raise HTTPException(status_code=403, detail="Accesso negato")
 
 @api.post("/auth/request-access")
 async def request_access(payload: AccessRequestIn, request: Request):
