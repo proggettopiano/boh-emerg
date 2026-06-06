@@ -413,9 +413,131 @@ async def get_pdf_file(pdf_id: str, token: Optional[str] = Query(None), user_id:
     if user_id:
         can_access = await _user_can_access_pdf(user_id, pdf_id)
         if not can_access: raise HTTPException(status_code=403, detail="Accesso negato")
-    fpath = Path(p["file_path"])
-    if fpath.exists(): return FileResponse(fpath, media_type="application/pdf", filename=p["filename"])
+    # Diagnostic logging: capture metadata and whether local file exists
+    file_path = p.get("file_path")
+    try:
+        fpath = Path(file_path) if file_path else Path("")
+        file_exists = fpath.exists()
+    except Exception:
+        fpath = Path("")
+        file_exists = False
+
+    await log_event(
+        "pdf.debug",
+        "PDF_DEBUG",
+        user_id=user_id,
+        meta={
+            "pdf_id": pdf_id,
+            "file_path": str(file_path),
+            "file_exists": file_exists,
+            "drive_file_id": p.get("drive_file_id"),
+            "drive_owner": p.get("drive_owner"),
+            "storage_type": p.get("storage_type"),
+        },
+    )
+
+    if file_exists:
+        await log_event(
+            "pdf.debug",
+            "PDF_SERVE_LOCAL",
+            user_id=user_id,
+            meta={"pdf_id": pdf_id, "file_path": str(fpath), "filename": p.get("filename")},
+        )
+        return FileResponse(fpath, media_type="application/pdf", filename=p["filename"])
+
+    # Local file missing — attempt Drive fallback if available
+    await log_event(
+        "pdf.file_missing",
+        "PDF locale mancante, provo fallback Drive",
+        user_id=user_id,
+        meta={"pdf_id": pdf_id, "file_path": str(file_path), "drive_file_id": p.get("drive_file_id"), "drive_owner": p.get("drive_owner")},
+    )
+
+    if p.get("drive_file_id"):
+        refresh = None
+        if p.get("drive_owner") == "master":
+            master = await get_master_drive()
+            refresh = master.get("refresh_token") if master else None
+        else:
+            owner = await db.users.find_one({"user_id": p["owner_id"]}, {"_id": 0})
+            refresh = (owner or {}).get("google_refresh_token")
+
+        if refresh:
+            try:
+                data = await asyncio.to_thread(gi.download_from_drive, refresh, p["drive_file_id"])
+                new_path = UPLOAD_DIR / Path(file_path).name
+                new_path.parent.mkdir(parents=True, exist_ok=True)
+                new_path.write_bytes(data)
+                await db.pdfs.update_one({"id": pdf_id}, {"$set": {
+                    "file_path": str(new_path),
+                    "storage_type": "local",
+                    "synced_at": iso_now(),
+                }})
+                await log_event(
+                    "pdf.drive_restore",
+                    "PDF ripristinato da Drive",
+                    user_id=user_id,
+                    meta={"pdf_id": pdf_id, "drive_file_id": p["drive_file_id"], "file_path": str(new_path)},
+                )
+                return FileResponse(new_path, media_type="application/pdf", filename=p["filename"])
+            except Exception as e:
+                await log_event(
+                    "pdf.debug",
+                    "PDF_DRIVE_FALLBACK_ERROR",
+                    user_id=user_id,
+                    level="error",
+                    meta={
+                        "pdf_id": pdf_id,
+                        "drive_file_id": p.get("drive_file_id"),
+                        "exception_repr": repr(e),
+                        "exception_str": str(e),
+                        "stage": "get_pdf_file_fallback",
+                    },
+                )
+                await log_event("pdf.error", f"Drive download fallito: {e}", user_id=user_id, level="error", meta={"pdf_id": pdf_id, "drive_file_id": p.get("drive_file_id"), "stage": "get_pdf_file_fallback"})
+
     raise HTTPException(status_code=404, detail="File non trovato")
+
+@api.post("/pdfs/{pdf_id}/reload")
+async def reload_pdf(pdf_id: str, user_id: str = Depends(get_current_user_id)):
+    p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="PDF non trovato")
+    if p.get("is_protected") and not user_id:
+        raise HTTPException(status_code=401, detail="Protetto")
+    can_access = await _user_can_access_pdf(user_id, pdf_id)
+    if not can_access:
+        raise HTTPException(status_code=403, detail="Accesso negato")
+    drive_file_id = p.get("drive_file_id")
+    if not drive_file_id:
+        raise HTTPException(status_code=404, detail="Backup Drive non disponibile")
+
+    refresh = None
+    if p.get("drive_owner") == "master":
+        master = await get_master_drive()
+        refresh = master.get("refresh_token") if master else None
+    else:
+        owner = await db.users.find_one({"user_id": p["owner_id"]}, {"_id": 0})
+        refresh = (owner or {}).get("google_refresh_token")
+
+    if not refresh:
+        raise HTTPException(status_code=503, detail="Impossibile ottenere token Drive")
+
+    try:
+        data = await asyncio.to_thread(gi.download_from_drive, refresh, drive_file_id)
+        new_path = UPLOAD_DIR / Path(p["file_path"]).name
+        new_path.parent.mkdir(parents=True, exist_ok=True)
+        new_path.write_bytes(data)
+        await db.pdfs.update_one({"id": pdf_id}, {"$set": {
+            "file_path": str(new_path),
+            "storage_type": "local",
+            "synced_at": iso_now(),
+        }})
+        await log_event("pdf.drive_restore", "PDF ripristinato da Drive via reload endpoint", user_id=user_id, meta={"pdf_id": pdf_id, "drive_file_id": drive_file_id, "file_path": str(new_path)})
+        return {"ok": True}
+    except Exception as e:
+        await log_event("pdf.error", f"Drive download reload fallito: {e}", user_id=user_id, level="error", meta={"pdf_id": pdf_id, "drive_file_id": drive_file_id, "stage": "reload"})
+        raise HTTPException(status_code=502, detail="Recupero da Drive fallito")
 
 # ----------------- Libraries -----------------
 @api.post("/libraries")
