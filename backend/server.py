@@ -231,10 +231,11 @@ async def login(payload: LoginIn, request: Request):
 
 @api.post("/auth/request-access")
 async def request_access(payload: AccessRequestIn, request: Request):
+    email = payload.email.lower().strip()
     ip = get_client_ip(request)
     await db.access_requests.update_one(
-        {"email": payload.email, "ip": ip},
-        {"$set": {"name": payload.name, "status": "pending", "created_at": iso_now()}},
+        {"email": email},
+        {"$set": {"name": payload.name, "email": email, "ip": ip, "status": "pending", "created_at": iso_now()}},
         upsert=True
     )
     return {"message": "Richiesta inviata."}
@@ -320,6 +321,10 @@ async def upload_pdf(
             "status": "pending",
             "owner_id": user_id,
             "compressed": was_compressed,
+            "storage_type": "local",
+            "drive_owner": None,
+            "drive_file_id": None,
+            "synced_at": None,
             "created_at": iso_now(),
         })
 
@@ -361,21 +366,39 @@ async def get_pdf(pdf_id: str, user_id: str = Depends(get_current_user_id)):
 async def patch_pdf(pdf_id: str, payload: PdfPatchIn, user_id: str = Depends(get_current_user_id)):
     p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
     if not p: raise HTTPException(status_code=404, detail="PDF non trovato")
-    # Check access
-    can_access = await _user_can_access_pdf(user_id, pdf_id)
-    if not can_access: raise HTTPException(status_code=403, detail="Accesso negato")
+    u = await db.users.find_one({"user_id": user_id})
+    is_admin = u and (u.get("is_admin") or u.get("email", "").lower() == ADMIN_EMAIL)
+    # protected PDFs can only be modified by admin
+    if p.get("is_protected") and not is_admin:
+        raise HTTPException(status_code=403, detail="Operazione non consentita su file protetto")
+    if not is_admin and p.get("owner_id") != user_id:
+        raise HTTPException(status_code=403, detail="Solo il proprietario o un amministratore possono modificare questo file")
     update = payload.model_dump(exclude_none=True)
+    if update.get("is_protected") and not is_admin:
+        raise HTTPException(status_code=403, detail="Solo un amministratore può modificare lo stato protetto")
     if update: await db.pdfs.update_one({"id": pdf_id}, {"$set": update})
     p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
     return _serialize_pdf(p)
 
 @api.delete("/pdfs/{pdf_id}")
-async def delete_pdf(pdf_id: str, user_id: str = Depends(require_admin)):
+async def delete_pdf(pdf_id: str, user_id: str = Depends(get_current_user_id)):
     p = await db.pdfs.find_one({"id": pdf_id})
-    if p and os.path.exists(p["file_path"]): os.remove(p["file_path"])
+    if not p: raise HTTPException(status_code=404, detail="PDF non trovato")
+    u = await db.users.find_one({"user_id": user_id})
+    is_admin = u and (u.get("is_admin") or u.get("email", "").lower() == ADMIN_EMAIL)
+    if p.get("is_protected") and not is_admin:
+        raise HTTPException(status_code=403, detail="Operazione non consentita su file protetto")
+    if not is_admin and p.get("owner_id") != user_id:
+        raise HTTPException(status_code=403, detail="Solo il proprietario o un amministratore possono eliminare questo file")
+    if p and os.path.exists(p["file_path"]):
+        try:
+            os.remove(p["file_path"])
+        except Exception:
+            pass
     await db.pdfs.delete_one({"id": pdf_id})
     await db.pdf_pages.delete_many({"pdf_id": pdf_id})
     await db.shared_libraries.update_many({}, {"$pull": {"pdf_ids": pdf_id}})
+    await log_event("pdf.deleted", f"PDF eliminato: {pdf_id}", user_id=user_id, meta={"pdf_id": pdf_id})
     return {"ok": True}
 
 @api.get("/pdfs/{pdf_id}/file")
@@ -431,16 +454,35 @@ async def get_library(lib_id: str, user_id: str = Depends(get_current_user_id)):
 async def add_to_library(lib_id: str, payload: AddPdfsIn, user_id: str = Depends(get_current_user_id)):
     lib = await db.shared_libraries.find_one({"id": lib_id})
     if not lib: raise HTTPException(status_code=404, detail="Libreria non trovata")
+    u = await db.users.find_one({"user_id": user_id})
+    is_admin = u and (u.get("is_admin") or u.get("email", "").lower() == ADMIN_EMAIL)
+    if not is_admin and lib.get("owner_id") != user_id:
+        raise HTTPException(status_code=403, detail="Solo il proprietario o un amministratore possono modificare questa libreria")
+    protected_count = await db.pdfs.count_documents({"id": {"$in": payload.pdf_ids}, "is_protected": True})
+    if protected_count and not is_admin:
+        raise HTTPException(status_code=403, detail="Impossibile aggiungere file protetti")
     await db.shared_libraries.update_one({"id": lib_id}, {"$addToSet": {"pdf_ids": {"$each": payload.pdf_ids}}})
     return {"ok": True}
 
 @api.delete("/libraries/{lib_id}/pdfs/{pdf_id}")
 async def remove_from_library(lib_id: str, pdf_id: str, user_id: str = Depends(get_current_user_id)):
+    lib = await db.shared_libraries.find_one({"id": lib_id})
+    if not lib: raise HTTPException(status_code=404, detail="Libreria non trovata")
+    u = await db.users.find_one({"user_id": user_id})
+    is_admin = u and (u.get("is_admin") or u.get("email", "").lower() == ADMIN_EMAIL)
+    if not is_admin and lib.get("owner_id") != user_id:
+        raise HTTPException(status_code=403, detail="Solo il proprietario o un amministratore possono modificare questa libreria")
     await db.shared_libraries.update_one({"id": lib_id}, {"$pull": {"pdf_ids": pdf_id}})
     return {"ok": True}
 
 @api.delete("/libraries/{lib_id}")
-async def delete_library(lib_id: str, user_id: str = Depends(require_admin)):
+async def delete_library(lib_id: str, user_id: str = Depends(get_current_user_id)):
+    lib = await db.shared_libraries.find_one({"id": lib_id})
+    if not lib: raise HTTPException(status_code=404, detail="Libreria non trovata")
+    u = await db.users.find_one({"user_id": user_id})
+    is_admin = u and (u.get("is_admin") or u.get("email", "").lower() == ADMIN_EMAIL)
+    if not is_admin and lib.get("owner_id") != user_id:
+        raise HTTPException(status_code=403, detail="Solo il proprietario o un amministratore possono eliminare questa libreria")
     await db.shared_libraries.delete_one({"id": lib_id})
     return {"ok": True}
 
@@ -598,14 +640,16 @@ async def list_access_requests(_: str = Depends(require_admin)):
 
 @api.post("/admin/access-requests/approve")
 async def approve_access(payload: dict, user_id: str = Depends(require_admin)):
-    await db.access_requests.update_one({"email": payload["email"]}, {"$set": {"status": "approved"}})
-    await log_event("access.approved", f"Richiesta accesso approvata: {payload['email']}", user_id=user_id, meta={"email": payload["email"]})
+    email = payload["email"].lower().strip()
+    await db.access_requests.update_one({"email": email}, {"$set": {"status": "approved", "email": email}})
+    await log_event("access.approved", f"Richiesta accesso approvata: {email}", user_id=user_id, meta={"email": email})
     return {"ok": True}
 
 @api.post("/admin/access-requests/reject")
 async def reject_access(payload: dict, user_id: str = Depends(require_admin)):
-    await db.access_requests.update_one({"email": payload["email"]}, {"$set": {"status": "rejected"}})
-    await log_event("access.rejected", f"Richiesta accesso rifiutata: {payload['email']}", user_id=user_id, meta={"email": payload["email"]})
+    email = payload["email"].lower().strip()
+    await db.access_requests.update_one({"email": email}, {"$set": {"status": "rejected", "email": email}})
+    await log_event("access.rejected", f"Richiesta accesso rifiutata: {email}", user_id=user_id, meta={"email": email})
     return {"ok": True}
 
 @api.get("/admin/master-drive/status")
@@ -645,6 +689,23 @@ async def process_pdf_job(job_id):
             for i, txt in enumerate(pages_text):
                 await db.pdf_pages.update_one({"pdf_id": pdf["id"], "page": i+1}, {"$set": {"text": txt}}, upsert=True)
             await db.pdfs.update_one({"id": pdf["id"]}, {"$set": {"status": "ready", "pages": total}})
+            # Backup to master Drive if configured and not already synced
+            master = await get_master_drive()
+            if master and master.get("refresh_token") and not pdf.get("drive_file_id"):
+                try:
+                    folder_id = await asyncio.to_thread(gi.ensure_master_root, master["refresh_token"])
+                    drive_id = await asyncio.to_thread(gi.upload_to_drive, master["refresh_token"], folder_id, pdf["filename"], fpath.read_bytes())
+                    synced_at = iso_now()
+                    await db.pdfs.update_one({"id": pdf["id"]}, {"$set": {
+                        "drive_file_id": drive_id,
+                        "drive_owner": "master",
+                        "storage_type": "drive",
+                        "synced_at": synced_at,
+                    }})
+                    await log_event("pdf.drive_backup", f"PDF caricato su Drive master: {pdf['id']}", user_id=pdf.get("owner_id"), meta={"pdf_id": pdf["id"], "drive_file_id": drive_id, "folder_id": folder_id})
+                except Exception as e:
+                    await db.pdfs.update_one({"id": pdf["id"]}, {"$set": {"drive_backup_error": str(e)}})
+                    await log_event("pdf.drive_error", f"Drive backup fallito: {e}", user_id=pdf.get("owner_id"), level="error", meta={"pdf_id": pdf["id"], "stage": "drive_backup"})
             await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "completed"}})
     except Exception as e:
         await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "failed", "error": str(e)}})
