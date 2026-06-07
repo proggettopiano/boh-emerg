@@ -18,7 +18,7 @@ export default function Settings() {
     try {
       const [b, u] = await Promise.all([
         api.get("/backup/status"),
-        api.get("/admin/users").catch(() => ({ data: { users: [] } }))
+        api.get(isAdmin ? "/admin/users" : "/users/approved").catch(() => ({ data: { users: [] } }))
       ]);
       setBackup(b.data);
       setUsers(u.data.users || []);
@@ -31,7 +31,7 @@ export default function Settings() {
 
   useEffect(() => {
     load();
-  }, []);
+  }, [isAdmin]);
 
   const changeTheme = (t) => {
     setTheme(t);
@@ -73,35 +73,32 @@ export default function Settings() {
         {/* Nomi persone dell'account */}
         <section>
           <h2 className="font-display font-bold text-xl mb-4 flex items-center gap-2">
-            <Users size={20} /> Utenti approvati
+            <Users size={20} /> {isAdmin ? "Stato presenza" : "Utenti approvati"}
           </h2>
-          <div className="border border-rule rounded-md bg-card divide-y divide-rule">
-            {users.length > 0 ? (
-              users.map((u, idx) => (
-                <div key={idx} className="p-4 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-canvas3 flex items-center justify-center text-xs font-bold">
-                      {u.name.split(' ').map(n => n[0]).join('').toUpperCase()}
+          {isAdmin ? (
+            <div className="border border-rule rounded-md bg-card p-6 text-center text-muted2">
+              <p className="font-medium mb-2">Lo stato online non è disponibile dal backend.</p>
+              <p className="text-sm">Non esiste un sistema di sessioni/heartbeat/timestamp affidabile per mostrare utenti online in tempo reale.</p>
+            </div>
+          ) : (
+            <div className="border border-rule rounded-md bg-card divide-y divide-rule">
+              {users.length > 0 ? (
+                users.map((u, idx) => (
+                  <div key={idx} className="p-4 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full bg-canvas3 flex items-center justify-center text-xs font-bold">
+                        {u.name.split(' ').map(n => n[0]).join('').toUpperCase()}
+                      </div>
+                      <span className="font-medium">{u.name}</span>
                     </div>
-                    <span className="font-medium">{u.name}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-[10px] text-muted2 uppercase tracking-wider font-mono">
                     <div className="text-xs text-muted3">{u.created_at ? new Date(u.created_at).toLocaleString() : "-"}</div>
                   </div>
-                </div>
-              ))
-            ) : (
-              <div className="p-4 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-canvas3 flex items-center justify-center text-xs font-bold">
-                    {user?.name?.split(' ').map(n => n[0]).join('').toUpperCase() || "U"}
-                  </div>
-                  <span className="font-medium">{user?.name || "Utente"}</span>
-                </div>
-                <div className="text-xs text-muted3">{user?.created_at ? new Date(user.created_at).toLocaleString() : "-"}</div>
-              </div>
-            )}
-          </div>
+                ))
+              ) : (
+                <div className="p-4 text-center text-muted3 italic text-sm">Nessun utente approvato</div>
+              )}
+            </div>
+          )}
         </section>
 
         {/* Tema */}
