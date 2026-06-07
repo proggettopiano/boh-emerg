@@ -208,6 +208,15 @@
   .viewer-toolbar-header {
     border-bottom: 1px solid hsl(var(--rule));
   }
+  html.dark .viewer-toolbar-header {
+    color: hsl(var(--foreground));
+  }
+  html.dark .viewer-toolbar-header .btn-ghost {
+    color: hsl(var(--muted2));
+  }
+  html.dark .viewer-toolbar-header .btn-ghost:hover {
+    color: hsl(var(--foreground));
+  }
   .viewer-toolbar-controls {
     display: flex;
     flex-wrap: wrap;
