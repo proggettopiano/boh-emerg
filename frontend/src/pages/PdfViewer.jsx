@@ -64,7 +64,7 @@ export default function PdfViewer() {
 
   const [meta, setMeta] = useState(null);
   const [numPages, setNumPages] = useState(0);
-  const [scale, setScale] = useState(1.2);
+  const [scale, setScale] = useState(1);
   const [containerWidth, setContainerWidth] = useState(800);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState(null);
@@ -362,10 +362,6 @@ export default function PdfViewer() {
         meta={meta}
         onBack={() => navigate(-1)}
         onToggleFavorite={toggleFavorite}
-        scale={scale}
-        onZoomOut={() => setScale((value) => Math.max(0.5, value - 0.15))}
-        onZoomIn={() => setScale((value) => Math.min(3, value + 0.15))}
-        onZoomReset={() => setScale(1.2)}
         page={page}
         search={search}
       />
@@ -413,7 +409,6 @@ export default function PdfViewer() {
                   <Page
                     pageNumber={pageNumber}
                     width={containerWidth}
-                    scale={scale}
                     renderTextLayer
                     renderAnnotationLayer={false}
                     customTextRenderer={search.customTextRenderer}

@@ -1,9 +1,6 @@
 import React from "react";
 import {
   ArrowLeft,
-  ZoomIn,
-  ZoomOut,
-  Maximize2,
   Star,
   ChevronUp,
   ChevronDown,
@@ -22,10 +19,6 @@ export default function ViewerToolbar({
   meta,
   onBack,
   onToggleFavorite,
-  scale,
-  onZoomOut,
-  onZoomIn,
-  onZoomReset,
   page,
   search,
 }) {
@@ -35,7 +28,7 @@ export default function ViewerToolbar({
         <button type="button" onClick={onBack} className="btn-ghost shrink-0" data-testid="viewer-back-btn">
           <ArrowLeft size={16} /> <span className="sr-only sm:not-sr-only sm:inline">Indietro</span>
         </button>
-        <div className="flex-1 min-w-0 flex items-center justify-center gap-2 px-1 overflow-hidden">
+        <div className="viewer-toolbar-title flex-1 min-w-0 flex items-center justify-center gap-2 px-1 overflow-hidden">
           <span className="font-display font-semibold truncate text-center max-w-full">{meta?.title || "PDF"}</span>
           {meta && (
             <button type="button" onClick={onToggleFavorite} className="btn-ghost shrink-0" data-testid="viewer-favorite-btn" title="Preferito">
@@ -51,12 +44,6 @@ export default function ViewerToolbar({
               {meta.storage_type === "google_drive" ? <><Cloud size={10} /> DRIVE</> : <><HardDrive size={10} /> LOCALE</>}
             </span>
           )}
-        </div>
-        <div className="flex items-center gap-1 shrink-0">
-          <button type="button" onClick={onZoomOut} className="btn-ghost" data-testid="viewer-zoom-out"><ZoomOut size={16} /></button>
-          <span className="text-mono text-xs text-muted2 w-10 text-center">{Math.round(scale * 100)}%</span>
-          <button type="button" onClick={onZoomIn} className="btn-ghost" data-testid="viewer-zoom-in"><ZoomIn size={16} /></button>
-          <button type="button" onClick={onZoomReset} className="btn-ghost hidden sm:inline-flex" data-testid="viewer-zoom-reset" title="Reset zoom"><Maximize2 size={14} /></button>
         </div>
       </div>
 
