@@ -38,7 +38,7 @@ export default function TagEditor({ pdf, onUpdate, onClose }) {
         <div className="flex flex-wrap gap-2 mb-3 min-h-[40px]" data-testid="tag-list">
           {tags.length === 0 && <span className="text-sm text-muted3">Nessun tag</span>}
           {tags.map((t) => (
-            <span key={t} className="inline-flex items-center gap-1 px-2 py-1 bg-ink text-white text-xs rounded-sm font-mono" data-testid={`tag-chip-${t}`}>
+            <span key={t} className="inline-flex items-center gap-1 px-2 py-1 bg-ink text-white text-xs rounded-sm font-mono dark:bg-canvas3 dark:text-ink" data-testid={`tag-chip-${t}`}>
               {t}
               <button onClick={() => remove(t)} className="hover:opacity-70"><X size={12} /></button>
             </span>

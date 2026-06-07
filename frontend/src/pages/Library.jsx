@@ -172,19 +172,21 @@ export default function Library() {
                       <span className="text-mono text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded-sm font-bold">PROTETTO</span>
                     )}
                     {(p.tags || []).map((t) => (
-                      <span key={t} className="text-mono text-[10px] px-1.5 py-0.5 bg-canvas3 rounded-sm">{t}</span>
+                      <span key={t} className="text-mono text-[10px] px-1.5 py-0.5 bg-canvas3 rounded-sm dark:bg-canvas2 dark:text-ink">{t}</span>
                     ))}
                   </div>
                 </div>
               </button>
               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 shrink-0">
-                <button 
-                  onClick={() => toggleProtection(p)} 
-                  className={`btn-ghost ${p.is_protected ? "text-amber-600" : "text-emerald-600"}`} 
-                  title={p.is_protected ? "Protetto (accesso limitato) - Clicca per rendere pubblico" : "Pubblico - Clicca per proteggere"}
-                >
-                  {p.is_protected ? <Lock size={15} /> : <Unlock size={15} />}
-                </button>
+                {isAdmin && (
+                  <button 
+                    onClick={() => toggleProtection(p)} 
+                    className={`btn-ghost ${p.is_protected ? "text-amber-600" : "text-emerald-600"}`} 
+                    title={p.is_protected ? "Protetto (accesso limitato) - Clicca per rendere pubblico" : "Pubblico - Clicca per proteggere"}
+                  >
+                    {p.is_protected ? <Lock size={15} /> : <Unlock size={15} />}
+                  </button>
+                )}
                 <button onClick={() => setEditTagsFor(p)} className="btn-ghost" title="Tag"><TagIcon size={15} /></button>
                 <button onClick={() => remove(p.id, p.title)} className="btn-ghost text-red-600" title="Elimina"><Trash2 size={15} /></button>
               </div>

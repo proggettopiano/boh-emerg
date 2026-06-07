@@ -196,11 +196,13 @@
     top: 0;
     z-index: 30;
     width: 100%;
-    background: hsl(var(--card));
+    background-color: hsl(var(--card));
     border-bottom: 1px solid hsl(var(--rule));
+    backdrop-filter: blur(12px);
+    backface-visibility: hidden;
   }
   html.dark .viewer-toolbar {
-    background: hsl(var(--card));
+    background-color: hsl(var(--card));
   }
   .viewer-toolbar-header {
     border-bottom: 1px solid hsl(var(--rule));
