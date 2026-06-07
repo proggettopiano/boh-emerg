@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { X, Plus, Tag as TagIcon } from "lucide-react";
+import { toast } from "sonner";
 import api from "@/lib/api";
 
 const SUGGESTIONS = ["jazz", "worship", "gospel", "lead sheet", "coro", "piano solo", "classica", "pop", "blues", "rock"];
@@ -21,8 +22,15 @@ export default function TagEditor({ pdf, onUpdate, onClose }) {
   const remove = (t) => setTags((p) => p.filter((x) => x !== t));
 
   const save = async () => {
-    try { const r = await api.patch(`/pdfs/${pdf.id}`, { tags }); onUpdate(r.data); onClose(); }
-    catch (e) { /* noop */ }
+    try {
+      const r = await api.patch(`/pdfs/${pdf.id}`, { tags });
+      onUpdate(r.data);
+      onClose();
+    } catch (e) {
+      const message = e.response?.data?.detail || "Errore salvataggio tag";
+      console.error("Tag save failed", message);
+      toast.error(message);
+    }
   };
 
   const remaining = SUGGESTIONS.filter((s) => !tags.includes(s));

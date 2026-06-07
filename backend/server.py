@@ -394,17 +394,21 @@ async def get_pdf(pdf_id: str, user_id: str = Depends(get_current_user_id)):
 async def patch_pdf(pdf_id: str, payload: PdfPatchIn, user_id: str = Depends(get_current_user_id)):
     p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
     if not p: raise HTTPException(status_code=404, detail="PDF non trovato")
+    can_access = await _user_can_access_pdf(user_id, pdf_id)
+    if not can_access: raise HTTPException(status_code=403, detail="Accesso negato")
     u = await db.users.find_one({"user_id": user_id})
     is_admin = u and (u.get("is_admin") or u.get("email", "").lower() == ADMIN_EMAIL)
     # protected PDFs can only be modified by admin
     if p.get("is_protected") and not is_admin:
         raise HTTPException(status_code=403, detail="Operazione non consentita su file protetto")
-    if not is_admin and p.get("owner_id") != user_id:
-        raise HTTPException(status_code=403, detail="Solo il proprietario o un amministratore possono modificare questo file")
     update = payload.model_dump(exclude_none=True)
     if update.get("is_protected") and not is_admin:
         raise HTTPException(status_code=403, detail="Solo un amministratore può modificare lo stato protetto")
-    if update: await db.pdfs.update_one({"id": pdf_id}, {"$set": update})
+    if any(key in update for key in ["title"]):
+        if not is_admin and p.get("owner_id") != user_id:
+            raise HTTPException(status_code=403, detail="Solo il proprietario o un amministratore possono modificare questo file")
+    if update:
+        await db.pdfs.update_one({"id": pdf_id}, {"$set": update})
     p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
     return _serialize_pdf(p)
 

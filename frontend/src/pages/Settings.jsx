@@ -16,12 +16,14 @@ export default function Settings() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [b, u] = await Promise.all([
-        api.get("/backup/status"),
-        api.get(isAdmin ? "/admin/users" : "/users/approved").catch(() => ({ data: { users: [] } }))
-      ]);
+      const b = await api.get("/backup/status");
       setBackup(b.data);
-      setUsers(u.data.users || []);
+      if (isAdmin) {
+        const u = await api.get("/admin/users").catch(() => ({ data: { users: [] } }));
+        setUsers(u.data.users || []);
+      } else {
+        setUsers([]);
+      }
     } catch (e) {
       console.error(e);
     } finally {
@@ -70,35 +72,49 @@ export default function Settings() {
       </div>
 
       <div className="space-y-12">
-        {/* Nomi persone dell'account */}
         <section>
           <h2 className="font-display font-bold text-xl mb-4 flex items-center gap-2">
-            <Users size={20} /> {isAdmin ? "Stato presenza" : "Utenti approvati"}
+            <Users size={20} /> {isAdmin ? "Strumenti Creatore" : "Scopri il tuo spazio"}
           </h2>
-          {isAdmin ? (
-            <div className="border border-rule rounded-md bg-card p-6 text-center text-muted2">
-              <p className="font-medium mb-2">Lo stato online non è disponibile dal backend.</p>
-              <p className="text-sm">Non esiste un sistema di sessioni/heartbeat/timestamp affidabile per mostrare utenti online in tempo reale.</p>
-            </div>
-          ) : (
-            <div className="border border-rule rounded-md bg-card divide-y divide-rule">
-              {users.length > 0 ? (
-                users.map((u, idx) => (
-                  <div key={idx} className="p-4 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-canvas3 flex items-center justify-center text-xs font-bold">
-                        {u.name.split(' ').map(n => n[0]).join('').toUpperCase()}
-                      </div>
-                      <span className="font-medium">{u.name}</span>
-                    </div>
-                    <div className="text-xs text-muted3">{u.created_at ? new Date(u.created_at).toLocaleString() : "-"}</div>
-                  </div>
-                ))
-              ) : (
-                <div className="p-4 text-center text-muted3 italic text-sm">Nessun utente approvato</div>
-              )}
-            </div>
-          )}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {!isAdmin ? (
+              <>
+                <div className="border border-rule rounded-md p-5 bg-card">
+                  <p className="overline mb-2">Organizza</p>
+                  <h3 className="font-semibold text-lg mb-2">Usa tag e preferiti</h3>
+                  <p className="text-sm text-muted2">Applica tag agli spartiti e salva i preferiti per trovare subito il materiale giusto.</p>
+                </div>
+                <div className="border border-rule rounded-md p-5 bg-card">
+                  <p className="overline mb-2">Condividi</p>
+                  <h3 className="font-semibold text-lg mb-2">Crea librerie pubbliche</h3>
+                  <p className="text-sm text-muted2">Crea una libreria, aggiungi PDF e condividi il link ai tuoi collaboratori o agli studenti.</p>
+                </div>
+                <div className="border border-rule rounded-md p-5 bg-card">
+                  <p className="overline mb-2">Esplora</p>
+                  <h3 className="font-semibold text-lg mb-2">Trova nuovi spartiti</h3>
+                  <p className="text-sm text-muted2">Usa la ricerca avanzata e scopri spartiti nella libreria pubblica. Il tuo account ti permette di partecipare attivamente.</p>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="border border-rule rounded-md p-5 bg-card">
+                  <p className="overline mb-2">Pannello Creatore</p>
+                  <h3 className="font-semibold text-lg mb-2">Gestisci accessi e backup</h3>
+                  <p className="text-sm text-muted2">Controlla richieste di accesso, gestisci il backup Google Drive e tieni sotto controllo lo stato del sistema.</p>
+                </div>
+                <div className="border border-rule rounded-md p-5 bg-card">
+                  <p className="overline mb-2">Contenuti condivisi</p>
+                  <h3 className="font-semibold text-lg mb-2">Crea librerie pubbliche</h3>
+                  <p className="text-sm text-muted2">Crea e modifica librerie pubbliche per il tuo gruppo, aggiungendo i PDF più utili agli utenti approvati.</p>
+                </div>
+                <div className="border border-rule rounded-md p-5 bg-card">
+                  <p className="overline mb-2">Consigli</p>
+                  <h3 className="font-semibold text-lg mb-2">Mantieni il sistema pulito</h3>
+                  <p className="text-sm text-muted2">Usa nomi chiari, tag coerenti e rimuovi librerie obsolete per migliorare l’esperienza degli utenti.</p>
+                </div>
+              </>
+            )}
+          </div>
         </section>
 
         {/* Tema */}

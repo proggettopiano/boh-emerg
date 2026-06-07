@@ -162,7 +162,7 @@ export default function SharedLibraryDetail() {
                 <div className="text-mono text-xs text-muted3 mt-0.5">{p.created_at?.slice(0, 10)} — {p.pages} pagine — {(p.size / 1024).toFixed(0)} KB</div>
               </div>
             </button>
-            {isAdmin && (
+            {canModifyLibrary && (
               <button 
                 onClick={() => removePdf(p.id)} 
                 className="btn-ghost text-muted3 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-all"
