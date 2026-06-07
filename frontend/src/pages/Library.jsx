@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Trash2, FileText, Upload as UploadIcon, Star, Tag as TagIcon, Lock, Unlock } from "lucide-react";
+import { Trash2, FileText, Upload as UploadIcon, Star, Tag as TagIcon, Lock, Unlock, Share2 } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
@@ -94,6 +94,21 @@ export default function Library() {
     }
   };
 
+  const sharePdf = async (p) => {
+    try {
+      const r = await api.post(`/pdfs/${p.id}/share`);
+      const shareUrl = (r.data.share_url || r.data.share_token) ? (window.location.origin + (r.data.share_url || `/shared/${r.data.share_token}`)) : null;
+      if (shareUrl) {
+        await navigator.clipboard.writeText(shareUrl);
+        toast.success("Link di condivisione copiato negli appunti");
+      } else {
+        toast.success("Link di condivisione creato");
+      }
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Errore nella creazione del link di condivisione");
+    }
+  };
+
   const updateItem = (updated) => setItems((arr) => arr.map((x) => (x.id === updated.id ? updated : x)));
 
   const countText = loading
@@ -155,45 +170,54 @@ export default function Library() {
         </div>
       ) : (
         <ul className="border-t border-rule">
-          {items.map((p) => (
-            <li key={p.id} className="group flex items-center justify-between gap-4 py-4 border-b border-rule hover:bg-canvas2 px-2 -mx-2 transition-colors">
-              <button onClick={() => toggleFav(p)} className="shrink-0" title={p.is_favorite ? "Rimuovi preferito" : "Aggiungi ai preferiti"}>
-                <Star size={18} strokeWidth={1.5} fill={p.is_favorite ? "#0A0A0A" : "none"} className={p.is_favorite ? "" : "text-muted3 hover:text-ink"} />
-              </button>
-              <button onClick={() => navigate(`/viewer/${p.id}`)} className="flex-1 text-left flex items-center gap-3 min-w-0">
-                <FileText size={18} strokeWidth={1.5} className="shrink-0 text-muted2" />
-                <div className="min-w-0">
-                  <div className="font-display text-lg font-medium group-hover:underline decoration-2 underline-offset-4 truncate">{p.title}</div>
-                  <div className="flex items-center gap-2 flex-wrap mt-0.5">
-                    <span className="text-mono text-[10px] text-muted2">
-                      {p.created_at?.slice(0, 10)} - {p.status === "ready" ? `${p.pages}pp` : p.status === "error" ? "errore" : "elaborazione"} - {(p.size / 1024).toFixed(0)} KB
-                    </span>
-                    {p.is_protected && (
-                      <span className="text-mono text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded-sm font-bold">PROTETTO</span>
-                    )}
-                    {(p.tags || []).map((t) => (
-                      <span key={t} className="text-mono text-[10px] px-1.5 py-0.5 bg-canvas3 rounded-sm">{t}</span>
-                    ))}
+          {items.map((p) => {
+            const canDelete = user && (isAdmin || (!p.is_protected && p.owner_id === user.user_id));
+            const canShare = user && (isAdmin || p.owner_id === user.user_id) && (!p.is_protected || isAdmin);
+            return (
+              <li key={p.id} className="group flex items-center justify-between gap-4 py-4 border-b border-rule hover:bg-canvas2 px-2 -mx-2 transition-colors">
+                <button onClick={() => toggleFav(p)} className="shrink-0" title={p.is_favorite ? "Rimuovi preferito" : "Aggiungi ai preferiti"}>
+                  <Star size={18} strokeWidth={1.5} fill={p.is_favorite ? "#0A0A0A" : "none"} className={p.is_favorite ? "" : "text-muted3 hover:text-ink"} />
+                </button>
+                <button onClick={() => navigate(`/viewer/${p.id}`)} className="flex-1 text-left flex items-center gap-3 min-w-0">
+                  <FileText size={18} strokeWidth={1.5} className="shrink-0 text-muted2" />
+                  <div className="min-w-0">
+                    <div className="font-display text-lg font-medium group-hover:underline decoration-2 underline-offset-4 truncate">{p.title}</div>
+                    <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                      <span className="text-mono text-[10px] text-muted2">
+                        {p.created_at?.slice(0, 10)} - {p.status === "ready" ? `${p.pages}pp` : p.status === "error" ? "errore" : "elaborazione"} - {(p.size / 1024).toFixed(0)} KB
+                      </span>
+                      {p.is_protected && (
+                        <span className="text-mono text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded-sm font-bold">PROTETTO</span>
+                      )}
+                      {(p.tags || []).map((t) => (
+                        <span key={t} className="text-mono text-[10px] px-1.5 py-0.5 bg-canvas3 rounded-sm">{t}</span>
+                      ))}
+                    </div>
                   </div>
+                </button>
+                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 shrink-0">
+                  {isAdmin && (
+                    <button 
+                      onClick={() => toggleProtection(p)} 
+                      className={`btn-ghost ${p.is_protected ? "text-amber-600" : "text-emerald-600"}`} 
+                      title={p.is_protected ? "Protetto (accesso limitato) - Clicca per rendere pubblico" : "Pubblico - Clicca per proteggere"}
+                    >
+                      {p.is_protected ? <Lock size={15} /> : <Unlock size={15} />}
+                    </button>
+                  )}
+                  {canShare && (
+                    <button onClick={() => sharePdf(p)} className="btn-ghost" title="Condividi">
+                      <Share2 size={15} />
+                    </button>
+                  )}
+                  <button onClick={() => setEditTagsFor(p)} className="btn-ghost" title="Tag"><TagIcon size={15} /></button>
+                  {canDelete && (
+                    <button onClick={() => remove(p.id, p.title)} className="btn-ghost text-red-600" title="Elimina"><Trash2 size={15} /></button>
+                  )}
                 </div>
-              </button>
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 shrink-0">
-                {isAdmin && (
-                  <button 
-                    onClick={() => toggleProtection(p)} 
-                    className={`btn-ghost ${p.is_protected ? "text-amber-600" : "text-emerald-600"}`} 
-                    title={p.is_protected ? "Protetto (accesso limitato) - Clicca per rendere pubblico" : "Pubblico - Clicca per proteggere"}
-                  >
-                    {p.is_protected ? <Lock size={15} /> : <Unlock size={15} />}
-                  </button>
-                )}
-                <button onClick={() => setEditTagsFor(p)} className="btn-ghost" title="Tag"><TagIcon size={15} /></button>
-                {isAdmin && (
-                  <button onClick={() => remove(p.id, p.title)} className="btn-ghost text-red-600" title="Elimina"><Trash2 size={15} /></button>
-                )}
-              </div>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
       )}
 
