@@ -171,8 +171,8 @@ export default function Library() {
       ) : (
         <ul className="border-t border-rule">
           {items.map((p) => {
-            const canDelete = user && (isAdmin || (!p.is_protected && p.owner_id === user.user_id));
-            const canShare = user && (isAdmin || p.owner_id === user.user_id) && (!p.is_protected || isAdmin);
+            const canDelete = user && (isAdmin || p.owner_id === user.user_id);
+            const canShare = user && (isAdmin || p.owner_id === user.user_id);
             return (
               <li key={p.id} className="group flex items-center justify-between gap-4 py-4 border-b border-rule hover:bg-canvas2 px-2 -mx-2 transition-colors">
                 <button onClick={() => toggleFav(p)} className="shrink-0" title={p.is_favorite ? "Rimuovi preferito" : "Aggiungi ai preferiti"}>
