@@ -197,9 +197,7 @@
     z-index: 30;
     display: flex;
     flex-direction: column;
-    width: 100vw;
-    left: 50%;
-    transform: translateX(-50%);
+    width: 100%;
     background-color: hsl(var(--card));
     border-bottom: 1px solid hsl(var(--rule));
     backdrop-filter: blur(12px);
@@ -212,7 +210,6 @@
   .viewer-toolbar-header,
   .viewer-toolbar-controls {
     width: 100%;
-    max-width: 100vw;
     box-sizing: border-box;
   }
   .viewer-toolbar-header {
@@ -242,6 +239,47 @@
     padding: 0.625rem 0.75rem 0.75rem;
     background: hsl(var(--card));
     overflow-x: auto;
+  }
+  .viewer-toolbar-controls--search {
+    background: hsl(var(--card));
+    border-top: none;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 0.75rem 1rem;
+    flex-wrap: wrap;
+    width: auto;
+    padding: 0;
+  }
+  .viewer-toolbar-controls--search .viewer-toolbar-label,
+  .viewer-toolbar-controls--search .viewer-toolbar-meta,
+  .viewer-toolbar-controls--search .viewer-search-query {
+    color: hsl(var(--foreground));
+  }
+  .viewer-toolbar-controls--search .viewer-search-query {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--canvas3));
+    border-radius: 999px;
+    font-size: 0.8rem;
+    color: hsl(var(--foreground));
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .viewer-toolbar-controls--search .viewer-toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-left: auto;
+  }
+  html.dark .viewer-toolbar-controls--search .viewer-search-query {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.12);
   }
   @media (min-width: 640px) {
     .viewer-toolbar-controls {
