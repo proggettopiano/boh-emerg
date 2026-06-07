@@ -202,7 +202,8 @@
     backface-visibility: hidden;
   }
   html.dark .viewer-toolbar {
-    background-color: hsl(var(--card));
+    background-color: #000;
+    border-bottom-color: rgba(255, 255, 255, 0.08);
   }
   .viewer-toolbar-header {
     border-bottom: 1px solid hsl(var(--rule));
