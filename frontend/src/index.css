@@ -161,27 +161,35 @@
   }
   .text-mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
   mark.hl {
-    background: #FEF3C7;
-    color: #0F172A;
-    padding: 0 0.15rem;
-    border-radius: 0.25rem;
-    box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
-    transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+    background: rgba(250, 204, 21, 0.4);
+    mix-blend-mode: multiply;
+    color: inherit;
+    padding: 0 0.14rem;
+    border-radius: 2px;
+    box-shadow: inset 0 0 0 1px rgba(250, 204, 21, 0.22);
+    transition: all 200ms ease-in-out;
+    scroll-margin-top: 120px;
   }
   html.dark mark.hl {
-    background: rgba(245, 158, 11, 0.32);
-    color: #0F172A;
+    background: rgba(250, 204, 21, 0.45);
+    color: inherit;
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
   }
   mark.hl.hl-active {
-    background: #FB923C;
-    color: #0F172A;
-    box-shadow: 0 0 0 2px rgba(251, 146, 60, 0.45);
+    background: rgba(250, 204, 21, 0.55);
+    color: inherit;
+    box-shadow: inset 0 0 0 1px rgba(249, 115, 22, 0.28);
+    animation: hl-pulse 420ms ease-out;
   }
   html.dark mark.hl.hl-active {
-    background: #F97316;
-    color: #0F172A;
-    box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.65);
+    background: rgba(250, 204, 21, 0.6);
+    color: inherit;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+  }
+  @keyframes hl-pulse {
+    0% { transform: scaleX(0.98); box-shadow: inset 0 0 0 1px rgba(249,115,22,0.28); }
+    50% { transform: scaleX(1.02); box-shadow: inset 0 0 0 8px rgba(249,115,22,0.12); }
+    100% { transform: scaleX(1); box-shadow: inset 0 0 0 1px rgba(249,115,22,0.28); }
   }
   /* When highlights are hidden, render mark as plain text without losing layout */
   .hl-off mark.hl,
@@ -216,22 +224,6 @@
     border-bottom: 1px solid hsl(var(--rule));
     background-color: hsl(var(--card));
     color: hsl(var(--foreground));
-    flex-wrap: wrap;
-    justify-content: space-between;
-  }
-  .viewer-toolbar-title {
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-  @media (max-width: 640px) {
-    .viewer-toolbar-group--page {
-      width: 100%;
-      justify-content: center;
-    }
-    .viewer-toolbar-actions {
-      width: 100%;
-      justify-content: flex-end;
-    }
   }
   html.dark .viewer-toolbar-header {
     background-color: var(--canvas);
@@ -434,6 +426,55 @@
     opacity: 0.35;
     cursor: not-allowed;
   }
+  /* Navigation Hub for search results */
+  .viewer-search-hub {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    border: 1px solid hsl(var(--border));
+    border-radius: 999px;
+    background: hsl(var(--card));
+    padding: 0.15rem 0.35rem;
+  }
+  .viewer-search-hub-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    border-radius: 999px;
+    border: none;
+    background: hsl(var(--canvas2));
+    color: hsl(var(--foreground));
+    transition: background-color 160ms ease, transform 160ms ease, opacity 160ms ease;
+  }
+  .viewer-search-hub-btn:hover:not(:disabled) {
+    background: hsl(var(--canvas3));
+  }
+  .viewer-search-hub-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+  .viewer-search-hub-counter {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: hsl(var(--foreground));
+    min-width: 6rem;
+    text-align: center;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .viewer-search-hub-spinner {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid rgba(0,0,0,0.12);
+    border-top-color: rgba(0,0,0,0.4);
+    animation: spin 800ms linear infinite;
+    display: inline-block;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .viewer-tool-btn--clear {
     font-size: 1.125rem;
     line-height: 1;

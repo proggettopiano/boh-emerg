@@ -2,8 +2,8 @@ import React from "react";
 import {
   ArrowLeft,
   Star,
-  ChevronUp,
-  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Eye,
   EyeOff,
   Cloud,
@@ -99,27 +99,35 @@ export default function ViewerToolbar({
               <span className="viewer-toolbar-label">Cerca</span>
               <span className="viewer-search-query" title={search.query}>"{search.query}"</span>
               <span className="viewer-toolbar-meta" data-testid="match-counter">{search.matchLabel}</span>
-              <div className="viewer-toolbar-actions">
+              <div className="viewer-toolbar-actions viewer-search-hub" data-testid="viewer-search-hub">
                 <button
                   type="button"
                   onClick={search.goToPrevMatch}
-                  disabled={search.matches.length === 0}
-                  className="viewer-tool-btn"
+                  disabled={search.matches.length === 0 || search.matchNavigationLoading}
+                  className="viewer-search-hub-btn"
                   title="Risultato precedente"
                   data-testid="match-prev"
                 >
-                  <ChevronUp size={14} />
+                  <ChevronLeft size={18} />
                 </button>
+                <span className="viewer-search-hub-counter" data-testid="match-counter">
+                  {search.matchLabel}
+                  {search.matchNavigationLoading && (
+                    <span className="viewer-search-hub-spinner" aria-hidden="true" />
+                  )}
+                </span>
                 <button
                   type="button"
                   onClick={search.goToNextMatch}
-                  disabled={search.matches.length === 0}
-                  className="viewer-tool-btn"
-                  title="Risultato successivo (n)"
+                  disabled={search.matches.length === 0 || search.matchNavigationLoading}
+                  className="viewer-search-hub-btn"
+                  title="Risultato successivo"
                   data-testid="match-next"
                 >
-                  <ChevronDown size={14} />
+                  <ChevronRight size={18} />
                 </button>
+              </div>
+              <div className="viewer-toolbar-actions viewer-search-actions">
                 <button
                   type="button"
                   onClick={search.toggleHighlights}
