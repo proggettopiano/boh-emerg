@@ -39,7 +39,7 @@ export default function Header() {
 
   return (
     <>
-      <header className="sticky top-0 z-40 bg-card/90 backdrop-blur-xl border-b border-rule">
+      <header className="sticky top-0 z-40 bg-card border-b border-rule">
         <div className="max-w-7xl mx-auto px-4 md:px-12 py-3 flex items-center justify-between gap-2">
           <Link to="/" className="flex items-center gap-2.5 shrink-0">
             <TrebleClef size={26} />
@@ -69,7 +69,7 @@ export default function Header() {
         </div>
       </header>
 
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-card/95 backdrop-blur-xl border-t border-rule grid grid-flow-col auto-cols-fr">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-card border-t border-rule grid grid-flow-col auto-cols-fr">
         {navItems.map(({ to, label, icon: Icon, end }) => (
           <NavLink key={to} to={to} end={end} className={mobileCls}>
             <Icon size={18} strokeWidth={1.75} />

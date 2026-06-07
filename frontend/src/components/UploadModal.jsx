@@ -7,7 +7,7 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-const MAX_UPLOAD_SIZE_MB = 50;
+const MAX_UPLOAD_SIZE_MB = 25;
 
 function makeFileId(file) {
   const randomPart = typeof crypto !== "undefined" && crypto.randomUUID

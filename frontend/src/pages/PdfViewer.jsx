@@ -296,6 +296,33 @@ export default function PdfViewer() {
     }
   };
 
+  const sharePdf = async () => {
+    if (!meta) return;
+    try {
+      const r = await api.post(`/pdfs/${id}/share`);
+      const shareUrl = (r.data.share_url || r.data.share_token) ? (window.location.origin + (r.data.share_url || `/shared/${r.data.share_token}`)) : null;
+      if (shareUrl) {
+        await navigator.clipboard.writeText(shareUrl);
+        toast.success("Link di condivisione copiato negli appunti");
+      } else {
+        toast.success("Link di condivisione creato");
+      }
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Errore nella creazione del link di condivisione");
+    }
+  };
+
+  const deletePdf = async () => {
+    if (!window.confirm("Eliminare questo PDF? Operazione irreversibile.")) return;
+    try {
+      await api.delete(`/pdfs/${id}`);
+      toast.success("PDF eliminato");
+      navigate("/library");
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Errore durante l'eliminazione del PDF");
+    }
+  };
+
   const visiblePageNumbers = useMemo(() => {
     if (numPages <= 0) return [];
     return Array.from(
@@ -367,6 +394,8 @@ export default function PdfViewer() {
         onZoomReset={() => setScale(1.2)}
         page={page}
         search={search}
+        onShare={sharePdf}
+        onDelete={deletePdf}
       />
 
       <div ref={containerRef} className="flex-1 flex flex-col items-center py-8 overflow-x-visible">

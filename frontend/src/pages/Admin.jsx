@@ -24,10 +24,14 @@ export default function Admin() {
   const [stats, setStats] = useState(null);
   const [requests, setRequests] = useState([]);
   const [users, setUsers] = useState([]);
+  const [showAllRequests, setShowAllRequests] = useState(false);
+  const [showAllUsers, setShowAllUsers] = useState(false);
   const [busy, setBusy] = useState(false);
   const [master, setMaster] = useState(null);
 
   const isAdmin = user?.is_admin;
+  const visibleRequests = showAllRequests ? requests : requests.slice(0, 3);
+  const visibleUsers = showAllUsers ? users : users.slice(0, 3);
 
   const load = async () => {
     setBusy(true);
@@ -82,9 +86,6 @@ export default function Admin() {
         <div>
           <p className="overline mb-2 flex items-center gap-2"><Shield size={12} /> AMMINISTRATORE</p>
           <h1 className="font-display font-black text-4xl md:text-5xl tracking-tighter">Pannello Amministratore</h1>
-          <p className="text-sm font-semibold text-white bg-emerald-700 rounded-md p-2 mt-2">
-            Accesso amministrativo: operazioni sensibili abilitate.
-          </p>
         </div>
         <div className="flex gap-2">
           <button onClick={() => navigate("/logs")} className="btn-ghost border border-rule rounded-sm px-3 py-2 text-sm">
@@ -114,7 +115,7 @@ export default function Admin() {
           </h2>
           <div className="border border-rule rounded-md bg-card divide-y divide-rule">
             {users.length > 0 ? (
-              users.map((u, idx) => (
+              visibleUsers.map((u, idx) => (
                 <div key={idx} className="p-4 flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-full bg-canvas3 flex items-center justify-center text-xs font-bold">
@@ -126,13 +127,17 @@ export default function Admin() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 text-[10px] text-muted2 uppercase tracking-wider font-mono">
-                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                    Online
+                    <div className="text-xs text-muted3">{u.created_at ? new Date(u.created_at).toLocaleString() : "-"}</div>
                   </div>
                 </div>
               ))
             ) : (
               <div className="p-4 text-center text-muted3 italic text-sm">Nessun utente approvato</div>
+            )}
+            {users.length > 3 && (
+              <div className="p-3 text-right bg-canvas2 border-t border-rule">
+                <button type="button" onClick={() => setShowAllUsers((v) => !v)} className="btn-ghost text-sm">{showAllUsers ? "Mostra meno" : `Mostra tutti gli ${users.length} utenti`}</button>
+              </div>
             )}
           </div>
         </section>
@@ -153,7 +158,7 @@ export default function Admin() {
                 </tr>
               </thead>
               <tbody>
-                {requests.map((r, idx) => (
+                {visibleRequests.map((r, idx) => (
                   <tr key={idx} className="border-b border-rule hover:bg-canvas2">
                     <td className="py-3 px-4">
                       <div className="font-bold">{r.name}</div>
@@ -183,6 +188,17 @@ export default function Admin() {
                 )}
               </tbody>
             </table>
+          {requests.length > 3 && (
+            <div className="border-t border-rule bg-canvas2 px-4 py-3 text-right">
+              <button
+                type="button"
+                onClick={() => setShowAllRequests((value) => !value)}
+                className="btn-ghost text-sm"
+              >
+                {showAllRequests ? "Mostra meno" : `Mostra tutte le ${requests.length} richieste`}
+              </button>
+            </div>
+          )}
           </div>
         </section>
 

@@ -59,11 +59,11 @@ export default function Settings() {
         <h1 className="font-display font-black text-4xl md:text-5xl tracking-tighter">Preferenze</h1>
         
         {!isAdmin ? (
-          <p className="text-sm text-amber-700 bg-amber-50 border border-amber-100 rounded-md p-3 mt-4">
+          <p className="text-sm rounded-md p-3 mt-4" style={{ background: 'hsl(var(--card))', color: 'hsl(var(--foreground))', border: '1px solid hsl(var(--rule))' }}>
             Stai usando un account approvato. Le impostazioni di sicurezza sono gestite dall'amministratore.
           </p>
         ) : (
-          <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-md p-3 mt-4">
+          <p className="text-sm rounded-md p-3 mt-4" style={{ background: 'hsl(var(--card))', color: 'hsl(var(--foreground))', border: '1px solid hsl(var(--rule))' }}>
             Account Amministratore · Gestione completa del sistema attiva.
           </p>
         )}
@@ -86,8 +86,7 @@ export default function Settings() {
                     <span className="font-medium">{u.name}</span>
                   </div>
                   <div className="flex items-center gap-1.5 text-[10px] text-muted2 uppercase tracking-wider font-mono">
-                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                    Online
+                    <div className="text-xs text-muted3">{u.created_at ? new Date(u.created_at).toLocaleString() : "-"}</div>
                   </div>
                 </div>
               ))
@@ -99,10 +98,7 @@ export default function Settings() {
                   </div>
                   <span className="font-medium">{user?.name || "Utente"}</span>
                 </div>
-                <div className="flex items-center gap-1.5 text-[10px] text-muted2 uppercase tracking-wider font-mono">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                  Online
-                </div>
+                <div className="text-xs text-muted3">{user?.created_at ? new Date(user.created_at).toLocaleString() : "-"}</div>
               </div>
             )}
           </div>
@@ -162,13 +158,12 @@ export default function Settings() {
 }
 
 function ThemeBtn({ active, onClick, icon, label }) {
+  const activeStyle = active ? { background: 'hsl(var(--ink))', color: 'hsl(var(--background))', borderColor: 'hsl(var(--ink))' } : {};
   return (
-    <button 
+    <button
       onClick={onClick}
-      className={`flex flex-col items-center gap-2 p-4 rounded-md border transition-all ${
-        active ? "bg-ink text-white border-ink" : "bg-card border-rule hover:border-ink"
-      }`}
-    >
+      style={activeStyle}
+      className={`flex flex-col items-center gap-2 p-4 rounded-md border transition-all ${active ? "" : "bg-card border-rule hover:border-ink"}`}>
       {icon}
       <span className="text-xs font-mono uppercase">{label}</span>
     </button>
