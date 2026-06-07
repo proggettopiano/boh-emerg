@@ -28,8 +28,6 @@ export default function ViewerToolbar({
   onZoomReset,
   page,
   search,
-  onShare,
-  onDelete,
 }) {
   return (
     <header className="viewer-toolbar" data-testid="viewer-toolbar">
@@ -59,8 +57,6 @@ export default function ViewerToolbar({
           <span className="text-mono text-xs text-muted2 w-10 text-center">{Math.round(scale * 100)}%</span>
           <button type="button" onClick={onZoomIn} className="btn-ghost" data-testid="viewer-zoom-in"><ZoomIn size={16} /></button>
           <button type="button" onClick={onZoomReset} className="btn-ghost hidden sm:inline-flex" data-testid="viewer-zoom-reset" title="Reset zoom"><Maximize2 size={14} /></button>
-          <button type="button" onClick={onShare} className="btn-ghost" title="Condividi PDF" data-testid="viewer-share"><Share2 size={16} /></button>
-          <button type="button" onClick={onDelete} className="btn-ghost text-red-600 hover:bg-red-50" title="Elimina PDF" data-testid="viewer-delete"><Trash2 size={16} /></button>
         </div>
       </div>
 

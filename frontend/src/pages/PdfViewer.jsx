@@ -394,8 +394,6 @@ export default function PdfViewer() {
         onZoomReset={() => setScale(1.2)}
         page={page}
         search={search}
-        onShare={sharePdf}
-        onDelete={deletePdf}
       />
 
       <div ref={containerRef} className="flex-1 flex flex-col items-center py-8 overflow-x-visible">
