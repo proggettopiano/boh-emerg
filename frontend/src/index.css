@@ -147,8 +147,8 @@
     color: var(--foreground) !important;
     border-color: var(--border) !important;
   }
-  html.dark .viewer-toolbar-controls { background: rgba(255, 255, 255, 0.08) !important; }
-  html.dark .viewer-toolbar-controls--search { background: var(--card) !important; }
+  html.dark .viewer-toolbar-controls { background: hsl(var(--card)) !important; }
+  html.dark .viewer-toolbar-controls--search { background: hsl(var(--card)) !important; }
   html.dark .viewer-toolbar-controls--search .viewer-toolbar-label,
   html.dark .viewer-toolbar-controls--search .viewer-toolbar-meta {
     color: var(--foreground) !important;
@@ -232,7 +232,7 @@
     flex: 0 1 auto;
   }
   .viewer-toolbar-controls--search {
-    background: hsl(var(--accent-foreground) / 0.12);
+    background: hsl(var(--card));
     border-top: 1px solid hsl(var(--accent) / 0.4);
     flex-direction: column;
     align-items: stretch;
@@ -333,7 +333,7 @@
     background: hsl(var(--canvas3));
   }
   .viewer-toolbar-controls--search .viewer-tool-btn:hover:not(:disabled) {
-    background: hsla(var(--background), 0.65);
+    background: hsl(var(--canvas3));
   }
   .viewer-tool-btn:disabled {
     opacity: 0.35;
