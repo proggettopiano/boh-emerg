@@ -190,6 +190,9 @@ function useSearchController({
 
   const collectTimerRef = useRef(null);
   const matchesRef = useRef([]);
+  const currentMatchIndexRef = useRef(0);
+  const searchNavigationRef = useRef(false);
+  const searchNavigationTimerRef = useRef(null);
 
   const hasSearchQuery = query.length > 0;
   const isSearchActive = hasSearchQuery && searchPanelVisible;
@@ -203,19 +206,44 @@ function useSearchController({
     setSearchPanelVisible(Boolean(initialQuery));
     setHighlightsVisible(true);
     setMatches([]);
+    matchesRef.current = [];
     setCurrentMatchIndex(0);
+    currentMatchIndexRef.current = 0;
+    searchNavigationRef.current = false;
+    if (searchNavigationTimerRef.current != null) {
+      window.clearTimeout(searchNavigationTimerRef.current);
+      searchNavigationTimerRef.current = null;
+    }
     searchDriverDoneRef.current = false;
   }, [pdfId, initialQuery, searchDriverDoneRef]);
 
+  const setSearchNavigationLock = useCallback((locked) => {
+    if (searchNavigationTimerRef.current != null) {
+      window.clearTimeout(searchNavigationTimerRef.current);
+      searchNavigationTimerRef.current = null;
+    }
+    searchNavigationRef.current = locked;
+    if (locked) {
+      searchNavigationTimerRef.current = window.setTimeout(() => {
+        searchNavigationRef.current = false;
+        searchNavigationTimerRef.current = null;
+      }, 300);
+    }
+  }, []);
+
   const syncMatchIndexToPage = useCallback(
     (pageNum, list = matchesRef.current) => {
+      if (searchNavigationRef.current) return;
       if (!list.length) {
         setCurrentMatchIndex(0);
+        currentMatchIndexRef.current = 0;
         return;
       }
       const idx = findFirstMatchIndexOnPage(list, pageNum);
-      setCurrentMatchIndex(idx >= 0 ? idx : 0);
-      list.forEach((node, i) => node.classList.toggle("hl-active", i === (idx >= 0 ? idx : 0)));
+      const selected = idx >= 0 ? idx : 0;
+      setCurrentMatchIndex(selected);
+      currentMatchIndexRef.current = selected;
+      list.forEach((node, i) => node.classList.toggle("hl-active", i === selected));
     },
     [],
   );
@@ -223,10 +251,13 @@ function useSearchController({
   const scrollToMatch = useCallback((list, idx, behavior = "smooth") => {
     const node = list[idx];
     if (!node || !mountedRef.current) return;
+    setSearchNavigationLock(true);
     list.forEach((item) => item.classList.remove("hl-active"));
     node.classList.add("hl-active");
+    setCurrentMatchIndex(idx);
+    currentMatchIndexRef.current = idx;
     node.scrollIntoView({ behavior, block: "center" });
-  }, [mountedRef]);
+  }, [mountedRef, setSearchNavigationLock]);
 
   const collectMatches = useCallback(() => {
     if (!mountedRef.current || !containerRef.current || !hasSearchQuery) return;
@@ -255,18 +286,24 @@ function useSearchController({
   );
 
   const goToPrevMatch = useCallback(() => {
-    if (matches.length === 0) return;
-    const nextIndex = (currentMatchIndex - 1 + matches.length) % matches.length;
+    const list = matchesRef.current;
+    if (list.length === 0) return;
+    const currentIndex = currentMatchIndexRef.current;
+    const nextIndex = (currentIndex - 1 + list.length) % list.length;
     setCurrentMatchIndex(nextIndex);
-    scrollToMatch(matches, nextIndex);
-  }, [matches, currentMatchIndex, scrollToMatch]);
+    currentMatchIndexRef.current = nextIndex;
+    scrollToMatch(list, nextIndex);
+  }, [scrollToMatch]);
 
   const goToNextMatch = useCallback(() => {
-    if (matches.length === 0) return;
-    const nextIndex = (currentMatchIndex + 1) % matches.length;
+    const list = matchesRef.current;
+    if (list.length === 0) return;
+    const currentIndex = currentMatchIndexRef.current;
+    const nextIndex = (currentIndex + 1) % list.length;
     setCurrentMatchIndex(nextIndex);
-    scrollToMatch(matches, nextIndex);
-  }, [matches, currentMatchIndex, scrollToMatch]);
+    currentMatchIndexRef.current = nextIndex;
+    scrollToMatch(list, nextIndex);
+  }, [scrollToMatch]);
 
   const toggleHighlights = useCallback(() => {
     setHighlightsVisible((v) => !v);
@@ -283,7 +320,13 @@ function useSearchController({
     setMatches([]);
     matchesRef.current = [];
     setCurrentMatchIndex(0);
+    currentMatchIndexRef.current = 0;
     setHighlightsVisible(true);
+    searchNavigationRef.current = false;
+    if (searchNavigationTimerRef.current != null) {
+      window.clearTimeout(searchNavigationTimerRef.current);
+      searchNavigationTimerRef.current = null;
+    }
     navigate(`/viewer/${pdfId}?page=${getCurrentPage()}`, { replace: true });
   }, [pdfId, getCurrentPage, navigate]);
 

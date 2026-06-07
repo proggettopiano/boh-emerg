@@ -238,18 +238,32 @@
     box-sizing: border-box;
     padding: 0.625rem 0.75rem 0.75rem;
     background: hsl(var(--card));
-    overflow-x: auto;
+    overflow-x: hidden;
   }
   .viewer-toolbar-controls--search {
     background: hsl(var(--card));
     border-top: none;
+    display: flex;
     flex-direction: row;
-    align-items: center;
-    justify-content: flex-start;
-    gap: 0.75rem 1rem;
     flex-wrap: wrap;
-    width: auto;
-    padding: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem 1rem;
+    width: 100%;
+    padding: 0.625rem 0.75rem 0.75rem;
+    box-sizing: border-box;
+  }
+  .viewer-toolbar-controls--search .viewer-toolbar-group--page,
+  .viewer-toolbar-controls--search .viewer-toolbar-group--search {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .viewer-toolbar-controls--search .viewer-toolbar-group--search {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.5rem 0.75rem;
   }
   .viewer-toolbar-controls--search .viewer-toolbar-label,
   .viewer-toolbar-controls--search .viewer-toolbar-meta,
@@ -260,11 +274,12 @@
     display: inline-flex;
     align-items: center;
     gap: 0.25rem;
-    padding: 0.25rem 0.5rem;
+    padding: 0.35rem 0.75rem;
     border: 1px solid hsl(var(--border));
     background: hsl(var(--canvas3));
     border-radius: 999px;
-    font-size: 0.8rem;
+    font-size: 0.85rem;
+    line-height: 1;
     color: hsl(var(--foreground));
     max-width: 100%;
     overflow: hidden;
@@ -275,7 +290,6 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    margin-left: auto;
   }
   html.dark .viewer-toolbar-controls--search .viewer-search-query {
     background: rgba(255, 255, 255, 0.06);
