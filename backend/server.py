@@ -374,7 +374,7 @@ async def upload_pdf(
 
 @api.get("/pdfs/{pdf_id}/status")
 async def get_pdf_status(pdf_id: str, user_id: str = Depends(get_current_user_id)):
-    p = await db.pdfs.find_one({"id": pdf_id}, {"status": 1, "pages": 1})
+    p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0, "status": 1, "pages": 1})
     if not p: raise HTTPException(status_code=404, detail="Non trovato")
     # Check access
     can_access = await _user_can_access_pdf(user_id, pdf_id)
