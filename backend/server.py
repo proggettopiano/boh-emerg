@@ -297,8 +297,25 @@ async def approved_users(user_id: str = Depends(get_current_user_id)):
 
 # ----------------- PDFs -----------------
 @api.get("/pdfs")
-async def list_pdfs(user_id: str = Depends(get_current_user_id)):
-    cursor = db.pdfs.find({}, {"_id": 0}).sort("created_at", -1)
+async def list_pdfs(
+    favorite: Optional[bool] = None,
+    tag: Optional[str] = None,
+    sort: Optional[str] = None,
+    user_id: str = Depends(get_current_user_id),
+):
+    query = {}
+    if favorite is not None:
+        query["is_favorite"] = favorite
+    if tag:
+        query["tags"] = tag.lower()
+    sort_mapping = {
+        "date_asc": [("created_at", 1)],
+        "date_desc": [("created_at", -1)],
+        "name_asc": [("title", 1)],
+        "name_desc": [("title", -1)],
+    }
+    order = sort_mapping.get(sort, [("created_at", -1)])
+    cursor = db.pdfs.find(query, {"_id": 0}).sort(order)
     items = await cursor.to_list(1000)
     return {"items": [_serialize_pdf(i) for i in items]}
 
@@ -585,12 +602,8 @@ async def get_library(lib_id: str, user_id: str = Depends(get_current_user_id)):
 async def add_to_library(lib_id: str, payload: AddPdfsIn, user_id: str = Depends(get_current_user_id)):
     lib = await db.shared_libraries.find_one({"id": lib_id})
     if not lib: raise HTTPException(status_code=404, detail="Libreria non trovata")
-    u = await db.users.find_one({"user_id": user_id})
-    is_admin = u and (u.get("is_admin") or u.get("email", "").lower() == ADMIN_EMAIL)
-    if not is_admin and lib.get("owner_id") != user_id:
-        raise HTTPException(status_code=403, detail="Solo il proprietario o un amministratore possono modificare questa libreria")
     protected_count = await db.pdfs.count_documents({"id": {"$in": payload.pdf_ids}, "is_protected": True})
-    if protected_count and not is_admin:
+    if protected_count:
         raise HTTPException(status_code=403, detail="Impossibile aggiungere file protetti")
     await db.shared_libraries.update_one({"id": lib_id}, {"$addToSet": {"pdf_ids": {"$each": payload.pdf_ids}}})
     return {"ok": True}
@@ -599,10 +612,6 @@ async def add_to_library(lib_id: str, payload: AddPdfsIn, user_id: str = Depends
 async def remove_from_library(lib_id: str, pdf_id: str, user_id: str = Depends(get_current_user_id)):
     lib = await db.shared_libraries.find_one({"id": lib_id})
     if not lib: raise HTTPException(status_code=404, detail="Libreria non trovata")
-    u = await db.users.find_one({"user_id": user_id})
-    is_admin = u and (u.get("is_admin") or u.get("email", "").lower() == ADMIN_EMAIL)
-    if not is_admin and lib.get("owner_id") != user_id:
-        raise HTTPException(status_code=403, detail="Solo il proprietario o un amministratore possono modificare questa libreria")
     await db.shared_libraries.update_one({"id": lib_id}, {"$pull": {"pdf_ids": pdf_id}})
     return {"ok": True}
 

@@ -12,10 +12,10 @@ export default function SharedLibraryDetail() {
   const [lib, setLib] = useState(null);
   const [allPdfs, setAllPdfs] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
+  const canModifyLibrary = Boolean(user);
   const [q, setQ] = useState("");
   const [searchResults, setSearchResults] = useState(null);
   const mountedRef = useRef(false);
-  const isAdmin = user?.is_admin;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -110,7 +110,7 @@ export default function SharedLibraryDetail() {
           <button onClick={copyLink} className="btn-ghost border border-rule rounded-sm px-4 py-2 text-sm font-bold flex items-center gap-2">
             <Copy size={14} /> Copia Link Pubblico
           </button>
-          {isAdmin && (
+          {canModifyLibrary && (
             <button onClick={openAdd} className="btn-primary flex items-center gap-2">
               <Plus size={16} /> Aggiungi PDF
             </button>
