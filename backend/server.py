@@ -398,10 +398,12 @@ async def patch_pdf(pdf_id: str, payload: PdfPatchIn, user_id: str = Depends(get
     if not can_access: raise HTTPException(status_code=403, detail="Accesso negato")
     u = await db.users.find_one({"user_id": user_id})
     is_admin = u and (u.get("is_admin") or u.get("email", "").lower() == ADMIN_EMAIL)
-    # protected PDFs can only be modified by admin
-    if p.get("is_protected") and not is_admin:
-        raise HTTPException(status_code=403, detail="Operazione non consentita su file protetto")
     update = payload.model_dump(exclude_none=True)
+    # protected PDFs: only allow tags and is_favorite
+    if p.get("is_protected") and not is_admin:
+        restricted_keys = {"title", "is_protected"}
+        if any(key in update for key in restricted_keys):
+            raise HTTPException(status_code=403, detail="Operazione non consentita su file protetto")
     if update.get("is_protected") and not is_admin:
         raise HTTPException(status_code=403, detail="Solo un amministratore può modificare lo stato protetto")
     if any(key in update for key in ["title"]):
@@ -844,6 +846,23 @@ async def master_drive_connect(payload: dict, _: str = Depends(require_admin)):
 async def master_drive_disconnect(_: str = Depends(require_admin)):
     await db.config.delete_one({"key": "master_drive"})
     return {"ok": True}
+
+# Serve manifest.json
+@app.get("/manifest.json")
+async def get_manifest():
+    return {
+        "name": APP_NAME,
+        "short_name": APP_NAME,
+        "description": f"{APP_NAME} - Share and manage PDF scores",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#ffffff",
+        "theme_color": "#000000",
+        "icons": [
+            {"src": "/icon.png", "sizes": "192x192", "type": "image/png"},
+            {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png"}
+        ]
+    }
 
 app.include_router(api)
 
