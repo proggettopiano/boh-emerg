@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Trash2, FileText, Upload as UploadIcon, Star, Tag as TagIcon, Lock, Unlock, Share2 } from "lucide-react";
+import { Trash2, FileText, Upload as UploadIcon, Star, Tag as TagIcon, Lock, Unlock } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
@@ -186,7 +186,6 @@ export default function Library() {
                   {p.is_protected ? <Lock size={15} /> : <Unlock size={15} />}
                 </button>
                 <button onClick={() => setEditTagsFor(p)} className="btn-ghost" title="Tag"><TagIcon size={15} /></button>
-                <button onClick={() => sharePdf(p)} className="btn-ghost" title="Condividi"><Share2 size={15} /></button>
                 <button onClick={() => remove(p.id, p.title)} className="btn-ghost text-red-600" title="Elimina"><Trash2 size={15} /></button>
               </div>
             </li>

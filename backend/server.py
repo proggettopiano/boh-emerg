@@ -399,8 +399,6 @@ async def delete_pdf(pdf_id: str, user_id: str = Depends(get_current_user_id)):
     is_admin = u and (u.get("is_admin") or u.get("email", "").lower() == ADMIN_EMAIL)
     if p.get("is_protected") and not is_admin:
         raise HTTPException(status_code=403, detail="Operazione non consentita su file protetto")
-    if not is_admin and p.get("owner_id") != user_id:
-        raise HTTPException(status_code=403, detail="Solo il proprietario o un amministratore possono eliminare questo file")
     if p and os.path.exists(p["file_path"]):
         try:
             os.remove(p["file_path"])
@@ -614,8 +612,6 @@ async def delete_library(lib_id: str, user_id: str = Depends(get_current_user_id
     if not lib: raise HTTPException(status_code=404, detail="Libreria non trovata")
     u = await db.users.find_one({"user_id": user_id})
     is_admin = u and (u.get("is_admin") or u.get("email", "").lower() == ADMIN_EMAIL)
-    if not is_admin and lib.get("owner_id") != user_id:
-        raise HTTPException(status_code=403, detail="Solo il proprietario o un amministratore possono eliminare questa libreria")
     await db.shared_libraries.delete_one({"id": lib_id})
     return {"ok": True}
 

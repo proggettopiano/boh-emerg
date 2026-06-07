@@ -12,7 +12,6 @@ export default function Shared() {
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
-  const isAdmin = user?.is_admin;
 
   const load = async () => {
     setLoading(true);
@@ -63,11 +62,9 @@ export default function Shared() {
           <h1 className="font-display font-black text-4xl md:text-5xl tracking-tighter">Librerie Pubbliche</h1>
           <p className="text-muted2 mt-2">Raccolte di spartiti accessibili esternamente tramite link.</p>
         </div>
-        {isAdmin && (
-          <button onClick={() => setShowCreate(true)} className="btn-primary">
-            <Plus size={16} /> Nuova Libreria
-          </button>
-        )}
+        <button onClick={() => setShowCreate(true)} className="btn-primary">
+          <Plus size={16} /> Nuova Libreria
+        </button>
       </div>
 
       {loading ? (
@@ -87,11 +84,9 @@ export default function Shared() {
                 <div className="p-2 bg-canvas2 rounded-sm text-ink">
                   <Users size={20} />
                 </div>
-                {isAdmin && (
-                  <button onClick={() => del(l.id)} className="text-muted3 hover:text-red-600 transition-colors">
-                    <Trash2 size={16} />
-                  </button>
-                )}
+                <button onClick={() => del(l.id)} className="text-muted3 hover:text-red-600 transition-colors">
+                  <Trash2 size={16} />
+                </button>
               </div>
               <h3 className="font-bold text-xl leading-tight mb-1 truncate">{l.name}</h3>
               <p className="text-sm text-muted2 line-clamp-2 mb-4 h-10">{l.description || "Nessuna descrizione"}</p>
