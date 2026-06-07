@@ -407,4 +407,12 @@
       padding-bottom: max(1rem, env(safe-area-inset-bottom));
     }
   }
+  
+  /* Dark mode file list styling - darker hover backgrounds */
+  html.dark li.group:hover {
+    background-color: rgba(0, 0, 0, 0.5) !important;
+  }
+  html.dark li.group {
+    background-color: transparent;
+  }
 }
