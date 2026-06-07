@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Moon, Sun, Monitor, Cloud, RefreshCw, Users, CheckCircle } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
@@ -13,7 +13,7 @@ export default function Settings() {
 
   const isAdmin = user?.is_admin;
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const [b, u] = await Promise.all([
@@ -27,11 +27,11 @@ export default function Settings() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isAdmin]);
 
   useEffect(() => {
     load();
-  }, [isAdmin]);
+  }, [load]);
 
   const changeTheme = (t) => {
     setTheme(t);
