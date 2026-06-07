@@ -34,14 +34,17 @@ export default function Login() {
     e.preventDefault();
     setBusy(true);
     try {
-      const payload = { email };
+      const payload = { email: normalizedEmail };
       if (shouldShowPassword) {
         payload.password = password;
       }
       const r = await api.post("/auth/login", payload);
-      loginWithToken(r.data.token, r.data.user);
-      const from = location.state?.from || "/";
-      navigate(from, { replace: true });
+        loginWithToken(r.data.token, r.data.user);
+        let from = location.state?.from || "/";
+        if (from === "/login") from = "/";
+        // Prevent redirecting normal users to admin
+        if (from === "/admin" && !r.data.user?.is_admin) from = "/";
+        navigate(from, { replace: true });
     } catch (err) {
       if (err?.response?.status === 400 && err?.response?.data?.detail === "Password richiesta") {
         setPasswordRequired(true);

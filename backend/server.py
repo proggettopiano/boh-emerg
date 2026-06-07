@@ -35,7 +35,7 @@ load_dotenv(ROOT_DIR / ".env")
 
 UPLOAD_DIR = ROOT_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True, parents=True)
-MAX_UPLOAD_SIZE_BYTES = int(os.environ.get("MAX_UPLOAD_SIZE_BYTES", 50 * 1024 * 1024))
+MAX_UPLOAD_SIZE_BYTES = int(os.environ.get("MAX_UPLOAD_SIZE_BYTES", 25 * 1024 * 1024))
 
 mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
@@ -224,8 +224,15 @@ async def login(payload: LoginIn, request: Request):
         await log_event("auth.login", f"Accesso utente approvato: {email}", user_id=user["user_id"], meta={"ip": ip, "email": email})
         return {"token": token, "user": user_public(user)}
 
-    await log_event("auth.login_denied", f"Tentativo login non approvato: {email}", level="warn", meta={"email": email, "ip": ip, "status": req.get("status") if req else "missing"})
-    raise HTTPException(status_code=403, detail="Accesso negato")
+    # Provide clearer messages depending on access_request state
+    status = req.get("status") if req else None
+    await log_event("auth.login_denied", f"Tentativo login non approvato: {email}", level="warn", meta={"email": email, "ip": ip, "status": status or "missing"})
+    if status == "pending":
+        raise HTTPException(status_code=403, detail="Richiesta di accesso in attesa di approvazione.")
+    if status == "rejected":
+        raise HTTPException(status_code=403, detail="La richiesta di accesso è stata rifiutata.")
+    # no request found
+    raise HTTPException(status_code=403, detail="Nessuna richiesta trovata. Richiedi l'accesso.")
 
 @api.post("/auth/request-access")
 async def request_access(payload: AccessRequestIn, request: Request):
@@ -687,6 +694,35 @@ async def import_shared_pdf(pdf_id: str, user_id: str = Depends(get_current_user
     await log_event("pdf.storage", f"Storage finale: LOCAL - path={file_path_str}", user_id=user_id, meta={"pdf_id": new_id, "storage_type": "local", "file_path": file_path_str})
     await log_event("pdf.import", f"Importato PDF condiviso: {p.get('title')}", user_id=user_id, meta={"pdf_id": new_id, "source_pdf_id": pdf_id})
     return {"ok": True, "pdf_id": new_id}
+
+
+@api.post("/pdfs/{pdf_id}/share")
+async def share_pdf(pdf_id: str, user_id: str = Depends(get_current_user_id)):
+    """Create a simple one-off shared link for a single PDF."""
+    p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="PDF non trovato")
+    # Only owner or admin can create share
+    u = await db.users.find_one({"user_id": user_id})
+    is_admin = u and (u.get("is_admin") or u.get("email", "").lower() == ADMIN_EMAIL)
+    if not is_admin and p.get("owner_id") != user_id:
+        raise HTTPException(status_code=403, detail="Solo il proprietario o un amministratore possono condividere questo file")
+
+    share_id = str(uuid.uuid4())
+    share_token = secrets.token_urlsafe(16)
+    doc = {
+        "id": share_id,
+        "name": f"Condivisione - {p.get('title', p.get('filename', pdf_id))}",
+        "description": "Condivisione temporanea",
+        "owner_id": user_id,
+        "pdf_ids": [pdf_id],
+        "share_token": share_token,
+        "public": True,
+        "created_at": iso_now(),
+    }
+    await db.shared_libraries.insert_one(doc)
+    await log_event("pdf.share", f"PDF condiviso: {pdf_id}", user_id=user_id, meta={"pdf_id": pdf_id, "share_token": share_token})
+    return {"ok": True, "share_token": share_token, "share_url": f"/shared/{share_token}"}
 
 
 async def _user_can_access_pdf(user_id: str, pdf_id: str) -> bool:
