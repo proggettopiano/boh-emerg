@@ -287,7 +287,13 @@ def _serialize_pdf(p: dict) -> dict:
         "tags": p.get("tags", []),
         "is_favorite": p.get("is_favorite", False),
         "created_at": p.get("created_at"),
+        "owner_id": p.get("owner_id"),
     }
+
+@api.get("/users/approved")
+async def approved_users(user_id: str = Depends(get_current_user_id)):
+    reqs = await db.access_requests.find({"status": "approved"}).to_list(1000)
+    return {"users": [{"email": r["email"], "name": r["name"], "created_at": r["created_at"]} for r in reqs]}
 
 # ----------------- PDFs -----------------
 @api.get("/pdfs")
