@@ -51,7 +51,9 @@ self.addEventListener("fetch", (event) => {
           }
           return response;
         })
-        .catch(() => caches.match(request))
+        .catch(async () => {
+          return (await caches.match(request)) || new Response("PDF non disponibile", { status: 503, statusText: "Service Unavailable" });
+        })
     );
     return;
   }
@@ -60,15 +62,16 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          // Se la navigazione fallisce o restituisce 404/500, proviamo a servire la shell dell'app
           if (!response || response.status >= 400) {
-             return caches.match("/") || response;
+             return caches.match("/") || new Response("Offline", { status: 503, statusText: "Service Unavailable" });
           }
           const copy = response.clone();
           caches.open(APP_CACHE).then((cache) => cache.put("/", copy)).catch(() => {});
           return response;
         })
-        .catch(() => caches.match("/") || caches.match(request))
+        .catch(async () => {
+          return (await caches.match("/")) || new Response("Offline", { status: 503, statusText: "Service Unavailable" });
+        })
     );
     return;
   }
@@ -81,6 +84,8 @@ self.addEventListener("fetch", (event) => {
           caches.open(APP_CACHE).then((cache) => cache.put(request, copy)).catch(() => {});
         }
         return response;
+      }).catch(async () => {
+        return (await caches.match(request)) || (await caches.match("/")) || new Response("Offline", { status: 503, statusText: "Service Unavailable" });
       }))
     );
   }
