@@ -216,6 +216,22 @@
     border-bottom: 1px solid hsl(var(--rule));
     background-color: hsl(var(--card));
     color: hsl(var(--foreground));
+    flex-wrap: wrap;
+    justify-content: space-between;
+  }
+  .viewer-toolbar-title {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  @media (max-width: 640px) {
+    .viewer-toolbar-group--page {
+      width: 100%;
+      justify-content: center;
+    }
+    .viewer-toolbar-actions {
+      width: 100%;
+      justify-content: flex-end;
+    }
   }
   html.dark .viewer-toolbar-header {
     background-color: var(--canvas);
