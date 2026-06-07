@@ -202,14 +202,18 @@
     backface-visibility: hidden;
   }
   html.dark .viewer-toolbar {
-    background-color: #000;
+    background-color: var(--canvas);
     border-bottom-color: rgba(255, 255, 255, 0.08);
   }
   .viewer-toolbar-header {
     border-bottom: 1px solid hsl(var(--rule));
+    background-color: hsl(var(--card));
+    color: hsl(var(--foreground));
   }
   html.dark .viewer-toolbar-header {
+    background-color: var(--canvas);
     color: hsl(var(--foreground));
+    border-bottom-color: rgba(255, 255, 255, 0.12);
   }
   html.dark .viewer-toolbar-header .btn-ghost {
     color: hsl(var(--muted2));

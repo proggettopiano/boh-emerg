@@ -49,7 +49,8 @@ export default function SharedLibraryDetail() {
       toast.success("PDF aggiunti");
       load();
     } catch (e) {
-      toast.error("Errore aggiunta PDF");
+      const message = e.response?.data?.detail || "Errore aggiunta PDF";
+      toast.error(message);
     }
   };
   

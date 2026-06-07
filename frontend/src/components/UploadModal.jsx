@@ -58,7 +58,8 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
       if (signal.aborted) return;
 
       try {
-          const statusRes = await api.get(`/pdfs/${pdfId}/status`, { signal });
+          const statusRes = await api.get(`/pdfs/${pdfId}/status`, { signal }).catch(() => null);
+        if (!statusRes) return;  // Status check failed, but upload succeeded
         const { status, error, pages } = statusRes.data;
         const processingStatus = status === "ready" ? "ready" : status === "error" ? "error" : "pending";
 
