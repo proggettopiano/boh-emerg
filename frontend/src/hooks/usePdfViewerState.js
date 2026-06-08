@@ -262,6 +262,35 @@ function useSearchController({
     node.scrollIntoView({ behavior, block: "center" });
   }, [mountedRef, setSearchNavigationLock]);
 
+  const resolvePendingSearch = useCallback(() => {
+    const direction = pendingSearchDirectionRef.current;
+    if (!direction) return false;
+
+    const currentPage = getCurrentPage();
+    const list = matchesRef.current;
+    const pageMatchIndex = direction === 1
+      ? findFirstMatchIndexOnPage(list, currentPage)
+      : findLastMatchIndexOnPage(currentPage, list);
+
+    if (pageMatchIndex >= 0) {
+      scrollToMatch(list, pageMatchIndex, "smooth");
+      pendingSearchDirectionRef.current = 0;
+      return true;
+    }
+
+    const nextPage = currentPage + direction;
+    if (nextPage >= 1 && nextPage <= numPages) {
+      goToPage(nextPage);
+      return false;
+    }
+
+    pendingSearchDirectionRef.current = 0;
+    if (!list.length) return false;
+    const wrapIndex = direction === 1 ? 0 : list.length - 1;
+    scrollToMatch(list, wrapIndex, "smooth");
+    return true;
+  }, [findLastMatchIndexOnPage, getCurrentPage, goToPage, numPages, scrollToMatch]);
+
   const collectMatches = useCallback(() => {
     if (!mountedRef.current || !containerRef.current || !hasSearchQuery) return;
     const list = Array.from(containerRef.current.querySelectorAll("mark.hl"));
@@ -302,35 +331,6 @@ function useSearchController({
     }
     return -1;
   }, []);
-
-  const resolvePendingSearch = useCallback(() => {
-    const direction = pendingSearchDirectionRef.current;
-    if (!direction) return false;
-
-    const currentPage = getCurrentPage();
-    const list = matchesRef.current;
-    const pageMatchIndex = direction === 1
-      ? findFirstMatchIndexOnPage(list, currentPage)
-      : findLastMatchIndexOnPage(currentPage, list);
-
-    if (pageMatchIndex >= 0) {
-      scrollToMatch(list, pageMatchIndex, "smooth");
-      pendingSearchDirectionRef.current = 0;
-      return true;
-    }
-
-    const nextPage = currentPage + direction;
-    if (nextPage >= 1 && nextPage <= numPages) {
-      goToPage(nextPage);
-      return false;
-    }
-
-    pendingSearchDirectionRef.current = 0;
-    if (!list.length) return false;
-    const wrapIndex = direction === 1 ? 0 : list.length - 1;
-    scrollToMatch(list, wrapIndex, "smooth");
-    return true;
-  }, [findLastMatchIndexOnPage, getCurrentPage, goToPage, numPages, scrollToMatch]);
 
   const onPageChanged = useCallback(
     (pageNum) => {
