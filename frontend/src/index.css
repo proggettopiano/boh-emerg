@@ -557,8 +557,7 @@
   /* Light theme: make the notice visibly marked but subtle — inverted from dark theme
      Use a faint dark tint panel on the light canvas so it reads as the 'opposite' of dark.
   */
-  html:not(.dark) p.text-sm.rounded-md.p-3.mt-4,
-  html:not(.dark) p.text-sm.text-muted2 {
+  html:not(.dark) p.text-sm.rounded-md.p-3.mt-4 {
     background: rgba(15,23,42,0.06) !important;
     color: rgb(10,10,10) !important;
     border-color: rgba(15,23,42,0.12) !important;
@@ -567,8 +566,7 @@
   }
 
   /* Dark theme: keep the stronger dark-card appearance but slightly increased depth */
-  html.dark p.text-sm.rounded-md.p-3.mt-4,
-  html.dark p.text-sm.text-muted2 {
+  html.dark p.text-sm.rounded-md.p-3.mt-4 {
     background: hsl(var(--card)) !important;
     color: hsl(var(--foreground)) !important;
     border-color: rgba(255,255,255,0.10) !important;
