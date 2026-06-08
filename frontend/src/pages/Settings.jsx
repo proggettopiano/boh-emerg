@@ -87,7 +87,7 @@ export default function Settings() {
                 <div className="border border-rule rounded-md p-5 bg-card">
                   <p className="overline mb-2">Condividi</p>
                   <h3 className="font-semibold text-lg mb-2">Crea librerie pubbliche</h3>
-                  <p className="text-sm text-muted2">Crea una libreria, aggiungi PDF e condividi il link ai tuoi collaboratori o agli studenti.</p>
+                  <p className="text-sm text-muted2">Crea una libreria, aggiungi PDF e condividi il link a musicisti e fratelli.</p>
                 </div>
                 <div className="border border-rule rounded-md p-5 bg-card">
                   <p className="overline mb-2">Esplora</p>
