@@ -267,6 +267,16 @@ function useSearchController({
     const list = Array.from(containerRef.current.querySelectorAll("mark.hl"));
     matchesRef.current = list;
     setMatches(list);
+    
+    // Preserve current match index if still valid (e.g., during cross-page navigation)
+    const currentIdx = currentMatchIndexRef.current;
+    if (currentIdx >= 0 && currentIdx < list.length) {
+      // Keep current index, just ensure active highlight is applied
+      list.forEach((node, i) => node.classList.toggle("hl-active", i === currentIdx));
+      return;
+    }
+    
+    // Otherwise, find first match on current page
     syncMatchIndexToPage(getCurrentPage(), list);
   }, [hasSearchQuery, containerRef, mountedRef, syncMatchIndexToPage, getCurrentPage]);
 
