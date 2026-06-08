@@ -312,12 +312,6 @@ function useSearchController({
     syncMatchIndexToPage(getCurrentPage(), list);
   }, [hasSearchQuery, containerRef, mountedRef, resolvePendingSearch, syncMatchIndexToPage, getCurrentPage]);
 
-  const scheduleCollect = useCallback(() => {
-    if (!hasSearchQuery) return;
-    clearTimeout(collectTimerRef.current);
-    collectTimerRef.current = setTimeout(collectMatches, 120);
-  }, [hasSearchQuery, collectMatches]);
-
   const getMatchPage = useCallback((node) => {
     const wrapper = node?.closest("[data-pdf-page]");
     if (!wrapper) return null;
@@ -331,6 +325,12 @@ function useSearchController({
     }
     return -1;
   }, []);
+
+  const scheduleCollect = useCallback(() => {
+    if (!hasSearchQuery) return;
+    clearTimeout(collectTimerRef.current);
+    collectTimerRef.current = setTimeout(collectMatches, 120);
+  }, [hasSearchQuery, collectMatches]);
 
   const onPageChanged = useCallback(
     (pageNum) => {
