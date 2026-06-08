@@ -60,7 +60,7 @@ export default function Shared() {
         <div>
           <p className="overline mb-2 flex items-center gap-2"><Share2 size={12} /> CONDIVISE</p>
           <h1 className="font-display font-black text-4xl md:text-5xl tracking-tighter">Librerie Pubbliche</h1>
-          <p className="text-sm text-muted2">Crea una libreria, aggiungi PDF e condividi il link a musicisti e fratelli.</p>
+          <p className="text-muted2 mt-2">Crea una libreria, aggiungi PDF e condividi il link a musicisti e fratelli.</p>
         </div>
         <button onClick={() => setShowCreate(true)} className="btn-primary">
           <Plus size={16} /> Nuova Libreria
