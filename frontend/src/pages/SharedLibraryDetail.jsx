@@ -193,7 +193,6 @@ function AddPdfsModal({ allPdfs, existing, onClose, onAdd }) {
       <div className="bg-card border border-rule rounded-md w-full max-w-xl shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="p-6 border-b border-rule flex items-center justify-between">
           <h2 className="font-display text-2xl font-black tracking-tight uppercase">Aggiungi Spartiti</h2>
-          <button onClick={onClose} className="text-muted3 hover:text-ink">Chiudi</button>
         </div>
         <div className="p-0 max-h-[60vh] overflow-y-auto">
           {candidates.length === 0 ? (

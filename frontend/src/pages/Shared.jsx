@@ -97,9 +97,9 @@ export default function Shared() {
               </div>
 
               <div className="flex items-center gap-2 pt-4 border-t border-rule">
-                <Link 
-                  to={`/libraries/${l.id}`} 
-                  className="flex-1 flex items-center justify-center gap-2 py-2 bg-canvas2 hover:bg-ink hover:text-white rounded-sm text-xs font-bold transition-all dark:hover:bg-canvas dark:hover:text-foreground"
+                <Link
+                  to={`/libraries/${l.id}`}
+                  className="flex-1 flex items-center justify-center gap-2 py-2 bg-canvas2 hover:bg-ink hover:text-white rounded-sm text-xs font-bold transition-all dark:hover:bg-white dark:hover:text-black active:bg-white active:text-black dark:active:bg-white dark:active:text-black"
                 >
                   <ExternalLink size={14} /> Gestisci Libreria
                 </Link>
