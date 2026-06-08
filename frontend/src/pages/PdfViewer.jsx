@@ -310,7 +310,7 @@ export default function PdfViewer() {
     match.scrollIntoView({ behavior: "auto", block: "center" });
     initialSearchScrollRef.current = true;
     return undefined;
-  }, [search.matches, search.hasSearchQuery, pageParam, numPages, pageHeight]);
+  }, [search.matches, search.hasSearchQuery, pageParam, numPages, pageHeight, currentPageRef]);
 
   useEffect(() => {
     if (numPages <= 0) return undefined;
