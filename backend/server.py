@@ -800,6 +800,8 @@ def format_search_result(p: dict, pg: dict, q: str, score: int, snippet: Optiona
         "page": pg["page"],
         # `actual_page` mirrors `page` (some frontend code uses this name)
         "actual_page": pg["page"],
+        # `viewer_page` is the canonical numeric page the viewer should open (physical page)
+        "viewer_page": pg["page"],
         "page_label": pg.get("page_label", pg["page"]),
         "snippet": snippet if snippet is not None else make_snippet(pg["text"], q),
         "score": score,
