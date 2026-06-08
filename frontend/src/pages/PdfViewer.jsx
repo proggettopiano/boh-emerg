@@ -346,7 +346,7 @@ export default function PdfViewer() {
 
     tryFind();
     return () => { cancelled = true; };
-  }, [search.matches, search.hasSearchQuery, pageParam, numPages, pageHeight, currentPageRef]);
+  }, [search.matches, search.hasSearchQuery, pageParam, numPages, pageHeight, currentPageRef, page]);
 
   useEffect(() => {
     if (numPages <= 0) return undefined;
