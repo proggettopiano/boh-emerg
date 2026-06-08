@@ -803,8 +803,51 @@ async def search(q: str = Query(..., min_length=1), user_id: str = Depends(get_c
         safe_q = re.escape(raw_q)
 
     results = []
+    seen = set()
+
+    if raw_q.isdigit():
+        # Prefer direct page-label matches for numeric searches, then hymn/header-like hits.
+        label_cursor = db.pdf_pages.find({"page_label": raw_q}).sort([("pdf_id", 1), ("page", 1)])
+        async for pg in label_cursor:
+            key = (pg["pdf_id"], pg["page"])
+            if key in seen:
+                continue
+            seen.add(key)
+            p = await db.pdfs.find_one({"id": pg["pdf_id"]})
+            if p:
+                results.append({
+                    "pdf_id": p["id"],
+                    "title": p["title"],
+                    "page": pg["page"],
+                    "page_label": pg.get("page_label", pg["page"]),
+                    "snippet": make_snippet(pg["text"], q),
+                    "is_protected": p.get("is_protected", False),
+                })
+
+        header_regex = rf"(?m)(?:^|\n)\s*{re.escape(raw_q)}(?:[.)\s])"
+        header_cursor = db.pdf_pages.find({"text": {"$regex": header_regex, "$options": "im"}}).sort([("pdf_id", 1), ("page", 1)]).limit(100)
+        async for pg in header_cursor:
+            key = (pg["pdf_id"], pg["page"])
+            if key in seen:
+                continue
+            seen.add(key)
+            p = await db.pdfs.find_one({"id": pg["pdf_id"]})
+            if p:
+                results.append({
+                    "pdf_id": p["id"],
+                    "title": p["title"],
+                    "page": pg["page"],
+                    "page_label": pg.get("page_label", pg["page"]),
+                    "snippet": make_snippet(pg["text"], q),
+                    "is_protected": p.get("is_protected", False),
+                })
+
     cursor = db.pdf_pages.find({"text": {"$regex": safe_q, "$options": "i"}}).sort([("pdf_id", 1), ("page", 1)]).limit(100)
     async for pg in cursor:
+        key = (pg["pdf_id"], pg["page"])
+        if key in seen:
+            continue
+        seen.add(key)
         p = await db.pdfs.find_one({"id": pg["pdf_id"]})
         if p:
             results.append({
