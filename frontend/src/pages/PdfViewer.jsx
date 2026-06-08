@@ -78,7 +78,8 @@ function rangeFromScroll(scrollY, viewportHeight, slotHeight, numPages, toolbarO
 export default function PdfViewer() {
   const { id } = useParams();
   const [params] = useSearchParams();
-  const pageParam = params.get("page") || "";
+  const rawPageParam = params.get("page");
+  const pageParam = (rawPageParam && rawPageParam !== "undefined" && rawPageParam !== "null") ? rawPageParam : "";
   const _parsedPage = parseInt(pageParam, 10);
   const initialPage = Number.isFinite(_parsedPage) ? _parsedPage : 1;
   const initialQuery = params.get("q") || "";
@@ -311,16 +312,40 @@ export default function PdfViewer() {
   }, [search.hasSearchQuery, numPages, visibleRange, search.collectMatches]);
 
   useEffect(() => {
-    if (!search.hasSearchQuery || !pageParam || numPages === 0 || !pageHeight || initialSearchScrollRef.current) return undefined;
+    if (!search.hasSearchQuery || numPages === 0 || !pageHeight || initialSearchScrollRef.current) return undefined;
     if (!mountedRef.current) return undefined;
-    const currentPage = currentPageRef.current;
-    const pageEl = pageRefs.current[currentPage];
-    if (!pageEl) return undefined;
-    const match = pageEl.querySelector("mark.hl");
-    if (!match) return undefined;
-    match.scrollIntoView({ behavior: "auto", block: "center" });
-    initialSearchScrollRef.current = true;
-    return undefined;
+
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 120; // ~2 seconds at 60fps
+
+    const tryFind = () => {
+      if (cancelled) return;
+      attempts += 1;
+      for (let p = 1; p <= numPages; p += 1) {
+        const el = pageRefs.current[p];
+        if (!el) continue;
+        const match = el.querySelector("mark.hl");
+        if (match) {
+          if (p !== currentPageRef.current) {
+            page.goToPage(p);
+          }
+          try {
+            match.scrollIntoView({ behavior: "auto", block: "center" });
+          } catch (err) {
+            // ignore
+          }
+          initialSearchScrollRef.current = true;
+          return;
+        }
+      }
+      if (attempts < maxAttempts) {
+        requestAnimationFrame(tryFind);
+      }
+    };
+
+    tryFind();
+    return () => { cancelled = true; };
   }, [search.matches, search.hasSearchQuery, pageParam, numPages, pageHeight, currentPageRef]);
 
   useEffect(() => {
