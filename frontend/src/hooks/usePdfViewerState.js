@@ -323,7 +323,7 @@ function useSearchController({
     const wrapIndex = direction === 1 ? 0 : list.length - 1;
     scrollToMatch(list, wrapIndex, "smooth");
     return true;
-  }, [findLastMatchIndexOnPage, findFirstMatchIndexOnPage, getCurrentPage, getMatchPageGroups, goToPage, numPages, scrollToMatch]);
+  }, [findLastMatchIndexOnPage, getCurrentPage, getMatchPageGroups, goToPage, scrollToMatch]);
 
   const collectMatches = useCallback(() => {
     if (!mountedRef.current || !containerRef.current || !hasSearchQuery) return;
@@ -385,7 +385,7 @@ function useSearchController({
     pendingSearchDirectionRef.current = -1;
     currentMatchIndexRef.current = -1;
     goToPage(pageGroups[pageGroups.length - 1]);
-  }, [scrollToMatch, getMatchPageGroups, getCurrentPage, goToPage]);
+  }, [getMatchPageGroups, getCurrentPage, goToPage]);
 
   const goToNextMatch = useCallback(() => {
     const list = matchesRef.current;
@@ -407,7 +407,7 @@ function useSearchController({
     pendingSearchDirectionRef.current = 1;
     currentMatchIndexRef.current = -1;
     goToPage(pageGroups[0]);
-  }, [scrollToMatch, getMatchPageGroups, getCurrentPage, goToPage]);
+  }, [getMatchPageGroups, getCurrentPage, goToPage]);
 
   const toggleHighlights = useCallback(() => {
     setHighlightsVisible((v) => !v);
