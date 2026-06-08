@@ -268,6 +268,19 @@ function useSearchController({
     return parseInt(wrapper.getAttribute("data-pdf-page"), 10);
   }, []);
 
+  const getMatchPageGroups = useCallback((list = matchesRef.current) => {
+    const pages = [];
+    const seen = new Set();
+    for (const node of list) {
+      const page = getMatchPage(node);
+      if (page != null && !seen.has(page)) {
+        seen.add(page);
+        pages.push(page);
+      }
+    }
+    return pages;
+  }, [getMatchPage]);
+
   const findLastMatchIndexOnPage = useCallback((pageNum, list = matchesRef.current) => {
     for (let i = list.length - 1; i >= 0; i -= 1) {
       const wrapper = list[i].closest("[data-pdf-page]");
@@ -292,9 +305,16 @@ function useSearchController({
       return true;
     }
 
-    const nextPage = currentPage + direction;
-    if (nextPage >= 1 && nextPage <= numPages) {
-      goToPage(nextPage);
+    const pageGroups = getMatchPageGroups(list);
+    if (pageGroups.length) {
+      const currentGroupIndex = pageGroups.indexOf(currentPage);
+      let targetGroupIndex = currentGroupIndex >= 0
+        ? currentGroupIndex + (direction === 1 ? 1 : -1)
+        : direction === 1 ? 0 : pageGroups.length - 1;
+
+      if (targetGroupIndex < 0) targetGroupIndex = pageGroups.length - 1;
+      if (targetGroupIndex >= pageGroups.length) targetGroupIndex = 0;
+      goToPage(pageGroups[targetGroupIndex]);
       return false;
     }
 
@@ -303,7 +323,7 @@ function useSearchController({
     const wrapIndex = direction === 1 ? 0 : list.length - 1;
     scrollToMatch(list, wrapIndex, "smooth");
     return true;
-  }, [findLastMatchIndexOnPage, getCurrentPage, goToPage, numPages, scrollToMatch]);
+  }, [findLastMatchIndexOnPage, findFirstMatchIndexOnPage, getCurrentPage, getMatchPageGroups, goToPage, numPages, scrollToMatch]);
 
   const collectMatches = useCallback(() => {
     if (!mountedRef.current || !containerRef.current || !hasSearchQuery) return;
@@ -348,64 +368,46 @@ function useSearchController({
   const goToPrevMatch = useCallback(() => {
     const list = matchesRef.current;
     if (list.length === 0) return;
-    const currentIndex = currentMatchIndexRef.current;
-    const prevIndex = currentIndex - 1;
-    if (prevIndex >= 0) {
-      const targetNode = list[prevIndex];
-      const targetPage = getMatchPage(targetNode) || getCurrentPage();
-      if (targetPage !== getCurrentPage()) {
-        pendingSearchDirectionRef.current = -1;
-        currentMatchIndexRef.current = -1; // Reset to find first match on target page
-        goToPage(targetPage);
-        return;
-      }
-      scrollToMatch(list, prevIndex);
+    const pageGroups = getMatchPageGroups(list);
+    if (!pageGroups.length) return;
+
+    const currentPage = getCurrentPage();
+    const currentGroupIndex = pageGroups.indexOf(currentPage);
+    const targetGroupIndex = currentGroupIndex >= 0 ? currentGroupIndex - 1 : pageGroups.length - 1;
+
+    if (targetGroupIndex >= 0 && targetGroupIndex < pageGroups.length) {
+      pendingSearchDirectionRef.current = -1;
+      currentMatchIndexRef.current = -1;
+      goToPage(pageGroups[targetGroupIndex]);
       return;
     }
 
     pendingSearchDirectionRef.current = -1;
-    const currentPage = getCurrentPage();
-    if (currentPage > 1) {
-      currentMatchIndexRef.current = -1; // Reset to find last match on target page
-      goToPage(currentPage - 1);
-      return;
-    }
-
-    if (list.length > 0) {
-      scrollToMatch(list, list.length - 1);
-    }
-  }, [scrollToMatch, getMatchPage, getCurrentPage, goToPage]);
+    currentMatchIndexRef.current = -1;
+    goToPage(pageGroups[pageGroups.length - 1]);
+  }, [scrollToMatch, getMatchPageGroups, getCurrentPage, goToPage]);
 
   const goToNextMatch = useCallback(() => {
     const list = matchesRef.current;
     if (list.length === 0) return;
-    const currentIndex = currentMatchIndexRef.current;
-    const nextIndex = currentIndex + 1;
-    if (nextIndex < list.length) {
-      const targetNode = list[nextIndex];
-      const targetPage = getMatchPage(targetNode) || getCurrentPage();
-      if (targetPage !== getCurrentPage()) {
-        pendingSearchDirectionRef.current = 1;
-        currentMatchIndexRef.current = -1; // Reset to find first match on target page
-        goToPage(targetPage);
-        return;
-      }
-      scrollToMatch(list, nextIndex);
+    const pageGroups = getMatchPageGroups(list);
+    if (!pageGroups.length) return;
+
+    const currentPage = getCurrentPage();
+    const currentGroupIndex = pageGroups.indexOf(currentPage);
+    const targetGroupIndex = currentGroupIndex >= 0 ? currentGroupIndex + 1 : 0;
+
+    if (targetGroupIndex >= 0 && targetGroupIndex < pageGroups.length) {
+      pendingSearchDirectionRef.current = 1;
+      currentMatchIndexRef.current = -1;
+      goToPage(pageGroups[targetGroupIndex]);
       return;
     }
 
     pendingSearchDirectionRef.current = 1;
-    const currentPage = getCurrentPage();
-    if (currentPage < numPages) {
-      currentMatchIndexRef.current = -1; // Reset to find first match on target page
-      goToPage(currentPage + 1);
-      return;
-    }
-
-    if (list.length > 0) {
-      scrollToMatch(list, 0);
-    }
-  }, [scrollToMatch, getMatchPage, getCurrentPage, goToPage, numPages]);
+    currentMatchIndexRef.current = -1;
+    goToPage(pageGroups[0]);
+  }, [scrollToMatch, getMatchPageGroups, getCurrentPage, goToPage]);
 
   const toggleHighlights = useCallback(() => {
     setHighlightsVisible((v) => !v);
@@ -461,12 +463,16 @@ function useSearchController({
   );
 
   const pageNum = getCurrentPage();
-  const onPageCount = countMatchesOnPage(matches, pageNum);
-  const matchLabel = !matches.length
+  const pageGroups = getMatchPageGroups(matches);
+  const currentActivePageIndex = pageGroups.indexOf(pageNum);
+  const activeLabelIndex = currentActivePageIndex >= 0
+    ? currentActivePageIndex
+    : matches.length > 0
+      ? pageGroups.findIndex((page) => findFirstMatchIndexOnPage(matches, page) === currentMatchIndex)
+      : -1;
+  const matchLabel = !pageGroups.length
     ? "Nessun risultato"
-    : onPageCount > 0
-      ? `${currentMatchIndex + 1} / ${matches.length} · pag ${pageNum}`
-      : `${currentMatchIndex + 1} / ${matches.length}`;
+    : `${Math.max(1, activeLabelIndex + 1)} / ${pageGroups.length} · pag ${pageNum}`;
 
   return {
     query,
