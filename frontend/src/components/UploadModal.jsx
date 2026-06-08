@@ -52,7 +52,6 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
   const [progress, setProgress] = useState(0);
   const abortRef = useRef(null);
   const mountedRef = useRef(false);
-  const [libraryPdfs, setLibraryPdfs] = useState(null);
 
   const pollPdfStatus = async (pdfId, clientKey, signal) => {
     const maxAttempts = 15;
@@ -124,43 +123,13 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
       toast.error(`${invalid} file ignorati: carica solo PDF validi fino a ${MAX_UPLOAD_QUEUE_SIZE_MB} MB per upload.`);
     }
 
-    // If uploading into a shared library, preflight-check existing protected files
-    let allowed = valid;
-    if (libraryId) {
-      try {
-        if (!libraryPdfs) {
-          const r = await api.get(`/libraries/${libraryId}`);
-          if (r?.data?.pdfs) setLibraryPdfs(r.data.pdfs);
-        }
-      } catch (e) {
-        // ignore fetch error - we'll proceed without preflight
-      }
-
-      const libList = libraryPdfs || [];
-      if (libList.length) {
-        const protectedSet = new Set(libList.filter((p) => p.is_protected).map((p) => (p.filename || p.title || "").trim().toLowerCase()));
-        const protectedNames = [];
-        allowed = valid.filter((file) => {
-          const name = (file.name || "").trim().toLowerCase();
-          if (protectedSet.has(name)) {
-            protectedNames.push(file.name);
-            return false;
-          }
-          return true;
-        });
-        if (protectedNames.length) {
-          toast.error(`I seguenti file non sono stati caricati perché protetti: ${protectedNames.join(", ")}`);
-        }
-      }
-    }
-
     setFiles((prev) => {
       const seen = new Set(prev.map(({ file }) => `${file.name}-${file.size}-${file.lastModified}`));
       const remainingCount = MAX_UPLOAD_FILE_COUNT - prev.length;
       let remainingBytes = (MAX_UPLOAD_QUEUE_SIZE_MB * 1024 * 1024) - prev.reduce((sum, item) => sum + item.file.size, 0);
       const next = [];
 
-      for (const file of allowed) {
+      for (const file of valid) {
         if (remainingCount - next.length <= 0) break;
         if (file.size > remainingBytes) continue;
         const key = `${file.name}-${file.size}-${file.lastModified}`;
@@ -171,7 +140,7 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
         remainingBytes -= file.size;
       }
 
-      const droppedFiles = allowed.length - next.length;
+      const droppedFiles = valid.length - next.length;
       if (droppedFiles > 0 || prev.length + next.length > MAX_UPLOAD_FILE_COUNT) {
         toast.error(`Limite upload: fino a ${MAX_UPLOAD_FILE_COUNT} file e ${MAX_UPLOAD_QUEUE_SIZE_MB} MB totali. Seleziona meno file o carica in più lotti.`);
       }
