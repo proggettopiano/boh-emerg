@@ -5,19 +5,26 @@ import fitz  # PyMuPDF
 
 logger = logging.getLogger(__name__)
 
-def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool]:
+def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool, List[str]]:
     """Extract text from each page. OCR logic removed for stability.
     This follows the stable-pdf-v1 structure but removes the pytesseract dependency.
 
-    Returns (pages_text, total_pages, used_ocr).
+    Returns (pages_text, total_pages, used_ocr, page_labels).
     """
     pages_text: List[str] = []
+    page_labels: List[str] = []
     used_ocr = False
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     except Exception as e:
         logger.error(f"Failed to open PDF: {e}")
         raise
+
+    labels = None
+    try:
+        labels = doc.get_page_labels()
+    except Exception:
+        labels = None
 
     for page_num in range(len(doc)):
         try:
@@ -27,10 +34,15 @@ def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool]:
         except Exception as e:
             logger.warning(f"Failed to extract page {page_num + 1}: {e}")
             pages_text.append("")
+
+        if labels and page_num < len(labels) and labels[page_num] is not None:
+            page_labels.append(labels[page_num])
+        else:
+            page_labels.append(str(page_num + 1))
             
     total = len(doc)
     doc.close()
-    return pages_text, total, used_ocr
+    return pages_text, total, used_ocr, page_labels
 
 
 def compress_pdf(pdf_bytes: bytes) -> Tuple[bytes, bool]:

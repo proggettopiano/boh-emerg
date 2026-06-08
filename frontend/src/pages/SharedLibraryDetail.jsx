@@ -148,7 +148,7 @@ export default function SharedLibraryDetail() {
                 <button onClick={() => navigate(`/viewer/${r.pdf_id}?page=${r.page}&q=${encodeURIComponent(q)}`)} className="text-left w-full flex items-start gap-4">
                   <FileText size={20} className="text-muted2 mt-1 shrink-0" />
                   <div className="min-w-0">
-                    <div className="font-display font-bold text-lg hover:underline decoration-2 underline-offset-4">{r.title} <span className="text-mono text-xs font-normal text-muted3 ml-2">PAGINA {r.page}</span></div>
+                    <div className="font-display font-bold text-lg hover:underline decoration-2 underline-offset-4">{r.title} <span className="text-mono text-xs font-normal text-muted3 ml-2">PAGINA {r.page_label || r.page}</span></div>
                     {r.snippet && <p className="text-sm text-muted2 mt-1 leading-relaxed" dangerouslySetInnerHTML={{ __html: r.snippet.replace(new RegExp(q, 'gi'), match => `<mark class="bg-amber-100 text-amber-900 px-0.5 rounded-sm">${match}</mark>`) }} /> }
                   </div>
                 </button>
