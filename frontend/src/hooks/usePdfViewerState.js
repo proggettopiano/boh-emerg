@@ -335,7 +335,8 @@ function useSearchController({
   const onPageChanged = useCallback(
     (pageNum) => {
       if (!hasSearchQuery) return;
-      if (matchesRef.current.length > 0) {
+      const hasPageMatches = findFirstMatchIndexOnPage(matchesRef.current, pageNum) >= 0;
+      if (hasPageMatches) {
         syncMatchIndexToPage(pageNum);
       } else {
         scheduleCollect();
@@ -353,10 +354,10 @@ function useSearchController({
       const targetNode = list[prevIndex];
       const targetPage = getMatchPage(targetNode) || getCurrentPage();
       if (targetPage !== getCurrentPage()) {
+        pendingSearchDirectionRef.current = -1;
         goToPage(targetPage);
+        return;
       }
-      setCurrentMatchIndex(prevIndex);
-      currentMatchIndexRef.current = prevIndex;
       scrollToMatch(list, prevIndex);
       return;
     }
@@ -369,10 +370,7 @@ function useSearchController({
     }
 
     if (list.length > 0) {
-      const lastIndex = list.length - 1;
-      setCurrentMatchIndex(lastIndex);
-      currentMatchIndexRef.current = lastIndex;
-      scrollToMatch(list, lastIndex);
+      scrollToMatch(list, list.length - 1);
     }
   }, [scrollToMatch, getMatchPage, getCurrentPage, goToPage]);
 
@@ -385,10 +383,10 @@ function useSearchController({
       const targetNode = list[nextIndex];
       const targetPage = getMatchPage(targetNode) || getCurrentPage();
       if (targetPage !== getCurrentPage()) {
+        pendingSearchDirectionRef.current = 1;
         goToPage(targetPage);
+        return;
       }
-      setCurrentMatchIndex(nextIndex);
-      currentMatchIndexRef.current = nextIndex;
       scrollToMatch(list, nextIndex);
       return;
     }
@@ -401,8 +399,6 @@ function useSearchController({
     }
 
     if (list.length > 0) {
-      setCurrentMatchIndex(0);
-      currentMatchIndexRef.current = 0;
       scrollToMatch(list, 0);
     }
   }, [scrollToMatch, getMatchPage, getCurrentPage, goToPage, numPages]);
