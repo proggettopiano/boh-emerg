@@ -387,19 +387,18 @@
   .viewer-toolbar-controls--search .viewer-toolbar-meta {
     color: hsl(var(--foreground));
   }
+  /* Divider: always show a thin rule between toolbar sections
+     Use accent tint in light theme and a subtle white line in dark theme */
   .viewer-toolbar-divider {
-    width: 1px;
-    align-self: stretch;
-    min-height: 2.25rem;
-    background: hsl(var(--rule));
-    flex-shrink: 0;
-  }
-  .viewer-toolbar-controls--search .viewer-toolbar-divider {
     width: 100%;
     height: 1px;
-    min-height: 0;
     align-self: stretch;
     background: hsl(var(--accent) / 0.5);
+    flex-shrink: 0;
+  }
+
+  html.dark .viewer-toolbar-divider {
+    background: rgba(255, 255, 255, 0.08);
   }
   .viewer-search-query {
     font-size: 0.875rem;
