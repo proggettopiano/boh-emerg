@@ -411,10 +411,12 @@ function useSearchController({
       for (let i = 0; i < matchPages.length; i += 1) {
         if (matchPages[i] < currentPage) idx = i;
       }
-      const targetIndex = idx >= 0 ? idx : matchPages.length - 1;
+      if (idx < 0) return; // no previous match page — do not move
+      const targetPage = matchPages[idx];
+      if (targetPage === currentPage) return;
       pendingSearchDirectionRef.current = -1;
       currentMatchIndexRef.current = -1;
-      goToPage(matchPages[targetIndex]);
+      goToPage(targetPage);
       return;
     }
 
@@ -425,18 +427,26 @@ function useSearchController({
 
     const currentPage = getCurrentPage();
     const currentGroupIndex = pageGroups.indexOf(currentPage);
-    const targetGroupIndex = currentGroupIndex >= 0 ? currentGroupIndex - 1 : pageGroups.length - 1;
 
-    if (targetGroupIndex >= 0 && targetGroupIndex < pageGroups.length) {
+    // If current page is part of groups, go to previous group if any
+    if (currentGroupIndex >= 0) {
+      const targetGroupIndex = currentGroupIndex - 1;
+      if (targetGroupIndex < 0) return; // no previous group — do nothing
       pendingSearchDirectionRef.current = -1;
       currentMatchIndexRef.current = -1;
       goToPage(pageGroups[targetGroupIndex]);
       return;
     }
 
+    // If current page not in groups, find the last group strictly less than currentPage
+    let idx2 = -1;
+    for (let i = 0; i < pageGroups.length; i += 1) {
+      if (pageGroups[i] < currentPage) idx2 = i;
+    }
+    if (idx2 < 0) return;
     pendingSearchDirectionRef.current = -1;
     currentMatchIndexRef.current = -1;
-    goToPage(pageGroups[pageGroups.length - 1]);
+    goToPage(pageGroups[idx2]);
   }, [matchPages, getMatchPageGroups, getCurrentPage, goToPage]);
 
   const goToNextMatch = useCallback(() => {
@@ -448,10 +458,12 @@ function useSearchController({
       for (let i = 0; i < matchPages.length; i += 1) {
         if (matchPages[i] > currentPage) { idx = i; break; }
       }
-      const targetIndex = idx >= 0 ? idx : 0;
+      if (idx < 0) return; // no next match page — do not move
+      const targetPage = matchPages[idx];
+      if (targetPage === currentPage) return;
       pendingSearchDirectionRef.current = 1;
       currentMatchIndexRef.current = -1;
-      goToPage(matchPages[targetIndex]);
+      goToPage(targetPage);
       return;
     }
 
@@ -462,18 +474,26 @@ function useSearchController({
 
     const currentPage = getCurrentPage();
     const currentGroupIndex = pageGroups.indexOf(currentPage);
-    const targetGroupIndex = currentGroupIndex >= 0 ? currentGroupIndex + 1 : 0;
 
-    if (targetGroupIndex >= 0 && targetGroupIndex < pageGroups.length) {
+    // If current page is part of groups, go to next group if any
+    if (currentGroupIndex >= 0) {
+      const targetGroupIndex = currentGroupIndex + 1;
+      if (targetGroupIndex >= pageGroups.length) return; // no next group
       pendingSearchDirectionRef.current = 1;
       currentMatchIndexRef.current = -1;
       goToPage(pageGroups[targetGroupIndex]);
       return;
     }
 
+    // If current page not in groups, find the first group strictly greater than currentPage
+    let idx2 = -1;
+    for (let i = 0; i < pageGroups.length; i += 1) {
+      if (pageGroups[i] > currentPage) { idx2 = i; break; }
+    }
+    if (idx2 < 0) return;
     pendingSearchDirectionRef.current = 1;
     currentMatchIndexRef.current = -1;
-    goToPage(pageGroups[0]);
+    goToPage(pageGroups[idx2]);
   }, [matchPages, getMatchPageGroups, getCurrentPage, goToPage]);
 
   const toggleHighlights = useCallback(() => {
@@ -640,7 +660,8 @@ export function usePdfViewerState({
     mountedRef,
     searchDriverDoneRef,
     getCurrentPage,
-    goToPage: page.goToPage,
+    // Use immediate scroll (auto) for search navigation to avoid smooth/jerky animations
+    goToPage: page.scrollToPage,
     numPages,
   });
 
