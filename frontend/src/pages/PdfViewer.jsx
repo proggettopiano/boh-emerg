@@ -101,6 +101,7 @@ export default function PdfViewer() {
   const initialScrollDoneRef = useRef(false);
   const renderGenerationRef = useRef(0);
   const [renderGeneration, setRenderGeneration] = useState(0);
+  const initialSearchScrollRef = useRef(false);
   const token = localStorage.getItem("scorelib_token");
   const fileUrl = `${API}/pdfs/${id}/file?token=${encodeURIComponent(token || "")}`;
   const fileObj = useMemo(() => ({ url: fileUrl }), [fileUrl]);
@@ -297,6 +298,19 @@ export default function PdfViewer() {
     const t = setTimeout(search.collectMatches, 250);
     return () => clearTimeout(t);
   }, [search.hasSearchQuery, numPages, visibleRange, search.collectMatches]);
+
+  useEffect(() => {
+    if (!search.hasSearchQuery || !pageParam || numPages === 0 || !pageHeight || initialSearchScrollRef.current) return undefined;
+    if (!mountedRef.current) return undefined;
+    const currentPage = currentPageRef.current;
+    const pageEl = pageRefs.current[currentPage];
+    if (!pageEl) return undefined;
+    const match = pageEl.querySelector("mark.hl");
+    if (!match) return undefined;
+    match.scrollIntoView({ behavior: "auto", block: "center" });
+    initialSearchScrollRef.current = true;
+    return undefined;
+  }, [search.matches, search.hasSearchQuery, pageParam, numPages, pageHeight]);
 
   useEffect(() => {
     if (numPages <= 0) return undefined;
