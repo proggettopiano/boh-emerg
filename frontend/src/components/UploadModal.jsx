@@ -7,10 +7,11 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-const MAX_UPLOAD_SIZE_MB = 25;
-const MAX_UPLOAD_FILE_COUNT = 20;
-const MAX_UPLOAD_QUEUE_SIZE_MB = 200;
-const UPLOAD_BATCH_SIZE = 5;
+// Client-side upload constraints (kept conservative to avoid backend overload)
+const MAX_UPLOAD_SIZE_MB = 20; // single file cannot exceed session limit
+const MAX_UPLOAD_FILE_COUNT = 2; // massimo file per session
+const MAX_UPLOAD_QUEUE_SIZE_MB = 20; // totale per upload/sessione
+const UPLOAD_BATCH_SIZE = 2; // invia fino a 2 file per richiesta
 
 function makeFileId(file) {
   const randomPart = typeof crypto !== "undefined" && crypto.randomUUID
@@ -108,12 +109,18 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
   }, [open]);
 
   const handleFiles = (list) => {
+    if (busy) {
+      toast.error("Upload in corso: attendi il completamento del batch corrente prima di aggiungere altri file.");
+      return;
+    }
+
     const picked = Array.from(list || []);
     const valid = picked.filter((f) => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"));
-    const oversized = valid.filter((file) => file.size > MAX_UPLOAD_SIZE_MB * 1024 * 1024);
+    const singleMaxBytes = MAX_UPLOAD_QUEUE_SIZE_MB * 1024 * 1024;
+    const oversized = valid.filter((file) => file.size > singleMaxBytes);
     const invalid = picked.length - valid.length + oversized.length;
     if (invalid > 0) {
-      toast.error(`${invalid} file ignorati: carica solo PDF validi fino a ${MAX_UPLOAD_SIZE_MB} MB.`);
+      toast.error(`${invalid} file ignorati: carica solo PDF validi fino a ${MAX_UPLOAD_QUEUE_SIZE_MB} MB per upload.`);
     }
 
     setFiles((prev) => {
@@ -127,7 +134,7 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
         if (file.size > remainingBytes) continue;
         const key = `${file.name}-${file.size}-${file.lastModified}`;
         if (seen.has(key)) continue;
-        if (file.size > MAX_UPLOAD_SIZE_MB * 1024 * 1024) continue;
+        if (file.size > singleMaxBytes) continue;
         next.push({ id: makeFileId(file), file });
         seen.add(key);
         remainingBytes -= file.size;
@@ -202,8 +209,17 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
         try {
           const libResult = await api.post(`/libraries/${libraryId}/pdfs`, { pdf_ids: ids }, { signal: ctrl.signal });
           const { added = [], protected: protectedIds = [], skipped = [] } = libResult.data || {};
-          if (protectedIds.length) {
-            toast.success(`${ok} caricati, ${added.length} aggiunti alla libreria, ${protectedIds.length} protetti ignorati`);
+
+          // Annotate results with library protection info for clearer UI
+          if (protectedIds && protectedIds.length) {
+            setResults((prev) => (prev || []).map((r) => ({ ...r, library_protected: protectedIds.includes(r.pdf_id) })));
+            const protectedNames = allResults.filter(r => protectedIds.includes(r.pdf_id)).map(r => r.name).filter(Boolean);
+            toast.success(`${ok} caricati, ${added.length} aggiunti alla libreria${skipped.length ? `, ${skipped.length} saltati` : ""}`);
+            if (protectedNames.length) {
+              toast.error(`I seguenti file non sono stati aggiunti perché protetti: ${protectedNames.join(", ")}`);
+            } else {
+              toast.error(`${protectedIds.length} file protetti ignorati`);
+            }
           } else if (skipped.length) {
             toast.success(`${ok} caricati, ${added.length} aggiunti alla libreria, ${skipped.length} saltati`);
           } else {
@@ -247,21 +263,21 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
         {!results && (
           <>
             <label
-              className={`block border-2 border-dashed rounded-md p-12 text-center cursor-pointer transition-colors ${drag ? "border-ink bg-canvas3" : "border-muted3 bg-canvas2 hover:bg-canvas3"}`}
-              onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
-              onDragLeave={() => setDrag(false)}
-              onDrop={(e) => { e.preventDefault(); setDrag(false); handleFiles(e.dataTransfer.files); }}
+              className={`block border-2 border-dashed rounded-md p-12 text-center transition-colors ${drag ? "border-ink bg-canvas3" : "border-muted3 bg-canvas2 hover:bg-canvas3"} ${busy ? "opacity-60 pointer-events-none" : "cursor-pointer"}`}
+              onDragOver={(e) => { e.preventDefault(); if (!busy) setDrag(true); }}
+              onDragLeave={() => { if (!busy) setDrag(false); }}
+              onDrop={(e) => { e.preventDefault(); if (busy) { toast.error("Upload in corso: attendi il completamento del batch."); return; } setDrag(false); handleFiles(e.dataTransfer.files); }}
               data-testid="upload-dropzone"
             >
               <UploadCloud size={36} strokeWidth={1.5} className="mx-auto mb-3 text-muted2" />
               <p className="font-medium mb-1">Trascina qui i tuoi PDF, o clicca per selezionare</p>
-              <p className="text-sm text-muted2">Multipli, fino a {MAX_UPLOAD_SIZE_MB} MB per file. Caricati in batch di {UPLOAD_BATCH_SIZE}, massimo {MAX_UPLOAD_FILE_COUNT} file e {MAX_UPLOAD_QUEUE_SIZE_MB} MB totali. I PDF vengono inviati e indicizzati in background.</p>
+              <p className="text-sm text-muted2">2 file alla volta, fino a 20 MB per upload e indicizzati in background.</p>
               <input
                 type="file"
                 accept="application/pdf"
                 multiple
                 className="hidden"
-                onChange={(e) => { handleFiles(e.target.files); e.target.value = ""; }}
+                onChange={(e) => { if (busy) { toast.error("Upload in corso: attendi il completamento del batch."); e.target.value = ""; return; } handleFiles(e.target.files); e.target.value = ""; }}
                 data-testid="upload-file-input"
               />
             </label>
@@ -305,7 +321,7 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
                         r.status === "error" ?
                           `ERRORE: ${r.error || "Indicizzazione fallita"}` :
                           "RICEVUTO - indicizzazione in coda"
-                    ) : (r.duplicate ? "DUPLICATO - gia in libreria" : r.error)}
+                    ) : (r.duplicate ? "DUPLICATO - gia in libreria" : (r.library_protected ? "PROTETTO - non aggiunto alla libreria" : r.error))}
                   </div>
                 </li>
               ))}
