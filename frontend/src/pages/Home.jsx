@@ -136,23 +136,23 @@ export default function Home() {
           />
           {q && <button onClick={() => setQ("")} className="text-mono text-xs text-muted2 hover:text-ink">CANCELLA</button>}
         </div>
-        {recentSearches.length > 0 && (
-          <div className="px-5 pb-4 pt-3 text-sm text-muted2">
-            <div className="mb-2 uppercase tracking-[0.18em] text-[10px] font-semibold">Ricerche recenti</div>
-            <div className="flex flex-wrap gap-2">
-              {recentSearches.map((term) => (
-                <button
-                  key={term}
-                  onClick={() => setQ(term)}
-                  className="rounded-full border border-rule px-3 py-1 text-sm text-muted3 hover:bg-canvas3"
-                >
-                  {term}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
+      {recentSearches.length > 0 && (
+        <div className="bg-card border-2 border-rule rounded-md mb-6 px-5 py-4 text-sm text-muted2" style={{ boxShadow: "0 6px 0 0 rgba(0,0,0,0.08)" }}>
+          <div className="mb-2 uppercase tracking-[0.18em] text-[10px] font-semibold">Ricerche recenti</div>
+          <div className="flex flex-wrap gap-2">
+            {recentSearches.map((term) => (
+              <button
+                key={term}
+                onClick={() => setQ(term)}
+                className="rounded-full border border-rule px-3 py-1 text-sm text-muted3 hover:bg-canvas3"
+              >
+                {term}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="flex items-center justify-between text-sm text-muted2 mb-8">
         <span>{countLoading ? "Caricamento libreria..." : `${count} PDF nella libreria globale`}</span>
@@ -175,7 +175,7 @@ export default function Home() {
                 <div className="flex items-baseline gap-3 flex-wrap mb-1">
                   <span className="font-display text-xl font-semibold group-hover:underline decoration-2 underline-offset-4">{highlight(r.title, q)}</span>
                   <span className="text-mono text-[10px] px-2 py-0.5 bg-canvas3 rounded-sm text-muted2">
-                    PAG {r.page}
+                    PAG {r.page_label || r.page}
                   </span>
                   {r.is_protected && (
                     <span className="text-mono text-[10px] px-2 py-0.5 bg-amber-100 text-amber-700 rounded-sm font-bold">

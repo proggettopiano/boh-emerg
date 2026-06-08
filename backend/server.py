@@ -810,6 +810,7 @@ async def search(q: str = Query(..., min_length=1), user_id: str = Depends(get_c
                 "pdf_id": p["id"],
                 "title": p["title"],
                 "page": pg["page"],
+                "page_label": pg.get("page_label", pg["page"]),
                 "snippet": make_snippet(pg["text"], q),
                 "is_protected": p.get("is_protected", False),
             })
@@ -920,9 +921,13 @@ async def process_pdf_job(job_id):
         pdf = await db.pdfs.find_one({"id": job["pdf_id"]})
         fpath = Path(pdf["file_path"])
         if fpath.exists():
-            pages_text, total, _ = extract_pages(fpath.read_bytes())
+            pages_text, total, _, page_labels = extract_pages(fpath.read_bytes())
             for i, txt in enumerate(pages_text):
-                await db.pdf_pages.update_one({"pdf_id": pdf["id"], "page": i+1}, {"$set": {"text": txt}}, upsert=True)
+                await db.pdf_pages.update_one(
+                    {"pdf_id": pdf["id"], "page": i+1},
+                    {"$set": {"text": txt, "page_label": page_labels[i]}},
+                    upsert=True,
+                )
             await db.pdfs.update_one({"id": pdf["id"]}, {"$set": {"status": "ready", "pages": total}})
             # Backup to master Drive if configured and not already synced
             master = await get_master_drive()
