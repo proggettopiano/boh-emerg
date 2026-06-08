@@ -175,7 +175,17 @@ export default function Home() {
                     try {
                       const meta = await api.get(`/pdfs/${r.pdf_id}`);
                       const labels = (meta.data && meta.data.page_labels) || [];
-                      const idx = labels.findIndex((lbl) => String(lbl) === String(r.page_label));
+                      const targetLabel = String(r.page_label).trim();
+                      const idx = labels.findIndex((lbl) => {
+                        if (lbl == null) return false;
+                        const a = String(lbl).trim();
+                        if (a === targetLabel) return true;
+                        if (a.toLowerCase() === targetLabel.toLowerCase()) return true;
+                        const an = parseInt(a, 10);
+                        const bn = parseInt(targetLabel, 10);
+                        if (Number.isFinite(an) && Number.isFinite(bn) && an === bn) return true;
+                        return false;
+                      });
                       if (idx >= 0) pageNum = idx + 1;
                     } catch (err) {
                       console.warn("Failed to resolve page_label to physical page", err);
