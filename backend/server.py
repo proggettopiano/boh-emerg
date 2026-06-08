@@ -797,17 +797,32 @@ async def search(q: str = Query(..., min_length=1), user_id: str = Depends(get_c
     if not raw_q:
         return {"results": []}
 
-    if raw_q.isdigit():
-        safe_q = rf"(?<!\d){re.escape(raw_q)}(?!\d)"
-    else:
-        safe_q = re.escape(raw_q)
-
     results = []
-    seen = set()
+    seen = set()  # Per evitare duplicati (stessa pagina trovata con logiche diverse)
 
     if raw_q.isdigit():
-        # Prefer direct page-label matches for numeric searches, then hymn/header-like hits.
-        label_cursor = db.pdf_pages.find({"page_label": raw_q}).sort([("pdf_id", 1), ("page", 1)])
+        # 1. PRIORITÀ ASSOLUTA: INIZIO INNO
+        hymn_regex = rf"(?m)^\s*{re.escape(raw_q)}(?:[.\s]|[A-Z])"
+        cursor = db.pdf_pages.find({"text": {"$regex": hymn_regex, "$options": "m"}})
+        async for pg in cursor:
+            key = (pg["pdf_id"], pg["page"])
+            if key in seen:
+                continue
+            seen.add(key)
+            p = await db.pdfs.find_one({"id": pg["pdf_id"]})
+            if p:
+                results.append({
+                    "pdf_id": p["id"],
+                    "title": p["title"],
+                    "page": pg["page"],
+                    "page_label": pg.get("page_label", pg["page"]),
+                    "snippet": pg["text"][:200],
+                    "score": 100,
+                    "is_protected": p.get("is_protected", False),
+                })
+
+        # 2. SECONDA PRIORITÀ: ETICHETTA PAGINA
+        label_cursor = db.pdf_pages.find({"page_label": raw_q})
         async for pg in label_cursor:
             key = (pg["pdf_id"], pg["page"])
             if key in seen:
@@ -820,30 +835,14 @@ async def search(q: str = Query(..., min_length=1), user_id: str = Depends(get_c
                     "title": p["title"],
                     "page": pg["page"],
                     "page_label": pg.get("page_label", pg["page"]),
-                    "snippet": make_snippet(pg["text"], q),
+                    "snippet": f"Pagina {raw_q}",
+                    "score": 50,
                     "is_protected": p.get("is_protected", False),
                 })
 
-        header_regex = rf"(?m)(?:^|\n)\s*{re.escape(raw_q)}(?:[.)\s])"
-        header_cursor = db.pdf_pages.find({"text": {"$regex": header_regex, "$options": "im"}}).sort([("pdf_id", 1), ("page", 1)]).limit(100)
-        async for pg in header_cursor:
-            key = (pg["pdf_id"], pg["page"])
-            if key in seen:
-                continue
-            seen.add(key)
-            p = await db.pdfs.find_one({"id": pg["pdf_id"]})
-            if p:
-                results.append({
-                    "pdf_id": p["id"],
-                    "title": p["title"],
-                    "page": pg["page"],
-                    "page_label": pg.get("page_label", pg["page"]),
-                    "snippet": make_snippet(pg["text"], q),
-                    "is_protected": p.get("is_protected", False),
-                })
-
-    cursor = db.pdf_pages.find({"text": {"$regex": safe_q, "$options": "i"}}).sort([("pdf_id", 1), ("page", 1)]).limit(100)
-    async for pg in cursor:
+    safe_q = rf"(?<!\d){re.escape(raw_q)}(?!\d)" if raw_q.isdigit() else re.escape(raw_q)
+    text_cursor = db.pdf_pages.find({"text": {"$regex": safe_q, "$options": "i"}}).limit(50)
+    async for pg in text_cursor:
         key = (pg["pdf_id"], pg["page"])
         if key in seen:
             continue
@@ -856,8 +855,11 @@ async def search(q: str = Query(..., min_length=1), user_id: str = Depends(get_c
                 "page": pg["page"],
                 "page_label": pg.get("page_label", pg["page"]),
                 "snippet": make_snippet(pg["text"], q),
+                "score": 10,
                 "is_protected": p.get("is_protected", False),
             })
+
+    results.sort(key=lambda x: (x["score"], -x["page"]), reverse=True)
     return {"results": results}
 
 # ----------------- Admin Logs -----------------
