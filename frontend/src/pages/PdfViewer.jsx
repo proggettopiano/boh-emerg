@@ -78,8 +78,9 @@ function rangeFromScroll(scrollY, viewportHeight, slotHeight, numPages, toolbarO
 export default function PdfViewer() {
   const { id } = useParams();
   const [params] = useSearchParams();
-  const pageParam = params.get("page") || "1";
-  const initialPage = parseInt(pageParam, 10);
+  const pageParam = params.get("page") || "";
+  const _parsedPage = parseInt(pageParam, 10);
+  const initialPage = Number.isFinite(_parsedPage) ? _parsedPage : 1;
   const initialQuery = params.get("q") || "";
   const navigate = useNavigate();
 
