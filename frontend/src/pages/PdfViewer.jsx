@@ -316,9 +316,33 @@ export default function PdfViewer() {
     if (!mountedRef.current) return undefined;
 
     let cancelled = false;
-    let attempts = 0;
     const maxAttempts = 120; // ~2 seconds at 60fps
 
+    // If server provided full-file match pages, jump to first match page immediately
+    if (search.matchPages && search.matchPages.length > 0) {
+      const target = search.matchPages[0];
+      let attempts = 0;
+      page.goToPage(target);
+      const tryScrollOnTarget = () => {
+        if (cancelled) return;
+        attempts += 1;
+        const el = pageRefs.current[target];
+        if (el) {
+          const match = el.querySelector("mark.hl");
+          if (match) {
+            try { match.scrollIntoView({ behavior: "auto", block: "center" }); } catch (e) {}
+            initialSearchScrollRef.current = true;
+            return;
+          }
+        }
+        if (attempts < maxAttempts) requestAnimationFrame(tryScrollOnTarget);
+      };
+      tryScrollOnTarget();
+      return () => { cancelled = true; };
+    }
+
+    // Fallback: scan mounted pages for first highlight
+    let attempts = 0;
     const tryFind = () => {
       if (cancelled) return;
       attempts += 1;
@@ -327,21 +351,13 @@ export default function PdfViewer() {
         if (!el) continue;
         const match = el.querySelector("mark.hl");
         if (match) {
-          if (p !== currentPageRef.current) {
-            page.goToPage(p);
-          }
-          try {
-            match.scrollIntoView({ behavior: "auto", block: "center" });
-          } catch (err) {
-            // ignore
-          }
+          if (p !== currentPageRef.current) page.goToPage(p);
+          try { match.scrollIntoView({ behavior: "auto", block: "center" }); } catch (err) {}
           initialSearchScrollRef.current = true;
           return;
         }
       }
-      if (attempts < maxAttempts) {
-        requestAnimationFrame(tryFind);
-      }
+      if (attempts < maxAttempts) requestAnimationFrame(tryFind);
     };
 
     tryFind();
