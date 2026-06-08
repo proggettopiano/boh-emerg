@@ -78,7 +78,8 @@ function rangeFromScroll(scrollY, viewportHeight, slotHeight, numPages, toolbarO
 export default function PdfViewer() {
   const { id } = useParams();
   const [params] = useSearchParams();
-  const initialPage = parseInt(params.get("page") || "1", 10);
+  const pageParam = params.get("page") || "1";
+  const initialPage = parseInt(pageParam, 10);
   const initialQuery = params.get("q") || "";
   const navigate = useNavigate();
 
@@ -129,6 +130,14 @@ export default function PdfViewer() {
   const getToolbarOffset = useCallback(
     () => toolbarOffsetRef.current,
     [],
+  );
+
+  const getPageLabel = useCallback(
+    (pageNumber) => {
+      if (!meta?.page_labels || pageNumber < 1) return String(pageNumber);
+      return meta.page_labels[pageNumber - 1] || String(pageNumber);
+    },
+    [meta?.page_labels],
   );
 
   const {
@@ -191,6 +200,14 @@ export default function PdfViewer() {
       });
     return () => ctrl.abort();
   }, [id]);
+
+  useEffect(() => {
+    if (!meta?.page_labels?.length || numPages <= 0 || !pageParam) return;
+    const normalizedLabel = pageParam.trim();
+    const targetPage = meta.page_labels.findIndex((label) => label === normalizedLabel) + 1;
+    if (!targetPage || targetPage === currentPageRef.current) return;
+    page.goToPage(targetPage);
+  }, [meta?.page_labels, numPages, pageParam, page, currentPageRef]);
 
   useEffect(() => {
     const update = () => {
@@ -449,7 +466,7 @@ export default function PdfViewer() {
                     }}
                     aria-hidden="true"
                   >
-                    <span className="text-mono text-xs text-muted3">PAG {pageNumber}</span>
+                    <span className="text-mono text-xs text-muted3">PAG {getPageLabel(pageNumber)}</span>
                   </div>
                   {pageNumber < numPages && (
                     <div

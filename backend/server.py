@@ -284,6 +284,7 @@ def _serialize_pdf(p: dict) -> dict:
         "filename": p.get("filename", ""),
         "size": p.get("size", 0),
         "pages": p.get("pages", 0),
+        "page_labels": p.get("page_labels", []),
         "status": p.get("status", "ready"),
         "is_protected": p.get("is_protected", False),
         "tags": p.get("tags", []),
@@ -928,7 +929,7 @@ async def process_pdf_job(job_id):
                     {"$set": {"text": txt, "page_label": page_labels[i]}},
                     upsert=True,
                 )
-            await db.pdfs.update_one({"id": pdf["id"]}, {"$set": {"status": "ready", "pages": total}})
+            await db.pdfs.update_one({"id": pdf["id"]}, {"$set": {"status": "ready", "pages": total, "page_labels": page_labels}})
             # Backup to master Drive if configured and not already synced
             master = await get_master_drive()
             if master and master.get("refresh_token") and not pdf.get("drive_file_id"):
