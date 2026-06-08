@@ -13,6 +13,25 @@ import usePdfViewerState, {
 
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
+// Suppress pdfjs non-critical warnings (TT fonts, annotation styles)
+if (typeof window !== "undefined") {
+  const originalWarn = console.warn;
+  console.warn = (msg, ...args) => {
+    const msgStr = String(msg || "");
+    const firstArg = String(args[0] || "");
+    // Filter out TrueType font warnings and annotation border style warnings
+    if (
+      msgStr.includes("TT:") ||
+      msgStr.includes("AnnotationBorderStyle") ||
+      firstArg.includes("TT:") ||
+      firstArg.includes("AnnotationBorderStyle")
+    ) {
+      return;
+    }
+    originalWarn(msg, ...args);
+  };
+}
+
 const PAGE_GAP = 24;
 const PAGE_FOOTER_H = 28;
 const PAGE_ASPECT = 297 / 210;
