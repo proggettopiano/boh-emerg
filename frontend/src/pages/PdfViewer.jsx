@@ -206,7 +206,17 @@ export default function PdfViewer() {
   useEffect(() => {
     if (!meta?.page_labels?.length || numPages <= 0 || !pageParam) return;
     const normalizedLabel = pageParam.trim();
-    const targetPage = meta.page_labels.findIndex((label) => label === normalizedLabel) + 1;
+    const idx = meta.page_labels.findIndex((label) => {
+      if (label == null) return false;
+      const a = String(label).trim();
+      if (a === normalizedLabel) return true;
+      if (a.toLowerCase() === normalizedLabel.toLowerCase()) return true;
+      const an = parseInt(a, 10);
+      const bn = parseInt(normalizedLabel, 10);
+      if (Number.isFinite(an) && Number.isFinite(bn) && an === bn) return true;
+      return false;
+    });
+    const targetPage = idx >= 0 ? idx + 1 : null;
     if (!targetPage || targetPage === currentPageRef.current) return;
     page.goToPage(targetPage);
   }, [meta?.page_labels, numPages, pageParam, page, currentPageRef]);
