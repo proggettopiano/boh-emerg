@@ -262,6 +262,20 @@ function useSearchController({
     node.scrollIntoView({ behavior, block: "center" });
   }, [mountedRef, setSearchNavigationLock]);
 
+  const getMatchPage = useCallback((node) => {
+    const wrapper = node?.closest("[data-pdf-page]");
+    if (!wrapper) return null;
+    return parseInt(wrapper.getAttribute("data-pdf-page"), 10);
+  }, []);
+
+  const findLastMatchIndexOnPage = useCallback((pageNum, list = matchesRef.current) => {
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      const wrapper = list[i].closest("[data-pdf-page]");
+      if (wrapper && parseInt(wrapper.getAttribute("data-pdf-page"), 10) === pageNum) return i;
+    }
+    return -1;
+  }, []);
+
   const resolvePendingSearch = useCallback(() => {
     const direction = pendingSearchDirectionRef.current;
     if (!direction) return false;
@@ -311,20 +325,6 @@ function useSearchController({
 
     syncMatchIndexToPage(getCurrentPage(), list);
   }, [hasSearchQuery, containerRef, mountedRef, resolvePendingSearch, syncMatchIndexToPage, getCurrentPage]);
-
-  const getMatchPage = useCallback((node) => {
-    const wrapper = node?.closest("[data-pdf-page]");
-    if (!wrapper) return null;
-    return parseInt(wrapper.getAttribute("data-pdf-page"), 10);
-  }, []);
-
-  const findLastMatchIndexOnPage = useCallback((pageNum, list = matchesRef.current) => {
-    for (let i = list.length - 1; i >= 0; i -= 1) {
-      const wrapper = list[i].closest("[data-pdf-page]");
-      if (wrapper && parseInt(wrapper.getAttribute("data-pdf-page"), 10) === pageNum) return i;
-    }
-    return -1;
-  }, []);
 
   const scheduleCollect = useCallback(() => {
     if (!hasSearchQuery) return;
