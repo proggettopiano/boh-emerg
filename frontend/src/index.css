@@ -400,6 +400,23 @@
   html.dark .viewer-toolbar-divider {
     background: rgba(255, 255, 255, 0.08);
   }
+
+  /* Ensure the toolbar controls always show a subtle top rule in dark mode */
+  html.dark .viewer-toolbar-controls {
+    border-top: 1px solid rgba(255,255,255,0.08) !important;
+  }
+
+  /* Force Manage Library button to white background + black text in dark mode */
+  .library-manage-btn {
+    background: var(--canvas2);
+  }
+  html.dark .library-manage-btn {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+  html.dark .library-manage-btn svg {
+    color: inherit !important;
+  }
   .viewer-search-query {
     font-size: 0.875rem;
     font-weight: 600;
