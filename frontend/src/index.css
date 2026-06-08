@@ -266,6 +266,15 @@
     background: hsl(var(--card));
     overflow-x: hidden;
   }
+
+  /* Light theme: give toolbar sections a subtle border and lift so they don't blend with PDF content */
+  .viewer-toolbar-header,
+  .viewer-toolbar-controls,
+  .viewer-toolbar-controls--search {
+    border-bottom: 1px solid hsl(var(--rule));
+    box-shadow: 0 1px 0 rgba(15,23,42,0.03);
+    background: hsl(var(--card));
+  }
   .viewer-toolbar-controls--search {
     background: hsl(var(--card));
     border-top: none;
