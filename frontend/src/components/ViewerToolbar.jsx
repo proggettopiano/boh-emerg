@@ -98,7 +98,6 @@ export default function ViewerToolbar({
             <div className="viewer-toolbar-group viewer-toolbar-group--search" data-testid="viewer-search-bar">
               <span className="viewer-toolbar-label">Cerca</span>
               <span className="viewer-search-query" title={search.query}>"{search.query}"</span>
-              <span className="viewer-toolbar-meta" data-testid="match-counter">{search.matchLabel}</span>
               <div className="viewer-toolbar-actions viewer-search-hub" data-testid="viewer-search-hub">
                 <button
                   type="button"
@@ -110,12 +109,6 @@ export default function ViewerToolbar({
                 >
                   <ChevronLeft size={18} />
                 </button>
-                <span className="viewer-search-hub-counter" data-testid="match-counter">
-                  {search.matchLabel}
-                  {search.matchNavigationLoading && (
-                    <span className="viewer-search-hub-spinner" aria-hidden="true" />
-                  )}
-                </span>
                 <button
                   type="button"
                   onClick={search.goToNextMatch}
