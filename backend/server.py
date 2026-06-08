@@ -792,12 +792,27 @@ async def _user_can_access_pdf(user_id: str, pdf_id: str) -> bool:
 # ----------------- Search -----------------
 @api.get("/search")
 async def search(q: str = Query(..., min_length=1), user_id: str = Depends(get_current_user_id)):
-    safe_q = re.escape(q.strip())
+    raw_q = q.strip()
+    if not raw_q:
+        return {"results": []}
+
+    if raw_q.isdigit():
+        safe_q = rf"(?<!\d){re.escape(raw_q)}(?!\d)"
+    else:
+        safe_q = re.escape(raw_q)
+
     results = []
-    cursor = db.pdf_pages.find({"text": {"$regex": safe_q, "$options": "i"}}).limit(100)
+    cursor = db.pdf_pages.find({"text": {"$regex": safe_q, "$options": "i"}}).sort([("pdf_id", 1), ("page", 1)]).limit(100)
     async for pg in cursor:
         p = await db.pdfs.find_one({"id": pg["pdf_id"]})
-        if p: results.append({"pdf_id": p["id"], "title": p["title"], "page": pg["page"], "snippet": make_snippet(pg["text"], q), "is_protected": p.get("is_protected", False)})
+        if p:
+            results.append({
+                "pdf_id": p["id"],
+                "title": p["title"],
+                "page": pg["page"],
+                "snippet": make_snippet(pg["text"], q),
+                "is_protected": p.get("is_protected", False),
+            })
     return {"results": results}
 
 # ----------------- Admin Logs -----------------
