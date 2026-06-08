@@ -181,6 +181,7 @@ function useSearchController({
   searchDriverDoneRef,
   getCurrentPage,
   goToPage,
+  numPages,
 }) {
   const navigate = useNavigate();
   const [query, setQuery] = useState(initialQuery);
@@ -194,6 +195,7 @@ function useSearchController({
   const currentMatchIndexRef = useRef(0);
   const searchNavigationRef = useRef(false);
   const searchNavigationTimerRef = useRef(null);
+  const pendingSearchDirectionRef = useRef(0);
 
   const hasSearchQuery = query.length > 0;
   const isSearchActive = hasSearchQuery && searchPanelVisible;
@@ -262,23 +264,24 @@ function useSearchController({
 
   const collectMatches = useCallback(() => {
     if (!mountedRef.current || !containerRef.current || !hasSearchQuery) return;
-    // Don't recollect matches while user is actively navigating between them
-    if (searchNavigationRef.current) return;
     const list = Array.from(containerRef.current.querySelectorAll("mark.hl"));
     matchesRef.current = list;
     setMatches(list);
-    
+
+    if (pendingSearchDirectionRef.current !== 0) {
+      resolvePendingSearch();
+      return;
+    }
+
     // Preserve current match index if still valid (e.g., during cross-page navigation)
     const currentIdx = currentMatchIndexRef.current;
     if (currentIdx >= 0 && currentIdx < list.length) {
-      // Keep current index, just ensure active highlight is applied
       list.forEach((node, i) => node.classList.toggle("hl-active", i === currentIdx));
       return;
     }
-    
-    // Otherwise, find first match on current page
+
     syncMatchIndexToPage(getCurrentPage(), list);
-  }, [hasSearchQuery, containerRef, mountedRef, syncMatchIndexToPage, getCurrentPage]);
+  }, [hasSearchQuery, containerRef, mountedRef, resolvePendingSearch, syncMatchIndexToPage, getCurrentPage]);
 
   const scheduleCollect = useCallback(() => {
     if (!hasSearchQuery) return;
@@ -291,6 +294,43 @@ function useSearchController({
     if (!wrapper) return null;
     return parseInt(wrapper.getAttribute("data-pdf-page"), 10);
   }, []);
+
+  const findLastMatchIndexOnPage = useCallback((pageNum, list = matchesRef.current) => {
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      const wrapper = list[i].closest("[data-pdf-page]");
+      if (wrapper && parseInt(wrapper.getAttribute("data-pdf-page"), 10) === pageNum) return i;
+    }
+    return -1;
+  }, []);
+
+  const resolvePendingSearch = useCallback(() => {
+    const direction = pendingSearchDirectionRef.current;
+    if (!direction) return false;
+
+    const currentPage = getCurrentPage();
+    const list = matchesRef.current;
+    const pageMatchIndex = direction === 1
+      ? findFirstMatchIndexOnPage(list, currentPage)
+      : findLastMatchIndexOnPage(currentPage, list);
+
+    if (pageMatchIndex >= 0) {
+      scrollToMatch(list, pageMatchIndex, "smooth");
+      pendingSearchDirectionRef.current = 0;
+      return true;
+    }
+
+    const nextPage = currentPage + direction;
+    if (nextPage >= 1 && nextPage <= numPages) {
+      goToPage(nextPage);
+      return false;
+    }
+
+    pendingSearchDirectionRef.current = 0;
+    if (!list.length) return false;
+    const wrapIndex = direction === 1 ? 0 : list.length - 1;
+    scrollToMatch(list, wrapIndex, "smooth");
+    return true;
+  }, [findLastMatchIndexOnPage, getCurrentPage, goToPage, numPages, scrollToMatch]);
 
   const onPageChanged = useCallback(
     (pageNum) => {
@@ -308,35 +348,64 @@ function useSearchController({
     const list = matchesRef.current;
     if (list.length === 0) return;
     const currentIndex = currentMatchIndexRef.current;
-    const nextIndex = (currentIndex - 1 + list.length) % list.length;
-    const targetNode = list[nextIndex];
-    const targetPage = getMatchPage(targetNode) || getCurrentPage();
-    // Navigate to page if different, then apply match
-    if (targetPage !== getCurrentPage()) {
-      goToPage(targetPage);
+    const prevIndex = currentIndex - 1;
+    if (prevIndex >= 0) {
+      const targetNode = list[prevIndex];
+      const targetPage = getMatchPage(targetNode) || getCurrentPage();
+      if (targetPage !== getCurrentPage()) {
+        goToPage(targetPage);
+      }
+      setCurrentMatchIndex(prevIndex);
+      currentMatchIndexRef.current = prevIndex;
+      scrollToMatch(list, prevIndex);
+      return;
     }
-    // Scroll to match will be called after page navigation completes via syncMatchIndexToPage
-    setCurrentMatchIndex(nextIndex);
-    currentMatchIndexRef.current = nextIndex;
-    scrollToMatch(list, nextIndex);
+
+    pendingSearchDirectionRef.current = -1;
+    const currentPage = getCurrentPage();
+    if (currentPage > 1) {
+      goToPage(currentPage - 1);
+      return;
+    }
+
+    if (list.length > 0) {
+      const lastIndex = list.length - 1;
+      setCurrentMatchIndex(lastIndex);
+      currentMatchIndexRef.current = lastIndex;
+      scrollToMatch(list, lastIndex);
+    }
   }, [scrollToMatch, getMatchPage, getCurrentPage, goToPage]);
 
   const goToNextMatch = useCallback(() => {
     const list = matchesRef.current;
     if (list.length === 0) return;
     const currentIndex = currentMatchIndexRef.current;
-    const nextIndex = (currentIndex + 1) % list.length;
-    const targetNode = list[nextIndex];
-    const targetPage = getMatchPage(targetNode) || getCurrentPage();
-    // Navigate to page if different, then apply match
-    if (targetPage !== getCurrentPage()) {
-      goToPage(targetPage);
+    const nextIndex = currentIndex + 1;
+    if (nextIndex < list.length) {
+      const targetNode = list[nextIndex];
+      const targetPage = getMatchPage(targetNode) || getCurrentPage();
+      if (targetPage !== getCurrentPage()) {
+        goToPage(targetPage);
+      }
+      setCurrentMatchIndex(nextIndex);
+      currentMatchIndexRef.current = nextIndex;
+      scrollToMatch(list, nextIndex);
+      return;
     }
-    // Scroll to match will be called after page navigation completes via syncMatchIndexToPage
-    setCurrentMatchIndex(nextIndex);
-    currentMatchIndexRef.current = nextIndex;
-    scrollToMatch(list, nextIndex);
-  }, [scrollToMatch, getMatchPage, getCurrentPage, goToPage]);
+
+    pendingSearchDirectionRef.current = 1;
+    const currentPage = getCurrentPage();
+    if (currentPage < numPages) {
+      goToPage(currentPage + 1);
+      return;
+    }
+
+    if (list.length > 0) {
+      setCurrentMatchIndex(0);
+      currentMatchIndexRef.current = 0;
+      scrollToMatch(list, 0);
+    }
+  }, [scrollToMatch, getMatchPage, getCurrentPage, goToPage, numPages]);
 
   const toggleHighlights = useCallback(() => {
     setHighlightsVisible((v) => !v);
@@ -497,6 +566,7 @@ export function usePdfViewerState({
     searchDriverDoneRef,
     getCurrentPage,
     goToPage: page.goToPage,
+    numPages,
   });
 
   activeQueryRef.current = search.searchPanelVisible ? search.query : "";
