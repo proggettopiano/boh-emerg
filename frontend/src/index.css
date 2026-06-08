@@ -549,4 +549,23 @@
   html.dark li.group {
     background-color: transparent;
   }
+
+  /* Ensure account-approval notice is visible in both themes
+     The markup uses inline styles which would otherwise override CSS;
+     use high-specificity selectors with !important to guarantee contrast.
+  */
+  html:not(.dark) p.text-sm.rounded-md.p-3.mt-4 {
+    background: hsl(var(--canvas3)) !important;
+    color: hsl(var(--foreground)) !important;
+    border-color: hsl(var(--rule)) !important;
+    box-shadow: 0 1px 2px rgba(15,23,42,0.04) !important;
+  }
+
+  /* In dark theme keep the card background but ensure border and text remain readable */
+  html.dark p.text-sm.rounded-md.p-3.mt-4 {
+    background: hsl(var(--card)) !important;
+    color: hsl(var(--foreground)) !important;
+    border-color: rgba(255,255,255,0.08) !important;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.16) !important;
+  }
 }
