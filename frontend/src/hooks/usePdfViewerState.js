@@ -355,6 +355,7 @@ function useSearchController({
       const targetPage = getMatchPage(targetNode) || getCurrentPage();
       if (targetPage !== getCurrentPage()) {
         pendingSearchDirectionRef.current = -1;
+        currentMatchIndexRef.current = -1; // Reset to find first match on target page
         goToPage(targetPage);
         return;
       }
@@ -365,6 +366,7 @@ function useSearchController({
     pendingSearchDirectionRef.current = -1;
     const currentPage = getCurrentPage();
     if (currentPage > 1) {
+      currentMatchIndexRef.current = -1; // Reset to find last match on target page
       goToPage(currentPage - 1);
       return;
     }
@@ -384,6 +386,7 @@ function useSearchController({
       const targetPage = getMatchPage(targetNode) || getCurrentPage();
       if (targetPage !== getCurrentPage()) {
         pendingSearchDirectionRef.current = 1;
+        currentMatchIndexRef.current = -1; // Reset to find first match on target page
         goToPage(targetPage);
         return;
       }
@@ -394,6 +397,7 @@ function useSearchController({
     pendingSearchDirectionRef.current = 1;
     const currentPage = getCurrentPage();
     if (currentPage < numPages) {
+      currentMatchIndexRef.current = -1; // Reset to find first match on target page
       goToPage(currentPage + 1);
       return;
     }
