@@ -15,20 +15,21 @@ pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
 // Suppress pdfjs non-critical warnings (TT fonts, annotation styles)
 if (typeof window !== "undefined") {
-  const originalWarn = console.warn;
+  const originalWarn = console.warn.bind(console);
+  const originalError = console.error.bind(console);
+  const shouldFilter = (v) => {
+    const s = String(v || "");
+    return /TT:|AnnotationBorderStyle|undefined function/i.test(s);
+  };
+
   console.warn = (msg, ...args) => {
-    const msgStr = String(msg || "");
-    const firstArg = String(args[0] || "");
-    // Filter out TrueType font warnings and annotation border style warnings
-    if (
-      msgStr.includes("TT:") ||
-      msgStr.includes("AnnotationBorderStyle") ||
-      firstArg.includes("TT:") ||
-      firstArg.includes("AnnotationBorderStyle")
-    ) {
-      return;
-    }
+    if (shouldFilter(msg) || args.some(shouldFilter)) return;
     originalWarn(msg, ...args);
+  };
+
+  console.error = (msg, ...args) => {
+    if (shouldFilter(msg) || args.some(shouldFilter)) return;
+    originalError(msg, ...args);
   };
 }
 
