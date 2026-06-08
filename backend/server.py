@@ -796,6 +796,9 @@ def format_search_result(p: dict, pg: dict, q: str, score: int, snippet: Optiona
     return {
         "pdf_id": p["id"],
         "title": p["title"],
+        # `page` is the physical (file) page number 1-based — keep for backward compatibility
+        "page": pg["page"],
+        # `actual_page` mirrors `page` (some frontend code uses this name)
         "actual_page": pg["page"],
         "page_label": pg.get("page_label", pg["page"]),
         "snippet": snippet if snippet is not None else make_snippet(pg["text"], q),
@@ -847,7 +850,8 @@ async def search(q: str = Query(..., min_length=1), user_id: str = Depends(get_c
         if p:
             results.append(format_search_result(p, pg, raw_q, score=10))
 
-    results.sort(key=lambda x: (-x["score"], x["page"]))
+    # Sort by score desc, then by physical page number (use actual_page if present, fall back to page)
+    results.sort(key=lambda x: (-x["score"], x.get("actual_page", x.get("page", 0))))
     return {"results": results}
 
 # ----------------- Admin Logs -----------------
