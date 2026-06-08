@@ -92,10 +92,10 @@ export default function ViewerToolbar({
           </span>
         </div>
 
+        <div className="viewer-toolbar-divider" aria-hidden />
+
         {search.isSearchActive && (
-          <>
-            <div className="viewer-toolbar-divider" aria-hidden />
-            <div className="viewer-toolbar-group viewer-toolbar-group--search" data-testid="viewer-search-bar">
+          <div className="viewer-toolbar-group viewer-toolbar-group--search" data-testid="viewer-search-bar">
               <span className="viewer-toolbar-label">Cerca</span>
               <span className="viewer-search-query" title={search.query}>"{search.query}"</span>
               <div className="viewer-toolbar-actions viewer-search-hub" data-testid="viewer-search-hub">
@@ -141,7 +141,6 @@ export default function ViewerToolbar({
                 </button>
               </div>
             </div>
-          </>
         )}
       </div>
     </header>

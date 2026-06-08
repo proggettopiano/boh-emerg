@@ -9,6 +9,9 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const RECENT_SEARCHES_KEY = "scorelib.recentSearches";
+const MAX_RECENT_SEARCHES = 8;
+
 function highlight(text, q) {
   if (!text || !q) return text;
   try {
@@ -31,12 +34,33 @@ function highlight(text, q) {
   }
 }
 
+function loadRecentSearches() {
+  try {
+    const stored = window.localStorage.getItem(RECENT_SEARCHES_KEY);
+    if (!stored) return [];
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item) => typeof item === "string" && item.trim()).slice(0, MAX_RECENT_SEARCHES);
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentSearches(list) {
+  try {
+    window.localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(list.slice(0, MAX_RECENT_SEARCHES)));
+  } catch {
+    // ignore localStorage errors
+  }
+}
+
 export default function Home() {
   const [q, setQ] = useState("");
   const [results, setResults] = useState(null);
   const [count, setCount] = useState(0);
   const [countLoading, setCountLoading] = useState(true);
   const [openUpload, setOpenUpload] = useState(false);
+  const [recentSearches, setRecentSearches] = useState([]);
   const tref = useRef(null);
   const navigate = useNavigate();
   const inputRef = useRef(null);
@@ -58,6 +82,20 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    setRecentSearches(loadRecentSearches());
+  }, []);
+
+  const addRecentSearch = (term) => {
+    const trimmed = term.trim();
+    if (!trimmed) return;
+    setRecentSearches((current) => {
+      const next = [trimmed, ...current.filter((item) => item !== trimmed)].slice(0, MAX_RECENT_SEARCHES);
+      saveRecentSearches(next);
+      return next;
+    });
+  };
+
+  useEffect(() => {
     if (tref.current) clearTimeout(tref.current);
     if (!q.trim()) { setResults(null); return; }
     const ctrl = new AbortController();
@@ -65,7 +103,10 @@ export default function Home() {
     tref.current = setTimeout(async () => {
       try {
         const r = await api.get(`/search`, { params: { q }, signal: ctrl.signal });
-        if (alive) setResults(r.data.results);
+        if (alive) {
+          setResults(r.data.results);
+          addRecentSearch(q);
+        }
       } catch (e) {
         if (alive && e.name !== "CanceledError" && e.name !== "AbortError" && e.code !== "ERR_CANCELED") setResults([]);
       }
@@ -95,6 +136,22 @@ export default function Home() {
           />
           {q && <button onClick={() => setQ("")} className="text-mono text-xs text-muted2 hover:text-ink">CANCELLA</button>}
         </div>
+        {recentSearches.length > 0 && (
+          <div className="px-5 pb-4 pt-3 text-sm text-muted2">
+            <div className="mb-2 uppercase tracking-[0.18em] text-[10px] font-semibold">Ricerche recenti</div>
+            <div className="flex flex-wrap gap-2">
+              {recentSearches.map((term) => (
+                <button
+                  key={term}
+                  onClick={() => setQ(term)}
+                  className="rounded-full border border-rule px-3 py-1 text-sm text-muted3 hover:bg-canvas3"
+                >
+                  {term}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="flex items-center justify-between text-sm text-muted2 mb-8">

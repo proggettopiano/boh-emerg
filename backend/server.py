@@ -36,6 +36,8 @@ load_dotenv(ROOT_DIR / ".env")
 UPLOAD_DIR = ROOT_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True, parents=True)
 MAX_UPLOAD_SIZE_BYTES = int(os.environ.get("MAX_UPLOAD_SIZE_BYTES", 25 * 1024 * 1024))
+MAX_UPLOAD_FILES_PER_REQUEST = int(os.environ.get("MAX_UPLOAD_FILES_PER_REQUEST", 5))
+MAX_UPLOAD_QUEUE_SIZE_BYTES = int(os.environ.get("MAX_UPLOAD_QUEUE_SIZE_BYTES", 200 * 1024 * 1024))
 
 mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
@@ -328,9 +330,18 @@ async def upload_pdf(
     if not files:
         raise HTTPException(status_code=400, detail="Nessun file inviato")
 
+    user = await db.users.find_one({"user_id": user_id})
+    is_admin = user and (user.get("is_admin") or user.get("email", "").lower() == ADMIN_EMAIL)
+    if not is_admin and len(files) > MAX_UPLOAD_FILES_PER_REQUEST:
+        raise HTTPException(status_code=413, detail=f"Solo {MAX_UPLOAD_FILES_PER_REQUEST} file possono essere caricati per volta")
+
     results = []
+    total_uploaded_size = 0
     for file in files:
         content = await file.read()
+        total_uploaded_size += len(content)
+        if not is_admin and total_uploaded_size > MAX_UPLOAD_QUEUE_SIZE_BYTES:
+            raise HTTPException(status_code=413, detail=f"Superata la dimensione massima totale di {MAX_UPLOAD_QUEUE_SIZE_BYTES // (1024 * 1024)} MB per upload")
         if len(content) > MAX_UPLOAD_SIZE_BYTES:
             raise HTTPException(status_code=413, detail=f"File troppo grande: massimo {MAX_UPLOAD_SIZE_BYTES // (1024 * 1024)} MB")
 
@@ -608,11 +619,30 @@ async def get_library(lib_id: str, user_id: str = Depends(get_current_user_id)):
 async def add_to_library(lib_id: str, payload: AddPdfsIn, user_id: str = Depends(get_current_user_id)):
     lib = await db.shared_libraries.find_one({"id": lib_id})
     if not lib: raise HTTPException(status_code=404, detail="Libreria non trovata")
-    protected_count = await db.pdfs.count_documents({"id": {"$in": payload.pdf_ids}, "is_protected": True})
-    if protected_count:
-        raise HTTPException(status_code=403, detail="Impossibile aggiungere file protetti")
-    await db.shared_libraries.update_one({"id": lib_id}, {"$addToSet": {"pdf_ids": {"$each": payload.pdf_ids}}})
-    return {"ok": True}
+
+    added = []
+    protected = []
+    skipped = []
+    existing_ids = set(lib.get("pdf_ids", []))
+
+    for pdf_id in payload.pdf_ids:
+        if pdf_id in existing_ids:
+            skipped.append(pdf_id)
+            continue
+        p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0, "is_protected": 1})
+        if not p:
+            skipped.append(pdf_id)
+            continue
+        if p.get("is_protected"):
+            protected.append(pdf_id)
+            continue
+        added.append(pdf_id)
+        existing_ids.add(pdf_id)
+
+    if added:
+        await db.shared_libraries.update_one({"id": lib_id}, {"$addToSet": {"pdf_ids": {"$each": added}}})
+
+    return {"added": added, "protected": protected, "skipped": skipped}
 
 @api.delete("/libraries/{lib_id}/pdfs/{pdf_id}")
 async def remove_from_library(lib_id: str, pdf_id: str, user_id: str = Depends(get_current_user_id)):

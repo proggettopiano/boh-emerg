@@ -8,6 +8,9 @@ function wait(ms) {
 }
 
 const MAX_UPLOAD_SIZE_MB = 25;
+const MAX_UPLOAD_FILE_COUNT = 20;
+const MAX_UPLOAD_QUEUE_SIZE_MB = 200;
+const UPLOAD_BATCH_SIZE = 5;
 
 function makeFileId(file) {
   const randomPart = typeof crypto !== "undefined" && crypto.randomUUID
@@ -112,13 +115,30 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
     if (invalid > 0) {
       toast.error(`${invalid} file ignorati: carica solo PDF validi fino a ${MAX_UPLOAD_SIZE_MB} MB.`);
     }
+
     setFiles((prev) => {
       const seen = new Set(prev.map(({ file }) => `${file.name}-${file.size}-${file.lastModified}`));
-      const next = valid
-        .filter((file) => file.size <= MAX_UPLOAD_SIZE_MB * 1024 * 1024)
-        .filter((file) => !seen.has(`${file.name}-${file.size}-${file.lastModified}`))
-        .map((file) => ({ id: makeFileId(file), file }));
-      return [...prev, ...next];
+      const remainingCount = MAX_UPLOAD_FILE_COUNT - prev.length;
+      let remainingBytes = (MAX_UPLOAD_QUEUE_SIZE_MB * 1024 * 1024) - prev.reduce((sum, item) => sum + item.file.size, 0);
+      const next = [];
+
+      for (const file of valid) {
+        if (remainingCount - next.length <= 0) break;
+        if (file.size > remainingBytes) continue;
+        const key = `${file.name}-${file.size}-${file.lastModified}`;
+        if (seen.has(key)) continue;
+        if (file.size > MAX_UPLOAD_SIZE_MB * 1024 * 1024) continue;
+        next.push({ id: makeFileId(file), file });
+        seen.add(key);
+        remainingBytes -= file.size;
+      }
+
+      const droppedFiles = valid.length - next.length;
+      if (droppedFiles > 0 || prev.length + next.length > MAX_UPLOAD_FILE_COUNT) {
+        toast.error(`Limite upload: fino a ${MAX_UPLOAD_FILE_COUNT} file e ${MAX_UPLOAD_QUEUE_SIZE_MB} MB totali. Seleziona meno file o carica in più lotti.`);
+      }
+
+      return [...prev, ...next].slice(0, MAX_UPLOAD_FILE_COUNT);
     });
   };
   const remove = (id) => setFiles((p) => p.filter((entry) => entry.id !== id));
@@ -131,48 +151,79 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
-    try {
-      const formData = new FormData();
-      files.forEach(({ file }) => {
-        formData.append("files", file);
-      });
+    const totalQueueSize = files.reduce((sum, { file }) => sum + file.size, 0);
+    const allResults = [];
+    let uploadedBytes = 0;
 
-      const completed = await api.post(`/pdfs/upload`, formData, {
-        signal: ctrl.signal,
-        onUploadProgress: (evt) => {
-          if (!mountedRef.current || !evt.total) return;
-          setProgress(Math.min(100, Math.round((evt.loaded / evt.total) * 100)));
-        },
-      });
+    try {
+      for (let batchIndex = 0; batchIndex < files.length; batchIndex += UPLOAD_BATCH_SIZE) {
+        if (ctrl.signal.aborted) break;
+        const batch = files.slice(batchIndex, batchIndex + UPLOAD_BATCH_SIZE);
+        const formData = new FormData();
+        batch.forEach(({ file }) => formData.append("files", file));
+
+        const completed = await api.post(`/pdfs/upload`, formData, {
+          signal: ctrl.signal,
+          onUploadProgress: (evt) => {
+            if (!mountedRef.current) return;
+            const loaded = Math.min(evt.loaded, evt.total || evt.loaded);
+            const progressValue = totalQueueSize
+              ? Math.min(100, Math.round(((uploadedBytes + loaded) / totalQueueSize) * 100))
+              : 0;
+            setProgress(progressValue);
+          },
+        });
+
+        if (!mountedRef.current || ctrl.signal.aborted) return;
+        const batchResults = (completed.data?.results || []).map((result) => ({
+          ...result,
+          client_key: result.client_key || result.pdf_id || result.existing_id || result.name,
+        }));
+        allResults.push(...batchResults);
+        if (mountedRef.current) setResults([...allResults]);
+
+        uploadedBytes += batch.reduce((sum, { file }) => sum + file.size, 0);
+      }
 
       if (!mountedRef.current || ctrl.signal.aborted) return;
-      const uploadResults = (completed.data?.results || []).map((result) => ({
-        ...result,
-        client_key: result.client_key || result.pdf_id || result.existing_id || result.name,
-      }));
-
-      if (mountedRef.current) {
-        setResults(uploadResults);
-        pollPendingPdfStatuses(uploadResults, ctrl.signal).catch((err) => {
+      if (allResults.length) {
+        setResults(allResults);
+        await pollPendingPdfStatuses(allResults, ctrl.signal).catch((err) => {
           if (!isCanceled(err)) {
             console.error("PDF status polling failed", err);
           }
         });
       }
 
-      const ok = uploadResults.filter((x) => x.ok).length;
-      const fail = uploadResults.length - ok;
+      const ok = allResults.filter((x) => x.ok).length;
+      const fail = allResults.length - ok;
       if (libraryId && ok > 0) {
-        const ids = uploadResults.filter((x) => x.ok).map((x) => x.pdf_id);
-        await api.post(`/libraries/${libraryId}/pdfs`, { pdf_ids: ids }, { signal: ctrl.signal });
+        const ids = allResults.filter((x) => x.ok).map((x) => x.pdf_id);
+        try {
+          const libResult = await api.post(`/libraries/${libraryId}/pdfs`, { pdf_ids: ids }, { signal: ctrl.signal });
+          const { added = [], protected: protectedIds = [], skipped = [] } = libResult.data || {};
+          if (protectedIds.length) {
+            toast.success(`${ok} caricati, ${added.length} aggiunti alla libreria, ${protectedIds.length} protetti ignorati`);
+          } else if (skipped.length) {
+            toast.success(`${ok} caricati, ${added.length} aggiunti alla libreria, ${skipped.length} saltati`);
+          } else {
+            toast.success(`${ok} caricati${fail ? ` - ${fail} errori` : ""}`);
+          }
+        } catch (e) {
+          if (!isCanceled(e)) {
+            toast.error(getErrorMessage(e));
+          }
+        }
+      } else {
+        toast.success(`${ok} caricati${fail ? ` - ${fail} errori` : ""}`);
       }
-      toast.success(`${ok} caricati${fail ? ` - ${fail} errori` : ""}`);
       onComplete?.();
     } catch (e) {
       if (isCanceled(e)) return;
       toast.error(getErrorMessage(e));
     } finally {
       if (mountedRef.current) setBusy(false);
+      setProgress(100);
     }
   };
 
@@ -204,7 +255,7 @@ export default function UploadModal({ open, onClose, onComplete, libraryId }) {
             >
               <UploadCloud size={36} strokeWidth={1.5} className="mx-auto mb-3 text-muted2" />
               <p className="font-medium mb-1">Trascina qui i tuoi PDF, o clicca per selezionare</p>
-              <p className="text-sm text-muted2">Multipli, fino a {MAX_UPLOAD_SIZE_MB} MB per file. I PDF vengono inviati e indicizzati in background.</p>
+              <p className="text-sm text-muted2">Multipli, fino a {MAX_UPLOAD_SIZE_MB} MB per file. Caricati in batch di {UPLOAD_BATCH_SIZE}, massimo {MAX_UPLOAD_FILE_COUNT} file e {MAX_UPLOAD_QUEUE_SIZE_MB} MB totali. I PDF vengono inviati e indicizzati in background.</p>
               <input
                 type="file"
                 accept="application/pdf"

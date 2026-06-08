@@ -242,6 +242,45 @@ class TestLibraries:
         # cleanup
         api_client.delete(f"{BASE_URL}/api/libraries/{lib_id}", headers=auth_headers)
 
+    def test_add_to_library_skips_protected(self, api_client, auth_headers, sample_pdf_bytes):
+        # upload one protected pdf and one normal pdf
+        files1 = {"files": (f"protected_{uuid.uuid4().hex[:6]}.pdf", sample_pdf_bytes, "application/pdf")}
+        r1 = requests.post(f"{BASE_URL}/api/pdfs/upload",
+                           headers={"Authorization": auth_headers["Authorization"]},
+                           files=files1)
+        assert r1.status_code == 200
+        pid_protected = r1.json()["results"][0]["pdf_id"]
+
+        r2 = api_client.patch(f"{BASE_URL}/api/pdfs/{pid_protected}",
+                               json={"is_protected": True},
+                               headers=auth_headers)
+        assert r2.status_code == 200
+
+        files2 = {"files": (f"normal_{uuid.uuid4().hex[:6]}.pdf", sample_pdf_bytes, "application/pdf")}
+        r3 = requests.post(f"{BASE_URL}/api/pdfs/upload",
+                           headers={"Authorization": auth_headers["Authorization"]},
+                           files=files2)
+        assert r3.status_code == 200
+        pid_normal = r3.json()["results"][0]["pdf_id"]
+
+        # create library and add both
+        rl = api_client.post(f"{BASE_URL}/api/libraries",
+                             json={"name": f"TEST_LIB_{uuid.uuid4().hex[:6]}", "description": "test"},
+                             headers=auth_headers)
+        assert rl.status_code == 200
+        lib_id = rl.json()["id"]
+
+        rp = api_client.post(f"{BASE_URL}/api/libraries/{lib_id}/pdfs",
+                             json={"pdf_ids": [pid_protected, pid_normal]},
+                             headers=auth_headers)
+        assert rp.status_code == 200
+        data = rp.json()
+        assert pid_normal in data["added"]
+        assert pid_protected in data["protected"]
+        assert pid_protected not in data["added"]
+
+        api_client.delete(f"{BASE_URL}/api/libraries/{lib_id}", headers=auth_headers)
+
 
 # ---------------- ADMIN LOGS ----------------
 class TestAdminLogs:
