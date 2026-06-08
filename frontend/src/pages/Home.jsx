@@ -169,7 +169,10 @@ export default function Home() {
           {results.map((r, idx) => (
             <li key={idx} className="py-5 border-b border-rule animate-fade-in">
               <button
-                onClick={() => navigate(`/viewer/${r.pdf_id}?page=${encodeURIComponent(r.actual_page)}&q=${encodeURIComponent(q)}`)}
+                onClick={() => {
+                  const pageParam = (r.actual_page ?? r.page ?? r.page_label ?? "").toString();
+                  navigate(`/viewer/${r.pdf_id}?page=${encodeURIComponent(pageParam)}&q=${encodeURIComponent(q)}`);
+                }}
                 className="text-left w-full group"
               >
                 <div className="flex items-baseline gap-3 flex-wrap mb-1">
