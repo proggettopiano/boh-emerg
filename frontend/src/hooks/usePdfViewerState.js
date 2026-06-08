@@ -180,6 +180,7 @@ function useSearchController({
   mountedRef,
   searchDriverDoneRef,
   getCurrentPage,
+  goToPage,
 }) {
   const navigate = useNavigate();
   const [query, setQuery] = useState(initialQuery);
@@ -273,6 +274,12 @@ function useSearchController({
     collectTimerRef.current = setTimeout(collectMatches, 120);
   }, [hasSearchQuery, collectMatches]);
 
+  const getMatchPage = useCallback((node) => {
+    const wrapper = node?.closest("[data-pdf-page]");
+    if (!wrapper) return null;
+    return parseInt(wrapper.getAttribute("data-pdf-page"), 10);
+  }, []);
+
   const onPageChanged = useCallback(
     (pageNum) => {
       if (!hasSearchQuery) return;
@@ -290,20 +297,34 @@ function useSearchController({
     if (list.length === 0) return;
     const currentIndex = currentMatchIndexRef.current;
     const nextIndex = (currentIndex - 1 + list.length) % list.length;
+    const targetNode = list[nextIndex];
+    const targetPage = getMatchPage(targetNode) || getCurrentPage();
+    // Navigate to page if different, then apply match
+    if (targetPage !== getCurrentPage()) {
+      goToPage(targetPage);
+    }
+    // Scroll to match will be called after page navigation completes via syncMatchIndexToPage
     setCurrentMatchIndex(nextIndex);
     currentMatchIndexRef.current = nextIndex;
     scrollToMatch(list, nextIndex);
-  }, [scrollToMatch]);
+  }, [scrollToMatch, getMatchPage, getCurrentPage, goToPage]);
 
   const goToNextMatch = useCallback(() => {
     const list = matchesRef.current;
     if (list.length === 0) return;
     const currentIndex = currentMatchIndexRef.current;
     const nextIndex = (currentIndex + 1) % list.length;
+    const targetNode = list[nextIndex];
+    const targetPage = getMatchPage(targetNode) || getCurrentPage();
+    // Navigate to page if different, then apply match
+    if (targetPage !== getCurrentPage()) {
+      goToPage(targetPage);
+    }
+    // Scroll to match will be called after page navigation completes via syncMatchIndexToPage
     setCurrentMatchIndex(nextIndex);
     currentMatchIndexRef.current = nextIndex;
     scrollToMatch(list, nextIndex);
-  }, [scrollToMatch]);
+  }, [scrollToMatch, getMatchPage, getCurrentPage, goToPage]);
 
   const toggleHighlights = useCallback(() => {
     setHighlightsVisible((v) => !v);
@@ -463,6 +484,7 @@ export function usePdfViewerState({
     mountedRef,
     searchDriverDoneRef,
     getCurrentPage,
+    goToPage: page.goToPage,
   });
 
   activeQueryRef.current = search.searchPanelVisible ? search.query : "";
