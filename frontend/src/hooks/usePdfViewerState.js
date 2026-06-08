@@ -262,6 +262,8 @@ function useSearchController({
 
   const collectMatches = useCallback(() => {
     if (!mountedRef.current || !containerRef.current || !hasSearchQuery) return;
+    // Don't recollect matches while user is actively navigating between them
+    if (searchNavigationRef.current) return;
     const list = Array.from(containerRef.current.querySelectorAll("mark.hl"));
     matchesRef.current = list;
     setMatches(list);
