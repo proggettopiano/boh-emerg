@@ -107,7 +107,7 @@ export default function ViewerToolbar({
                 <button
                   type="button"
                   onClick={search.goToPrevMatch}
-                  disabled={search.matches.length === 0 || search.matchNavigationLoading}
+                  disabled={(!search.matches || search.matches.length === 0) && (!search.matchPages || search.matchPages.length === 0) || search.matchNavigationLoading}
                   className="viewer-search-hub-btn"
                   title="Risultato precedente"
                   data-testid="match-prev"
@@ -117,7 +117,7 @@ export default function ViewerToolbar({
                 <button
                   type="button"
                   onClick={search.goToNextMatch}
-                  disabled={search.matches.length === 0 || search.matchNavigationLoading}
+                  disabled={(!search.matches || search.matches.length === 0) && (!search.matchPages || search.matchPages.length === 0) || search.matchNavigationLoading}
                   className="viewer-search-hub-btn"
                   title="Risultato successivo"
                   data-testid="match-next"

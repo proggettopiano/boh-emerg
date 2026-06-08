@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import api from "@/lib/api";
 import { useNavigate } from "react-router-dom";
 
 export const TOOLBAR_OFFSET = 108;
@@ -188,6 +189,8 @@ function useSearchController({
   const [searchPanelVisible, setSearchPanelVisible] = useState(Boolean(initialQuery));
   const [highlightsVisible, setHighlightsVisible] = useState(true);
   const [matches, setMatches] = useState([]);
+  const [matchPages, setMatchPages] = useState([]); // full-file pages that contain matches
+  const [matchNavigationLoading, setMatchNavigationLoading] = useState(false);
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
 
   const collectTimerRef = useRef(null);
@@ -219,6 +222,40 @@ function useSearchController({
     }
     searchDriverDoneRef.current = false;
   }, [pdfId, initialQuery, searchDriverDoneRef]);
+
+  // Fetch full-file match pages for the current PDF when query changes
+  useEffect(() => {
+    let cancelled = false;
+    const q = query && query.trim();
+    if (!q) {
+      setMatchPages([]);
+      setMatchNavigationLoading(false);
+      return undefined;
+    }
+    setMatchNavigationLoading(true);
+    const ctrl = new AbortController();
+    api.get(`/search`, { params: { q }, signal: ctrl.signal })
+      .then((r) => {
+        if (cancelled) return;
+        const items = (r.data && r.data.results) || [];
+        const pages = [];
+        for (const it of items) {
+          if (it.pdf_id !== pdfId) continue;
+          const p = it.viewer_page ?? it.actual_page ?? it.page;
+          if (p == null) continue;
+          const n = Number(p);
+          if (!Number.isFinite(n)) continue;
+          if (!pages.includes(n)) pages.push(n);
+        }
+        pages.sort((a, b) => a - b);
+        setMatchPages(pages);
+      })
+      .catch(() => {
+        if (!cancelled) setMatchPages([]);
+      })
+      .finally(() => { if (!cancelled) setMatchNavigationLoading(false); });
+    return () => { cancelled = true; ctrl.abort(); };
+  }, [query, pdfId]);
 
   const setSearchNavigationLock = useCallback((locked) => {
     if (searchNavigationTimerRef.current != null) {
@@ -366,6 +403,21 @@ function useSearchController({
   );
 
   const goToPrevMatch = useCallback(() => {
+    // Prefer server-provided full-file match pages if available
+    if (matchPages && matchPages.length > 0) {
+      const currentPage = getCurrentPage();
+      // find last page strictly less than currentPage
+      let idx = -1;
+      for (let i = 0; i < matchPages.length; i += 1) {
+        if (matchPages[i] < currentPage) idx = i;
+      }
+      const targetIndex = idx >= 0 ? idx : matchPages.length - 1;
+      pendingSearchDirectionRef.current = -1;
+      currentMatchIndexRef.current = -1;
+      goToPage(matchPages[targetIndex]);
+      return;
+    }
+
     const list = matchesRef.current;
     if (list.length === 0) return;
     const pageGroups = getMatchPageGroups(list);
@@ -385,9 +437,24 @@ function useSearchController({
     pendingSearchDirectionRef.current = -1;
     currentMatchIndexRef.current = -1;
     goToPage(pageGroups[pageGroups.length - 1]);
-  }, [getMatchPageGroups, getCurrentPage, goToPage]);
+  }, [matchPages, getMatchPageGroups, getCurrentPage, goToPage]);
 
   const goToNextMatch = useCallback(() => {
+    // Prefer server-provided full-file match pages if available
+    if (matchPages && matchPages.length > 0) {
+      const currentPage = getCurrentPage();
+      // find first page strictly greater than currentPage
+      let idx = -1;
+      for (let i = 0; i < matchPages.length; i += 1) {
+        if (matchPages[i] > currentPage) { idx = i; break; }
+      }
+      const targetIndex = idx >= 0 ? idx : 0;
+      pendingSearchDirectionRef.current = 1;
+      currentMatchIndexRef.current = -1;
+      goToPage(matchPages[targetIndex]);
+      return;
+    }
+
     const list = matchesRef.current;
     if (list.length === 0) return;
     const pageGroups = getMatchPageGroups(list);
@@ -407,7 +474,7 @@ function useSearchController({
     pendingSearchDirectionRef.current = 1;
     currentMatchIndexRef.current = -1;
     goToPage(pageGroups[0]);
-  }, [getMatchPageGroups, getCurrentPage, goToPage]);
+  }, [matchPages, getMatchPageGroups, getCurrentPage, goToPage]);
 
   const toggleHighlights = useCallback(() => {
     setHighlightsVisible((v) => !v);
@@ -495,6 +562,8 @@ function useSearchController({
     collectMatches,
     onPageChanged,
     collectTimerRef,
+    matchPages,
+    matchNavigationLoading,
   };
 }
 
