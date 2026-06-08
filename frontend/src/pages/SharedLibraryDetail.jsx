@@ -12,7 +12,7 @@ export default function SharedLibraryDetail() {
   const [lib, setLib] = useState(null);
   const [allPdfs, setAllPdfs] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
-  const canModifyLibrary = Boolean(user);
+  const canModifyLibrary = Boolean(user && lib?.is_owner);
   const [q, setQ] = useState("");
   const [searchResults, setSearchResults] = useState(null);
   const mountedRef = useRef(false);
@@ -44,9 +44,16 @@ export default function SharedLibraryDetail() {
 
   const addPdfs = async (ids) => {
     try {
-      await api.post(`/libraries/${id}/pdfs`, { pdf_ids: ids });
+      const r = await api.post(`/libraries/${id}/pdfs`, { pdf_ids: ids });
       setShowAdd(false);
-      toast.success("PDF aggiunti");
+
+      const { added = [], protected: protectedIds = [], skipped = [] } = r.data;
+      const messages = [];
+      if (added.length) messages.push(`${added.length} PDF aggiunti`);
+      if (protectedIds.length) messages.push(`${protectedIds.length} protetti non aggiunti`);
+      if (skipped.length) messages.push(`${skipped.length} già presenti o non validi`);
+      toast.success(messages.length ? messages.join(" · ") : "PDF aggiunti");
+
       load();
     } catch (e) {
       const message = e.response?.data?.detail || "Errore aggiunta PDF";
