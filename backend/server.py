@@ -796,7 +796,7 @@ def format_search_result(p: dict, pg: dict, q: str, score: int, snippet: Optiona
     return {
         "pdf_id": p["id"],
         "title": p["title"],
-        "page": pg["page"],
+        "actual_page": pg["page"],
         "page_label": pg.get("page_label", pg["page"]),
         "snippet": snippet if snippet is not None else make_snippet(pg["text"], q),
         "score": score,
