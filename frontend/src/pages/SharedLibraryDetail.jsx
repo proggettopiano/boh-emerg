@@ -145,7 +145,7 @@ export default function SharedLibraryDetail() {
             {searchResults.length === 0 && <li className="py-8 text-center text-muted2 text-sm italic">Nessun risultato trovato in questa libreria.</li>}
             {searchResults.map((r, idx) => (
               <li key={idx} className="py-4 border-b border-rule hover:bg-canvas2 px-2 -mx-2 transition-colors">
-                <button onClick={() => navigate(`/viewer/${r.pdf_id}?page=${r.page}&q=${encodeURIComponent(q)}`)} className="text-left w-full flex items-start gap-4">
+                <button onClick={() => navigate(`/viewer/${r.pdf_id}?page=${encodeURIComponent(r.page_label || r.page)}&q=${encodeURIComponent(q)}`)} className="text-left w-full flex items-start gap-4">
                   <FileText size={20} className="text-muted2 mt-1 shrink-0" />
                   <div className="min-w-0">
                     <div className="font-display font-bold text-lg hover:underline decoration-2 underline-offset-4">{r.title} <span className="text-mono text-xs font-normal text-muted3 ml-2">PAGINA {r.page_label || r.page}</span></div>
