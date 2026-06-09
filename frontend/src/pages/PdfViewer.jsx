@@ -384,7 +384,12 @@ export default function PdfViewer() {
     if (numPages <= 0) return undefined;
     const toolbarOffset = search.isSearchActive ? TOOLBAR_OFFSET_WITH_SEARCH : TOOLBAR_OFFSET;
     let raf = 0;
+    let skipNextScroll = true; // Skip the initial scroll to prevent restoring old position
     const onScroll = () => {
+      if (skipNextScroll) {
+        skipNextScroll = false;
+        return;
+      }
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
         const scrollY = window.scrollY;
@@ -393,7 +398,6 @@ export default function PdfViewer() {
         handleScroll(scrollY);
       });
     };
-    onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => {
       cancelAnimationFrame(raf);
