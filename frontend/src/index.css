@@ -178,14 +178,15 @@
   span.hl {
     background: transparent;
     color: inherit;
-    padding: 0 0.1rem;
+    padding: 0;
     margin: 0;
-    border-radius: 0.25rem;
+    border-radius: 0;
     box-shadow: none;
     outline: none;
     transition: background 100ms ease;
     display: inline;
-    line-height: inherit;
+    line-height: 1;
+    vertical-align: baseline;
     pointer-events: none;
   }
   html.dark mark.hl,
