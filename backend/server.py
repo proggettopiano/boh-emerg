@@ -78,9 +78,9 @@ def parse_origin_list(value: str) -> List[str]:
 
 BACKEND_ENV = os.environ.get("BACKEND_ENV", os.environ.get("ENV", "production")).strip().lower()
 ENABLE_OPENAPI = BACKEND_ENV in ("development", "dev", "local")
-CORS_ORIGINS = parse_origin_list(os.environ.get("BACKEND_CORS_ORIGINS", "https://scorelib.vercel.app"))
+CORS_ORIGINS = parse_origin_list(os.environ.get("BACKEND_CORS_ORIGINS", "https://scorelib.vercel.app,https://www.scorelib.vercel.app"))
 if not CORS_ORIGINS:
-    CORS_ORIGINS = ["https://scorelib.vercel.app"]
+    CORS_ORIGINS = ["https://scorelib.vercel.app", "https://www.scorelib.vercel.app"]
 
 app = FastAPI(
     title=APP_NAME,
@@ -99,9 +99,10 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
+    allow_origin_regex=r"https://(www\.)?scorelib\.vercel\.app$",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With", "Origin"],
 )
 
 SECURITY_HEADERS = {
@@ -110,7 +111,7 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
     "Permissions-Policy": "interest-cohort=()",
-    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://api.fontshare.com; connect-src 'self' https://scorelib-backend.onrender.com https://fonts.googleapis.com https://api.fontshare.com; img-src 'self' data: blob:; object-src 'none'; frame-ancestors 'none'; worker-src 'self' blob:; base-uri 'self'"
+    "Content-Security-Policy": "default-src 'self'; script-src 'self' https://vercel.live; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://api.fontshare.com; font-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://api.fontshare.com; connect-src 'self' https://scorelib-backend.onrender.com https://fonts.googleapis.com https://api.fontshare.com; img-src 'self' data: blob:; object-src 'none'; frame-ancestors 'none'; worker-src 'self' blob:; base-uri 'self'"
 }
 
 @app.middleware("http")
