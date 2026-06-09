@@ -149,7 +149,7 @@ export default function SharedLibraryDetail() {
                   <FileText size={20} className="text-muted2 mt-1 shrink-0" />
                   <div className="min-w-0">
                     <div className="font-display font-bold text-lg hover:underline decoration-2 underline-offset-4">{r.title} <span className="text-mono text-xs font-normal text-muted3 ml-2">PAGINA {r.page_label || r.page}</span></div>
-                    {r.snippet && <p className="text-sm text-muted2 mt-1 leading-relaxed" dangerouslySetInnerHTML={{ __html: r.snippet.replace(new RegExp(q, 'gi'), match => `<mark class="bg-amber-100 text-amber-900 px-0.5 rounded-sm">${match}</mark>`) }} /> }
+                    {r.snippet && <p className="text-sm text-muted2 mt-1 leading-relaxed">{r.snippet}</p> }
                   </div>
                 </button>
               </li>

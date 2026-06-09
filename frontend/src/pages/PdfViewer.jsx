@@ -105,8 +105,11 @@ export default function PdfViewer() {
   const [renderGeneration, setRenderGeneration] = useState(0);
   const initialSearchScrollRef = useRef(false);
   const token = localStorage.getItem("scorelib_token");
-  const fileUrl = `${API}/pdfs/${id}/file?token=${encodeURIComponent(token || "")}`;
-  const fileObj = useMemo(() => ({ url: fileUrl }), [fileUrl]);
+  const fileUrl = `${API}/pdfs/${id}/file`;
+  const fileObj = useMemo(() => ({
+    url: fileUrl,
+    httpHeaders: token ? { Authorization: `Bearer ${token}` } : undefined,
+  }), [fileUrl, token]);
 
   const slotHeight = pageHeight || estimatePageHeight(containerWidth, scale);
   const totalHeight = numPages > 0 ? numPages * slotHeight : 0;

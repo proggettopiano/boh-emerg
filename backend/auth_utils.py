@@ -8,7 +8,9 @@ from typing import Optional, Dict, Tuple
 from fastapi import HTTPException, Request, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-JWT_SECRET = os.environ.get("JWT_SECRET", "change-me")
+JWT_SECRET = os.environ.get("JWT_SECRET")
+if not JWT_SECRET or JWT_SECRET == "change-me":
+    raise RuntimeError("JWT_SECRET must be defined and must not use the default placeholder")
 JWT_ALG = "HS256"
 JWT_EXPIRE_DAYS = 7
 
@@ -50,12 +52,8 @@ async def get_current_user_id(
     request: Request,
     creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
 ) -> str:
-    """Extract user_id from Authorization Bearer or `?token=` query."""
-    token = None
-    if creds and creds.credentials:
-        token = creds.credentials
-    if not token:
-        token = request.query_params.get("token")
+    """Extract user_id from Authorization Bearer header."""
+    token = creds.credentials if creds and creds.credentials else None
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     user_id = decode_jwt(token)
@@ -67,7 +65,7 @@ async def get_optional_user_id(
     request: Request,
     creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
 ) -> Optional[str]:
-    token = creds.credentials if creds and creds.credentials else request.query_params.get("token")
+    token = creds.credentials if creds and creds.credentials else None
     if not token:
         return None
     return decode_jwt(token)
