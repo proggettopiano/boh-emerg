@@ -203,6 +203,22 @@
     outline: none !important;
     pointer-events: none;
   }
+  /* Ensure adjacent highlights overlap exactly: move the following mark on top of the previous one */
+  mark.hl,
+  span.hl {
+    display: inline-block;
+    position: relative;
+  }
+  mark.hl + mark.hl,
+  mark.hl + span.hl,
+  span.hl + mark.hl,
+  span.hl + span.hl {
+    transform: translateX(-100%);
+    margin-left: 0;
+    pointer-events: none;
+    /* keep it visually stacked above if needed */
+    z-index: 2;
+  }
   /* When non-active mark is immediately followed by active mark, hide the active one */
   mark.hl:not(.hl-active) + mark.hl.hl-active {
     background: transparent !important;
