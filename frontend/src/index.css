@@ -105,14 +105,18 @@
     @apply inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted2 hover:text-ink transition-colors;
   }
   .btn-ghost-danger {
-    @apply text-red-700 bg-red-50 hover:bg-red-100;
+    color: #b91c1c;
+    background: rgba(248, 113, 113, 0.15);
   }
-  html.dark .btn-ghost.btn-ghost-danger {
+  .btn-ghost-danger:hover {
+    background: rgba(248, 113, 113, 0.25);
+  }
+  html.dark .btn-ghost-danger {
     color: #fecaca !important;
-    background: #7f1d1d !important;
+    background: rgba(185, 28, 28, 0.16) !important;
   }
-  html.dark .btn-ghost.btn-ghost-danger:hover {
-    background: #991b1b !important;
+  html.dark .btn-ghost-danger:hover {
+    background: rgba(185, 28, 28, 0.3) !important;
   }
   .input-base {
     @apply w-full bg-canvas2 border border-rule px-4 py-3 rounded-sm outline-none transition-colors text-ink;
@@ -170,69 +174,52 @@
     background-image: repeating-linear-gradient(90deg, #0A0A0A 0 4px, transparent 4px 14px);
   }
   .text-mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
-  mark.hl {
-    background: rgba(245, 158, 11, 0.35);
-    color: inherit;
-    padding: 0;
-    margin: 0;
-    border-radius: 0;
-    box-shadow: none;
-    outline: none;
-    transition: background 150ms ease;
-    display: inline;
-    line-height: inherit;
-  }
-  html.dark mark.hl {
-    background: rgba(245, 158, 11, 0.3);
-    color: inherit;
-  }
-  mark.hl.hl-active {
-    background: rgba(245, 158, 11, 0.55);
-    color: inherit;
-    outline: none;
-    box-shadow: none;
-  }
-  html.dark mark.hl.hl-active {
-    background: rgba(245, 158, 11, 0.5);
-    color: inherit;
-  }
-  /* Make the first highlight dominant: hide any subsequent highlights nearby */
-  .hl ~ .hl {
-    background: transparent !important;
-    box-shadow: none !important;
-    outline: none !important;
-    pointer-events: none;
-  }
-  /* Ensure adjacent highlights overlap exactly: move the following mark on top of the previous one */
   mark.hl,
   span.hl {
-    display: inline-block;
-    position: relative;
+    background: rgba(245, 158, 11, 0.35);
+    color: inherit;
+    padding: 0 0.1rem;
+    margin: 0;
+    border-radius: 0.25rem;
+    box-shadow: none;
+    outline: none;
+    transition: background 100ms ease;
+    display: inline;
+    line-height: inherit;
+    pointer-events: none;
   }
+  html.dark mark.hl,
+  html.dark span.hl {
+    background: rgba(245, 158, 11, 0.28);
+    color: inherit;
+  }
+  mark.hl.hl-active,
+  span.hl.hl-active {
+    background: rgba(234, 88, 12, 0.55);
+    color: inherit;
+    box-shadow: none;
+  }
+  html.dark mark.hl.hl-active,
+  html.dark span.hl.hl-active {
+    background: rgba(234, 88, 12, 0.55);
+    color: inherit;
+  }
+  /* Hide duplicate/overlapping highlights: make adjacent highlights invisible */
   mark.hl + mark.hl,
   mark.hl + span.hl,
   span.hl + mark.hl,
   span.hl + span.hl {
-    transform: translateX(-100%);
-    margin-left: 0;
-    pointer-events: none;
-    /* keep it visually stacked above if needed */
-    z-index: 2;
-  }
-  /* When non-active mark is immediately followed by active mark, hide the active one */
-  mark.hl:not(.hl-active) + mark.hl.hl-active {
-    background: transparent !important;
-    box-shadow: none !important;
-    outline: none !important;
-    pointer-events: none;
+    display: none !important;
   }
   @keyframes hl-pulse {
-    0%, 100% { outline-width: 0; }
-    50% { outline-width: 0; }
+    0%, 100% { outline-width: 2px; }
+    50% { outline-width: 3px; }
   }
   /* When highlights are hidden, render mark as plain text without losing layout */
   .hl-off mark.hl,
-  .hl-off mark.hl.hl-active {
+  .hl-off mark.hl.hl-active,
+  .hl-off span.hl,
+  .hl-off span.hl.hl-active {
     background: transparent !important;
     color: inherit !important;
     box-shadow: none !important;
