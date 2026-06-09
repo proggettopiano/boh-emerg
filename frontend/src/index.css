@@ -187,13 +187,13 @@
     color: inherit;
   }
   mark.hl.hl-active {
-    background: transparent;
+    background: rgba(245, 158, 11, 0.55);
     color: inherit;
     outline: none;
     box-shadow: none;
   }
   html.dark mark.hl.hl-active {
-    background: transparent;
+    background: rgba(245, 158, 11, 0.5);
     color: inherit;
   }
   @keyframes hl-pulse {
