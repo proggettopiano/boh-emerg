@@ -12,7 +12,7 @@ export default function SharedLibraryDetail() {
   const [lib, setLib] = useState(null);
   const [allPdfs, setAllPdfs] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
-  const canModifyLibrary = Boolean(user && lib?.is_owner);
+  const canModifyLibrary = Boolean(user && (lib?.is_owner || (lib?.members || []).includes(user?.user_id) || user?.is_admin));
   const [q, setQ] = useState("");
   const [searchResults, setSearchResults] = useState(null);
   const mountedRef = useRef(false);
