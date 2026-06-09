@@ -196,6 +196,13 @@
     background: rgba(245, 158, 11, 0.5);
     color: inherit;
   }
+  /* When non-active mark is immediately followed by active mark, hide the active one */
+  mark.hl:not(.hl-active) + mark.hl.hl-active {
+    background: transparent !important;
+    box-shadow: none !important;
+    outline: none !important;
+    pointer-events: none;
+  }
   @keyframes hl-pulse {
     0%, 100% { outline-width: 0; }
     50% { outline-width: 0; }
