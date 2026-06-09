@@ -19,6 +19,10 @@ from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, UploadF
 from fastapi.responses import Response, FileResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 import httpx
@@ -64,6 +68,11 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title=APP_NAME, lifespan=lifespan)
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Configurazione CORS robusta
 app.add_middleware(
@@ -193,6 +202,7 @@ async def require_admin(user_id: str = Depends(get_current_user_id)):
         raise HTTPException(status_code=403, detail="Solo amministratori")
     return user_id
 
+@limiter.limit("5/minute")
 @api.post("/auth/login")
 async def login(payload: LoginIn, request: Request):
     ip = get_client_ip(request)
@@ -236,6 +246,7 @@ async def login(payload: LoginIn, request: Request):
     # no request found
     raise HTTPException(status_code=403, detail="Nessuna richiesta trovata. Richiedi l'accesso.")
 
+@limiter.limit("3/hour")
 @api.post("/auth/request-access")
 async def request_access(payload: AccessRequestIn, request: Request):
     email = payload.email.lower().strip()
@@ -446,8 +457,7 @@ async def delete_pdf(pdf_id: str, user_id: str = Depends(get_current_user_id)):
     return {"ok": True}
 
 @api.get("/pdfs/{pdf_id}/file")
-async def get_pdf_file(pdf_id: str, token: Optional[str] = Query(None), user_id: Optional[str] = Depends(get_optional_user_id)):
-    if not user_id and token: user_id = decode_jwt(token)
+async def get_pdf_file(pdf_id: str, user_id: Optional[str] = Depends(get_optional_user_id)):
     p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
     if not p: raise HTTPException(status_code=404, detail="PDF non trovato")
     if p.get("is_protected") and not user_id: raise HTTPException(status_code=401, detail="Protetto")
