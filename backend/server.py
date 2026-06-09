@@ -53,18 +53,24 @@ WORKER_SECRET = os.environ.get("WORKER_SECRET", "")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await ensure_indexes()
-    await seed_admin()
-    await migrate_single_owner()
-    
-    # Startup job recovery
-    stuck_jobs = await db.upload_jobs.find({"status": {"$in": ["processing", "queued"]}}).to_list(1000)
-    await db.upload_jobs.update_many(
-        {"status": {"$in": ["processing", "queued"]}},
-        {"$set": {"status": "queued", "error": "requeued_at_startup", "updated_at": iso_now()}}
-    )
-    for _j in stuck_jobs:
-        asyncio.create_task(process_pdf_job(_j["id"]))
+    async def startup_tasks():
+        try:
+            await ensure_indexes()
+            await seed_admin()
+            await migrate_single_owner()
+
+            # Startup job recovery
+            stuck_jobs = await db.upload_jobs.find({"status": {"$in": ["processing", "queued"]}}).to_list(1000)
+            await db.upload_jobs.update_many(
+                {"status": {"$in": ["processing", "queued"]}},
+                {"$set": {"status": "queued", "error": "requeued_at_startup", "updated_at": iso_now()}}
+            )
+            for _j in stuck_jobs:
+                asyncio.create_task(process_pdf_job(_j["id"]))
+        except Exception as exc:
+            logger.exception(f"Background startup task failed: {exc}")
+
+    asyncio.create_task(startup_tasks())
     yield
 
 def parse_origin_list(value: str) -> List[str]:
