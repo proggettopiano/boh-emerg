@@ -208,7 +208,11 @@
   mark.hl + mark.hl,
   mark.hl + span.hl,
   span.hl + mark.hl,
-  span.hl + span.hl {
+  span.hl + span.hl,
+  mark.hl + mark.hl.hl-active,
+  mark.hl + span.hl.hl-active,
+  span.hl + mark.hl.hl-active,
+  span.hl + span.hl.hl-active {
     display: none !important;
   }
   @keyframes hl-pulse {
