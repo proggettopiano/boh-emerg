@@ -38,6 +38,19 @@ const PAGE_FOOTER_H = 28;
 const PAGE_ASPECT = 297 / 210;
 const PAGE_BUFFER = 4;
 
+const AUTH_TOKEN_KEY = "scorelib_session_token";
+const LEGACY_AUTH_TOKEN_KEY = "scorelib_token";
+
+function getAuthToken() {
+  const token = sessionStorage.getItem(AUTH_TOKEN_KEY);
+  if (token) return token;
+  const legacy = localStorage.getItem(LEGACY_AUTH_TOKEN_KEY);
+  if (!legacy) return null;
+  sessionStorage.setItem(AUTH_TOKEN_KEY, legacy);
+  localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
+  return legacy;
+}
+
 const PDF_FULL_BLEED = {
   width: "100vw",
   maxWidth: "100vw",
@@ -104,7 +117,7 @@ export default function PdfViewer() {
   const renderGenerationRef = useRef(0);
   const [renderGeneration, setRenderGeneration] = useState(0);
   const initialSearchScrollRef = useRef(false);
-  const token = localStorage.getItem("scorelib_token");
+  const token = getAuthToken();
   const fileUrl = `${API}/pdfs/${id}/file`;
   const fileObj = useMemo(() => ({
     url: fileUrl,
