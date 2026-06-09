@@ -12,7 +12,12 @@ export default function SharedLibraryDetail() {
   const [lib, setLib] = useState(null);
   const [allPdfs, setAllPdfs] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
-  const canModifyLibrary = Boolean(user && (lib?.is_owner || (lib?.members || []).includes(user?.user_id) || user?.is_admin));
+  const libraryMembers = lib?.members || [];
+  const isLibraryMember = Boolean(user && libraryMembers.some((member) => {
+    if (!member) return false;
+    return typeof member === "string" ? member === user.user_id : member.user_id === user.user_id;
+  }));
+  const canModifyLibrary = Boolean(user && (lib?.is_owner || isLibraryMember || user?.is_admin));
   const [q, setQ] = useState("");
   const [searchResults, setSearchResults] = useState(null);
   const mountedRef = useRef(false);
@@ -50,7 +55,7 @@ export default function SharedLibraryDetail() {
       const { added = [], protected: protectedIds = [], skipped = [] } = r.data;
       const messages = [];
       if (added.length) messages.push(`${added.length} PDF aggiunti`);
-      if (protectedIds.length) messages.push(`${protectedIds.length} protetti non aggiunti`);
+      if (protectedIds.length) messages.push(`${protectedIds.length} file protetto${protectedIds.length === 1 ? "" : "i"} non aggiunto${protectedIds.length === 1 ? "" : "i"}`);
       if (skipped.length) messages.push(`${skipped.length} già presenti o non validi`);
       toast.success(messages.length ? messages.join(" · ") : "PDF aggiunti");
 
@@ -192,9 +197,11 @@ export default function SharedLibraryDetail() {
 
 function AddPdfsModal({ allPdfs, existing, onClose, onAdd }) {
   const [picked, setPicked] = useState([]);
-  const toggle = (pdfId) => setPicked((current) => (current.includes(pdfId) ? current.filter((id) => id !== pdfId) : [...current, pdfId]));
   const candidates = allPdfs.filter((pdf) => !existing.includes(pdf.id));
-  
+  const selectablePdfs = candidates.filter((pdf) => !pdf.is_protected);
+  const protectedPdfs = candidates.filter((pdf) => pdf.is_protected);
+  const toggle = (pdfId) => setPicked((current) => (current.includes(pdfId) ? current.filter((id) => id !== pdfId) : [...current, pdfId]));
+
   return (
     <div className="fixed inset-0 z-50 bg-overlay flex items-center justify-center p-4 backdrop-blur-sm" onClick={onClose}>
       <div className="bg-card border border-rule rounded-md w-full max-w-xl shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -205,29 +212,49 @@ function AddPdfsModal({ allPdfs, existing, onClose, onAdd }) {
           {candidates.length === 0 ? (
             <p className="text-muted2 text-center py-12 italic">Tutti gli spartiti sono già in questa libreria.</p>
           ) : (
-            <ul className="">
-              {candidates.map((pdf) => (
-                <li key={pdf.id} className="flex items-center gap-4 px-6 py-3 border-b border-rule hover:bg-canvas2 transition-colors cursor-pointer" onClick={() => toggle(pdf.id)}>
-                  <input 
-                    type="checkbox" 
-                    checked={picked.includes(pdf.id)} 
-                    onChange={() => {}} // Gestito dal click sulla riga
-                    className="w-5 h-5 rounded border-rule text-ink focus:ring-ink"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="font-bold truncate">{pdf.title}</div>
-                    <div className="text-mono text-[10px] text-muted3 uppercase">{pdf.pages} pagine — {pdf.created_at?.slice(0, 10)}</div>
-                  </div>
-                </li>
-              ))}
-            </ul>
+            <div>
+              {protectedPdfs.length > 0 && (
+                <div className="px-6 py-4 bg-amber-50 dark:bg-amber-950 border-b border-amber-200 dark:border-amber-800 text-sm text-amber-800 dark:text-amber-100">
+                  {protectedPdfs.length === 1
+                    ? "Esiste 1 file protetto che non può essere aggiunto dalla tua libreria."
+                    : `Esistono ${protectedPdfs.length} file protetti che non possono essere aggiunti dalla tua libreria.`}
+                </div>
+              )}
+              <ul className="">
+                {candidates.map((pdf) => {
+                  const isProtected = pdf.is_protected;
+                  return (
+                    <li
+                      key={pdf.id}
+                      className={`flex items-center gap-4 px-6 py-3 border-b border-rule transition-colors ${isProtected ? "bg-muted/5 text-muted3 cursor-not-allowed" : "hover:bg-canvas2 cursor-pointer"}`}
+                      onClick={() => { if (!isProtected) toggle(pdf.id); }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={picked.includes(pdf.id)}
+                        disabled={isProtected}
+                        onChange={() => {}}
+                        className="w-5 h-5 rounded border-rule text-ink focus:ring-ink"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-bold truncate">{pdf.title}</div>
+                        <div className="text-mono text-[10px] text-muted3 uppercase flex items-center gap-2">
+                          <span>{pdf.pages} pagine — {pdf.created_at?.slice(0, 10)}</span>
+                          {isProtected && <span className="rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[10px] text-amber-800">Protetto</span>}
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
           )}
         </div>
-        <div className="p-6 bg-canvas2 flex justify-end gap-3 rounded-b-md">
+        <div className="p-6 bg-canvas2 flex justify-between items-center gap-3 rounded-b-md">
           <button onClick={onClose} className="px-4 py-2 text-sm font-bold hover:underline">Annulla</button>
-          <button 
-            disabled={picked.length === 0} 
-            onClick={() => onAdd(picked)} 
+          <button
+            disabled={picked.length === 0}
+            onClick={() => onAdd(picked)}
             className="btn-primary disabled:opacity-30 disabled:cursor-not-allowed px-6"
           >
             Aggiungi {picked.length > 0 ? `(${picked.length})` : ""}
