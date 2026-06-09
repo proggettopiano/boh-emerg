@@ -12,12 +12,7 @@ export default function SharedLibraryDetail() {
   const [lib, setLib] = useState(null);
   const [allPdfs, setAllPdfs] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
-  const libraryMembers = lib?.members || [];
-  const isLibraryMember = Boolean(user && libraryMembers.some((member) => {
-    if (!member) return false;
-    return typeof member === "string" ? member === user.user_id : member.user_id === user.user_id;
-  }));
-  const canModifyLibrary = Boolean(user && (lib?.is_owner || isLibraryMember || user?.is_admin));
+  const canModifyLibrary = Boolean(user);
   const [q, setQ] = useState("");
   const [searchResults, setSearchResults] = useState(null);
   const mountedRef = useRef(false);
@@ -198,7 +193,6 @@ export default function SharedLibraryDetail() {
 function AddPdfsModal({ allPdfs, existing, onClose, onAdd }) {
   const [picked, setPicked] = useState([]);
   const candidates = allPdfs.filter((pdf) => !existing.includes(pdf.id));
-  const selectablePdfs = candidates.filter((pdf) => !pdf.is_protected);
   const protectedPdfs = candidates.filter((pdf) => pdf.is_protected);
   const toggle = (pdfId) => setPicked((current) => (current.includes(pdfId) ? current.filter((id) => id !== pdfId) : [...current, pdfId]));
 
@@ -214,13 +208,11 @@ function AddPdfsModal({ allPdfs, existing, onClose, onAdd }) {
           ) : (
             <div>
               {protectedPdfs.length > 0 && (
-                <div className="px-6 py-4 bg-amber-50 dark:bg-amber-950 border-b border-amber-200 dark:border-amber-800 text-sm text-amber-800 dark:text-amber-100">
-                  {protectedPdfs.length === 1
-                    ? "Esiste 1 file protetto che non può essere aggiunto dalla tua libreria."
-                    : `Esistono ${protectedPdfs.length} file protetti che non possono essere aggiunti dalla tua libreria.`}
+                <div className="px-6 py-3 bg-surface border-b border-rule text-sm text-muted2">
+                  I file protetti sono disabilitati e non possono essere aggiunti in questa raccolta.
                 </div>
               )}
-              <ul className="">
+              <ul className="space-y-2">
                 {candidates.map((pdf) => {
                   const isProtected = pdf.is_protected;
                   return (
