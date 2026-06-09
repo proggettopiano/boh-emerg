@@ -171,7 +171,7 @@
   }
   .text-mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
   mark.hl {
-    background: rgba(245, 158, 11, 0.25);
+    background: transparent;
     color: inherit;
     padding: 0;
     margin: 0;
@@ -182,32 +182,18 @@
     display: inline;
     line-height: inherit;
   }
-  /* Hide duplicate overlapping highlights but keep them in DOM */
-  mark.hl + mark.hl,
-  mark.hl + span.hl,
-  span.hl + mark.hl {
-    background: transparent !important;
-    box-shadow: none !important;
-    outline: none !important;
-    pointer-events: none;
-  }
-  mark.hl.hl-active + mark.hl.hl-active,
-  mark.hl.hl-active + span.hl.hl-active,
-  span.hl.hl-active + mark.hl.hl-active {
-    background: transparent !important;
-  }
   html.dark mark.hl {
-    background: rgba(245, 158, 11, 0.2);
+    background: transparent;
     color: inherit;
   }
   mark.hl.hl-active {
-    background: rgba(245, 158, 11, 0.5);
+    background: rgba(245, 158, 11, 0.4);
     color: inherit;
     outline: none;
     box-shadow: none;
   }
   html.dark mark.hl.hl-active {
-    background: rgba(245, 158, 11, 0.45);
+    background: rgba(245, 158, 11, 0.35);
     color: inherit;
   }
   @keyframes hl-pulse {
