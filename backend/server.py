@@ -660,11 +660,18 @@ async def add_to_library(lib_id: str, payload: AddPdfsIn, user_id: str = Depends
     skipped = []
     existing_ids = set(lib.get("pdf_ids", []))
 
-    for pdf_id in payload.pdf_ids:
+    pdf_ids = [str(pdf_id).strip() for pdf_id in payload.pdf_ids if isinstance(pdf_id, str) and pdf_id.strip()]
+    if not pdf_ids:
+        return {"added": added, "protected": protected, "skipped": skipped}
+
+    docs = await db.pdfs.find({"id": {"$in": pdf_ids}}, {"_id": 0, "id": 1, "is_protected": 1}).to_list(1000)
+    pdf_map = {doc["id"]: doc for doc in docs}
+
+    for pdf_id in pdf_ids:
         if pdf_id in existing_ids:
             skipped.append(pdf_id)
             continue
-        p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0, "is_protected": 1})
+        p = pdf_map.get(pdf_id)
         if not p:
             skipped.append(pdf_id)
             continue
