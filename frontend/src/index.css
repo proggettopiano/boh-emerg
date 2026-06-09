@@ -104,12 +104,32 @@
   .btn-ghost {
     @apply inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted2 hover:text-ink transition-colors;
   }
+  .btn-ghost-danger {
+    @apply text-red-600 hover:bg-red-50;
+  }
+  html.dark .btn-ghost.btn-ghost-danger {
+    color: #fecaca !important;
+    border-color: rgba(248, 113, 113, 0.35) !important;
+  }
+  html.dark .btn-ghost.btn-ghost-danger:hover {
+    background: rgba(248, 113, 113, 0.14) !important;
+  }
   .input-base {
     @apply w-full bg-canvas2 border border-rule px-4 py-3 rounded-sm outline-none transition-colors text-ink;
   }
   .input-base:focus { border-color: hsl(var(--ink)); background: hsl(var(--canvas2)); }
   .bg-overlay { background: rgba(0, 0, 0, 0.4); }
   html.dark .bg-overlay { background: rgba(0, 0, 0, 0.65); }
+  .public-view-banner {
+    background: #fffbeb;
+    border-color: #fde68a;
+    color: #78350f;
+  }
+  html.dark .public-view-banner {
+    background: #4b2d0b;
+    border-color: #f59e0b;
+    color: #fde68a;
+  }
   html.dark .input-base { background-color: hsl(var(--canvas)); color: hsl(var(--foreground)); }
   html.dark .input-base:focus { background-color: hsl(var(--canvas2)); border-color: hsl(var(--foreground)); }
   html.dark .bg-white { background-color: var(--canvas2) !important; }
