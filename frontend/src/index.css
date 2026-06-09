@@ -184,8 +184,9 @@
     box-shadow: none;
     outline: none;
     transition: background 100ms ease;
-    display: inline;
-    vertical-align: text-bottom;
+    display: inline-block;
+    height: 1em;
+    vertical-align: baseline;
     pointer-events: none;
   }
   html.dark mark.hl,
