@@ -171,7 +171,7 @@
   }
   .text-mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
   mark.hl {
-    background: transparent;
+    background: rgba(245, 158, 11, 0.35);
     color: inherit;
     padding: 0;
     margin: 0;
@@ -183,17 +183,17 @@
     line-height: inherit;
   }
   html.dark mark.hl {
-    background: transparent;
+    background: rgba(245, 158, 11, 0.3);
     color: inherit;
   }
   mark.hl.hl-active {
-    background: rgba(245, 158, 11, 0.4);
+    background: transparent;
     color: inherit;
     outline: none;
     box-shadow: none;
   }
   html.dark mark.hl.hl-active {
-    background: rgba(245, 158, 11, 0.35);
+    background: transparent;
     color: inherit;
   }
   @keyframes hl-pulse {
