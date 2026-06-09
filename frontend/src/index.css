@@ -171,36 +171,48 @@
   }
   .text-mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
   mark.hl {
-    background: #FEF3C7;
-    color: #0F172A;
-    padding: 0 2px;
-    margin: 0 -2px;
-    border-radius: 2px;
+    background: rgba(245, 158, 11, 0.25);
+    color: inherit;
+    padding: 0;
+    margin: 0;
+    border-radius: 0;
     box-shadow: none;
-    transition: background 100ms ease, color 100ms ease, box-shadow 100ms ease, outline 100ms ease;
+    outline: none;
+    transition: background 150ms ease;
+    display: inline;
+    line-height: inherit;
+  }
+  /* Hide duplicate overlapping highlights but keep them in DOM */
+  mark.hl + mark.hl,
+  mark.hl + span.hl,
+  span.hl + mark.hl {
+    background: transparent !important;
+    box-shadow: none !important;
+    outline: none !important;
+    pointer-events: none;
+  }
+  mark.hl.hl-active + mark.hl.hl-active,
+  mark.hl.hl-active + span.hl.hl-active,
+  span.hl.hl-active + mark.hl.hl-active {
+    background: transparent !important;
   }
   html.dark mark.hl {
-    background: rgba(245, 158, 11, 0.35);
+    background: rgba(245, 158, 11, 0.2);
     color: inherit;
   }
   mark.hl.hl-active {
-    background: #FCD34D;
-    color: #0F172A;
-    outline: 2px solid #F59E0B;
-    outline-offset: 1px;
-    box-shadow: 0 0 8px rgba(245, 158, 11, 0.5);
-    animation: hl-pulse 600ms ease-in-out infinite;
+    background: rgba(245, 158, 11, 0.5);
+    color: inherit;
+    outline: none;
+    box-shadow: none;
   }
   html.dark mark.hl.hl-active {
-    background: #FCD34D;
-    color: #0F172A;
-    outline: 2px solid #F59E0B;
-    outline-offset: 1px;
-    box-shadow: 0 0 12px rgba(251, 146, 60, 0.6);
+    background: rgba(245, 158, 11, 0.45);
+    color: inherit;
   }
   @keyframes hl-pulse {
-    0%, 100% { outline-width: 2px; }
-    50% { outline-width: 3px; }
+    0%, 100% { outline-width: 0; }
+    50% { outline-width: 0; }
   }
   /* When highlights are hidden, render mark as plain text without losing layout */
   .hl-off mark.hl,
