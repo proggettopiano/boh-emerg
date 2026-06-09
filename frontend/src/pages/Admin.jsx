@@ -250,7 +250,7 @@ export default function Admin() {
                         <button onClick={() => handleRequest(r.email, "approve")} className="btn-ghost text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-sm px-3 py-2 text-sm">
                           <Check size={14} /> Approva
                         </button>
-                        <button onClick={() => handleRequest(r.email, "reject")} className="btn-ghost text-red-700 bg-red-50 hover:bg-red-100 rounded-sm px-3 py-2 text-sm">
+                        <button onClick={() => handleRequest(r.email, "reject")} className="btn-ghost btn-ghost-danger text-red-700 bg-red-50 hover:bg-red-100 rounded-sm px-3 py-2 text-sm">
                           <X size={14} /> Rifiuta
                         </button>
                       </div>
