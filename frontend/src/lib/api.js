@@ -9,13 +9,26 @@ if (!BACKEND_URL) {
 
 export const API = `${BACKEND_URL.replace(/\/+$|\s+$/g, "")}/api`;
 
+const AUTH_TOKEN_KEY = "scorelib_session_token";
+const LEGACY_AUTH_TOKEN_KEY = "scorelib_token";
+
+function getAuthToken() {
+  const token = sessionStorage.getItem(AUTH_TOKEN_KEY);
+  if (token) return token;
+  const legacy = localStorage.getItem(LEGACY_AUTH_TOKEN_KEY);
+  if (!legacy) return null;
+  sessionStorage.setItem(AUTH_TOKEN_KEY, legacy);
+  localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
+  return legacy;
+}
+
 const api = axios.create({
   baseURL: API,
   timeout: Number(process.env.REACT_APP_API_TIMEOUT_MS || 30000),
 });
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("scorelib_token");
+  const token = getAuthToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });

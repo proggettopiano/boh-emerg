@@ -1,6 +1,29 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
 import api from "@/lib/api";
 
+const AUTH_TOKEN_KEY = "scorelib_session_token";
+const LEGACY_AUTH_TOKEN_KEY = "scorelib_token";
+
+function getAuthToken() {
+  const token = sessionStorage.getItem(AUTH_TOKEN_KEY);
+  if (token) return token;
+  const legacy = localStorage.getItem(LEGACY_AUTH_TOKEN_KEY);
+  if (!legacy) return null;
+  sessionStorage.setItem(AUTH_TOKEN_KEY, legacy);
+  localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
+  return legacy;
+}
+
+function saveAuthToken(token) {
+  sessionStorage.setItem(AUTH_TOKEN_KEY, token);
+  localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
+}
+
+function clearAuthToken() {
+  sessionStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
+}
+
 const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
@@ -9,7 +32,7 @@ export const AuthProvider = ({ children }) => {
   const mountedRef = useRef(false);
 
   const fetchMe = useCallback(async (signal) => {
-    const token = localStorage.getItem("scorelib_token");
+    const token = getAuthToken();
     if (!token) {
       if (mountedRef.current) {
         setUser(null);
@@ -22,7 +45,7 @@ export const AuthProvider = ({ children }) => {
       if (mountedRef.current && !signal.aborted) setUser(r.data);
     } catch (e) {
       if (e.name === "CanceledError" || e.name === "AbortError" || e.code === "ERR_CANCELED" || e.isCancel) return;
-      localStorage.removeItem("scorelib_token");
+      clearAuthToken();
       if (mountedRef.current) setUser(null);
     } finally {
       if (mountedRef.current && !signal.aborted) setLoading(false);
@@ -40,12 +63,12 @@ export const AuthProvider = ({ children }) => {
   }, [fetchMe]);
 
   const loginWithToken = (token, u) => {
-    localStorage.setItem("scorelib_token", token);
+    saveAuthToken(token);
     setUser(u);
   };
 
   const logout = () => {
-    localStorage.removeItem("scorelib_token");
+    clearAuthToken();
     setUser(null);
   };
 

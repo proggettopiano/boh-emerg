@@ -1,15 +1,5 @@
 const APP_CACHE = "scorelib-app-v2";
-const PDF_CACHE = "scorelib-pdfs-v2";
 const APP_SHELL = ["/", "/manifest.json", "/scorelib-icon.svg"];
-const MAX_PDF_CACHE_ITEMS = 20;
-
-async function trimCache(cacheName, maxItems) {
-  const cache = await caches.open(cacheName);
-  const keys = await cache.keys();
-  if (keys.length <= maxItems) return;
-  await cache.delete(keys[0]);
-  await trimCache(cacheName, maxItems);
-}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -24,12 +14,19 @@ self.addEventListener("activate", (event) => {
     caches.keys()
       .then((keys) => Promise.all(
         keys
-          .filter((key) => ![APP_CACHE, PDF_CACHE].includes(key))
+          .filter((key) => key !== APP_CACHE)
           .map((key) => caches.delete(key))
       ))
       .then(() => self.clients.claim())
   );
 });
+
+function isSensitiveRequest(request) {
+  const url = new URL(request.url);
+  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/auth/")) return true;
+  if (request.headers.has("authorization")) return true;
+  return false;
+}
 
 self.addEventListener("fetch", (event) => {
   const { request } = event;
@@ -37,22 +34,13 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
   const isPdfFile = url.pathname.includes("/api/pdfs/") && url.pathname.endsWith("/file");
+  const isSensitive = isSensitiveRequest(request);
 
-  if (isPdfFile) {
+  if (isPdfFile || isSensitive) {
     event.respondWith(
       fetch(request)
-        .then((response) => {
-          if (response.ok) {
-            const copy = response.clone();
-            caches.open(PDF_CACHE)
-              .then((cache) => cache.put(request, copy))
-              .then(() => trimCache(PDF_CACHE, MAX_PDF_CACHE_ITEMS))
-              .catch(() => {});
-          }
-          return response;
-        })
         .catch(async () => {
-          return (await caches.match(request)) || new Response("PDF non disponibile", { status: 503, statusText: "Service Unavailable" });
+          return (await caches.match(request)) || new Response("Offline", { status: 503, statusText: "Service Unavailable" });
         })
     );
     return;
@@ -63,7 +51,7 @@ self.addEventListener("fetch", (event) => {
       fetch(request)
         .then((response) => {
           if (!response || response.status >= 400) {
-             return caches.match("/") || new Response("Offline", { status: 503, statusText: "Service Unavailable" });
+            return caches.match("/") || new Response("Offline", { status: 503, statusText: "Service Unavailable" });
           }
           const copy = response.clone();
           caches.open(APP_CACHE).then((cache) => cache.put("/", copy)).catch(() => {});
