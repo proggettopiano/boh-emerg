@@ -113,27 +113,65 @@ export default function Admin() {
           <h2 className="font-display font-bold text-xl mb-4 flex items-center gap-2">
             <Users size={20} /> Utenti approvati
           </h2>
-          <div className="border border-rule rounded-md bg-card divide-y divide-rule">
-            {users.length > 0 ? (
-              visibleUsers.map((u, idx) => (
-                <div key={idx} className="p-4 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-canvas3 flex items-center justify-center text-xs font-bold">
-                      {u.name.split(' ').map(n => n[0]).join('').toUpperCase()}
+          <div className="border border-rule rounded-md overflow-hidden bg-card">
+            <div className="hidden sm:block">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-canvas2 border-b border-rule text-left">
+                    <tr>
+                      <th className="py-3 px-4 overline">Utente</th>
+                      <th className="py-3 px-4 overline">Email</th>
+                      <th className="py-3 px-4 overline text-right">Creato</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleUsers.map((u, idx) => (
+                      <tr key={idx} className="border-b border-rule hover:bg-canvas2">
+                        <td className="py-4 px-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-canvas3 flex items-center justify-center text-xs font-bold">
+                              {u.name.split(' ').map(n => n[0]).join('').toUpperCase()}
+                            </div>
+                            <div>
+                              <div className="font-medium">{u.name}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-4 px-4 text-sm text-muted3 text-mono truncate max-w-[18rem]">{u.email}</td>
+                        <td className="py-4 px-4 text-right text-[10px] text-muted2 uppercase tracking-wider font-mono">
+                          {u.created_at ? new Date(u.created_at).toLocaleString() : "-"}
+                        </td>
+                      </tr>
+                    ))}
+                    {users.length === 0 && (
+                      <tr>
+                        <td colSpan="3" className="py-8 text-center text-muted3 italic">Nessun utente approvato</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="sm:hidden divide-y divide-rule">
+              {visibleUsers.length > 0 ? (
+                visibleUsers.map((u, idx) => (
+                  <div key={idx} className="p-4">
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className="w-8 h-8 rounded-full bg-canvas3 flex items-center justify-center text-xs font-bold">
+                        {u.name.split(' ').map(n => n[0]).join('').toUpperCase()}
+                      </div>
+                      <div>
+                        <div className="font-medium">{u.name}</div>
+                        <div className="text-xs text-muted3 text-mono truncate">{u.email}</div>
+                      </div>
                     </div>
-                    <div>
-                      <div className="font-medium">{u.name}</div>
-                      <div className="text-[10px] text-muted3 text-mono uppercase tracking-widest">{u.email}</div>
-                    </div>
+                    <div className="text-[10px] text-muted2 uppercase tracking-wider font-mono">{u.created_at ? new Date(u.created_at).toLocaleString() : "-"}</div>
                   </div>
-                  <div className="flex items-center gap-1.5 text-[10px] text-muted2 uppercase tracking-wider font-mono">
-                    <div className="text-xs text-muted3">{u.created_at ? new Date(u.created_at).toLocaleString() : "-"}</div>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="p-4 text-center text-muted3 italic text-sm">Nessun utente approvato</div>
-            )}
+                ))
+              ) : (
+                <div className="p-4 text-center text-muted3 italic text-sm">Nessun utente approvato</div>
+              )}
+            </div>
             {users.length > 3 && (
               <div className="p-3 text-right bg-canvas2 border-t border-rule">
                 <button type="button" onClick={() => setShowAllUsers((v) => !v)} className="btn-ghost text-sm">{showAllUsers ? "Mostra meno" : `Mostra tutti gli ${users.length} utenti`}</button>
@@ -148,57 +186,94 @@ export default function Admin() {
             <AlertTriangle size={20} /> Richieste di Accesso
           </h2>
           <div className="border border-rule rounded-md overflow-hidden bg-card">
-            <table className="w-full text-sm">
-              <thead className="bg-canvas2 border-b border-rule text-left">
-                <tr>
-                  <th className="py-3 px-4 overline">Richiedente</th>
-                  <th className="py-3 px-4 overline">IP</th>
-                  <th className="py-3 px-4 overline">Stato</th>
-                  <th className="py-3 px-4 overline text-right">Azioni</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleRequests.map((r, idx) => (
-                  <tr key={idx} className="border-b border-rule hover:bg-canvas2">
-                    <td className="py-3 px-4">
-                      <div className="font-bold">{r.name}</div>
-                      <div className="text-xs text-muted3 text-mono">{r.email}</div>
-                    </td>
-                    <td className="py-3 px-4 text-xs text-mono">{r.ip || "—"}</td>
-                    <td className="py-3 px-4">
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+            <div className="hidden sm:block">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-canvas2 border-b border-rule text-left">
+                    <tr>
+                      <th className="py-3 px-4 overline">Richiedente</th>
+                      <th className="py-3 px-4 overline">IP</th>
+                      <th className="py-3 px-4 overline">Stato</th>
+                      <th className="py-3 px-4 overline text-right">Azioni</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleRequests.map((r, idx) => (
+                      <tr key={idx} className="border-b border-rule hover:bg-canvas2">
+                        <td className="py-3 px-4">
+                          <div className="font-bold">{r.name}</div>
+                          <div className="text-xs text-muted3 text-mono">{r.email}</div>
+                        </td>
+                        <td className="py-3 px-4 text-xs text-mono">{r.ip || "—"}</td>
+                        <td className="py-3 px-4">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            r.status === 'approved' ? 'bg-amber-600 text-white' : 
+                            r.status === 'rejected' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
+                          }`}>
+                            {r.status.toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          {r.status === 'pending' && (
+                            <div className="flex justify-end gap-2">
+                              <button onClick={() => handleRequest(r.email, "approve")} className="p-1.5 bg-emerald-100 text-emerald-700 rounded-sm hover:bg-emerald-200"><Check size={16} /></button>
+                              <button onClick={() => handleRequest(r.email, "reject")} className="p-1.5 bg-red-100 text-red-700 rounded-sm hover:bg-red-200"><X size={16} /></button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                    {requests.length === 0 && (
+                      <tr><td colSpan="4" className="py-8 text-center text-muted3 italic">Nessuna richiesta trovata</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="sm:hidden divide-y divide-rule">
+              {visibleRequests.length > 0 ? (
+                visibleRequests.map((r, idx) => (
+                  <div key={idx} className="p-4">
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div>
+                        <div className="font-bold">{r.name}</div>
+                        <div className="text-xs text-muted3 text-mono truncate">{r.email}</div>
+                      </div>
+                      <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${
                         r.status === 'approved' ? 'bg-amber-600 text-white' : 
                         r.status === 'rejected' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
                       }`}>
                         {r.status.toUpperCase()}
                       </span>
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      {r.status === 'pending' && (
-                        <div className="flex justify-end gap-2">
-                          <button onClick={() => handleRequest(r.email, "approve")} className="p-1.5 bg-emerald-100 text-emerald-700 rounded-sm hover:bg-emerald-200"><Check size={16} /></button>
-                          <button onClick={() => handleRequest(r.email, "reject")} className="p-1.5 bg-red-100 text-red-700 rounded-sm hover:bg-red-200"><X size={16} /></button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {requests.length === 0 && (
-                  <tr><td colSpan="4" className="py-8 text-center text-muted3 italic">Nessuna richiesta trovata</td></tr>
-                )}
-              </tbody>
-            </table>
-          {requests.length > 3 && (
-            <div className="border-t border-rule bg-canvas2 px-4 py-3 text-right">
-              <button
-                type="button"
-                onClick={() => setShowAllRequests((value) => !value)}
-                className="btn-ghost text-sm"
-              >
-                {showAllRequests ? "Mostra meno" : `Mostra tutte le ${requests.length} richieste`}
-              </button>
+                    </div>
+                    <div className="text-xs text-muted3 text-mono mb-3">IP: {r.ip || "-"}</div>
+                    {r.status === 'pending' && (
+                      <div className="flex flex-wrap gap-2">
+                        <button onClick={() => handleRequest(r.email, "approve")} className="btn-ghost text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-sm px-3 py-2 text-sm">
+                          <Check size={14} /> Approva
+                        </button>
+                        <button onClick={() => handleRequest(r.email, "reject")} className="btn-ghost text-red-700 bg-red-50 hover:bg-red-100 rounded-sm px-3 py-2 text-sm">
+                          <X size={14} /> Rifiuta
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))
+              ) : (
+                <div className="p-4 text-center text-muted3 italic text-sm">Nessuna richiesta trovata</div>
+              )}
             </div>
-          )}
+            {requests.length > 3 && (
+              <div className="border-t border-rule bg-canvas2 px-4 py-3 text-right">
+                <button
+                  type="button"
+                  onClick={() => setShowAllRequests((value) => !value)}
+                  className="btn-ghost text-sm"
+                >
+                  {showAllRequests ? "Mostra meno" : `Mostra tutte le ${requests.length} richieste`}
+                </button>
+              </div>
+            )}
           </div>
         </section>
 
@@ -220,7 +295,7 @@ export default function Admin() {
                     <HardDriveUpload size={14} /> Collega Account Google
                   </button>
                 ) : (
-                  <button onClick={disconnectMaster} className="btn-ghost border border-red-300 text-red-600 hover:bg-red-50 rounded-sm px-3 py-1.5 text-sm">
+                  <button onClick={disconnectMaster} className="btn-ghost btn-ghost-danger border border-red-300 text-red-600 hover:bg-red-50 rounded-sm px-3 py-1.5 text-sm">
                     <Unlink size={14} /> Scollega Drive
                   </button>
                 )}

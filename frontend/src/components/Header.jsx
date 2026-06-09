@@ -31,6 +31,9 @@ export default function Header() {
     `flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-1 py-2 text-[11px] font-medium transition-colors ${
       isActive ? "text-ink" : "text-muted2"
     }`;
+  const topBarStyle = { paddingTop: "env(safe-area-inset-top, 0px)" };
+  const bottomNavStyle = { paddingBottom: "env(safe-area-inset-bottom, 0px)" };
+  const bottomSpacerStyle = { height: "calc(4rem + env(safe-area-inset-bottom, 0px))" };
 
   const handleLogout = () => {
     logout();
@@ -39,7 +42,7 @@ export default function Header() {
 
   return (
     <>
-      <header className="sticky top-0 z-40 bg-card border-b border-rule">
+      <header className="sticky top-0 z-40 bg-card border-b border-rule" style={topBarStyle}>
         <div className="max-w-7xl mx-auto px-4 md:px-12 py-3 flex items-center justify-between gap-2">
           <Link to="/" className="flex items-center gap-2.5 shrink-0">
             <TrebleClef size={26} />
@@ -69,7 +72,7 @@ export default function Header() {
         </div>
       </header>
 
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-card border-t border-rule grid grid-flow-col auto-cols-fr">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-card border-t border-rule grid grid-flow-col auto-cols-fr" style={bottomNavStyle}>
         {navItems.map(({ to, label, icon: Icon, end }) => (
           <NavLink key={to} to={to} end={end} className={mobileCls}>
             <Icon size={18} strokeWidth={1.75} />
@@ -77,7 +80,7 @@ export default function Header() {
           </NavLink>
         ))}
       </nav>
-      <div className="md:hidden h-16" aria-hidden="true" />
+      <div className="md:hidden h-16" aria-hidden="true" style={bottomSpacerStyle} />
     </>
   );
 }

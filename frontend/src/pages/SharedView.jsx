@@ -42,7 +42,7 @@ export default function SharedView() {
       <h1 className="font-display font-black text-4xl tracking-tighter mb-1">{lib.name}</h1>
       {lib.description && <p className="text-muted2 mb-6 max-w-2xl">{lib.description}</p>}
       
-      <div className="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-md p-4 mb-8 text-sm text-amber-800 dark:text-amber-100">
+      <div className="public-view-banner border rounded-md p-4 mb-8 text-sm">
         <div className="flex gap-2">
           <Lock size={16} className="shrink-0 mt-0.5" />
           <div>
