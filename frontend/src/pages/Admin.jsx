@@ -138,9 +138,7 @@ export default function Admin() {
                           </div>
                         </td>
                         <td className="py-4 px-4 text-sm text-muted3 text-mono truncate max-w-[18rem]">{u.email}</td>
-                        <td className="py-4 px-4 text-right text-[10px] text-muted2 uppercase tracking-wider font-mono">
-                          {u.created_at ? new Date(u.created_at).toLocaleString() : "-"}
-                        </td>
+                        <td className="py-4 px-4 text-right text-[10px] text-muted2 uppercase tracking-wider font-mono">{u.created_at ? new Date(u.created_at).toLocaleString() : "-"}</td>
                       </tr>
                     ))}
                     {users.length === 0 && (
@@ -295,7 +293,7 @@ export default function Admin() {
                     <HardDriveUpload size={14} /> Collega Account Google
                   </button>
                 ) : (
-                  <button onClick={disconnectMaster} className="btn-ghost btn-ghost-danger border border-red-300 text-red-600 hover:bg-red-50 rounded-sm px-3 py-1.5 text-sm">
+                  <button onClick={disconnectMaster} className="btn-ghost border border-red-300 text-red-600 hover:bg-red-50 rounded-sm px-3 py-1.5 text-sm">
                     <Unlink size={14} /> Scollega Drive
                   </button>
                 )}
