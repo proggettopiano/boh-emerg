@@ -181,7 +181,7 @@ export default function Admin() {
                     <td className="py-3 px-4 text-xs text-mono">{r.ip || "—"}</td>
                     <td className="py-3 px-4">
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        r.status === 'approved' ? 'bg-amber-600 text-white' : 
+                        r.status === 'approved' ? 'bg-emerald-500 text-emerald-950 dark:bg-emerald-400 dark:text-emerald-950' : 
                         r.status === 'rejected' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
                       }`}>
                         {r.status.toUpperCase()}
