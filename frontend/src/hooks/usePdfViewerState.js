@@ -95,16 +95,21 @@ function usePageController({
       setRangeAround(p);
       setPageState(p, { source: "programmatic", skipNotify: false });
 
+      const requestId = {};
+      scrollRequestIdRef.current = requestId;
+
       const finish = () => {
+        if (scrollRequestIdRef.current !== requestId) return;
         programmaticScrollRef.current = false;
         pendingScrollPageRef.current = null;
+        scrollRequestIdRef.current = null;
         if (!initialScrollDoneRef.current) {
           completeInitialJumpRef.current?.();
         }
       };
 
       const tryScroll = (attempts = 0) => {
-        if (!mountedRef.current || pendingScrollPageRef.current !== p) return;
+        if (!mountedRef.current || pendingScrollPageRef.current !== p || scrollRequestIdRef.current !== requestId) return;
         const el = pageRefs.current[p];
         if (el) {
           const top = el.getBoundingClientRect().top + window.scrollY - getToolbarOffset();
@@ -116,7 +121,7 @@ function usePageController({
           requestAnimationFrame(() => tryScroll(attempts + 1));
           return;
         }
-        if (pendingScrollPageRef.current !== p) return;
+        if (pendingScrollPageRef.current !== p || scrollRequestIdRef.current !== requestId) return;
         window.scrollTo({ top: Math.max(0, (p - 1) * slotHeight), behavior });
         finish();
       };
@@ -612,6 +617,7 @@ export function usePdfViewerState({
 }) {
   const navigate = useNavigate();
   const programmaticScrollRef = useRef(false);
+  const scrollRequestIdRef = useRef(null);
   const searchDriverDoneRef = useRef(false);
   const initialJumpPendingRef = useRef(initialPage > 1);
   const currentPageRef = useRef(initialPage);
@@ -621,6 +627,12 @@ export function usePdfViewerState({
   const activeQueryRef = useRef(initialQuery);
 
   const getCurrentPage = useCallback(() => currentPageRef.current, []);
+
+  const cancelPendingScroll = useCallback(() => {
+    pendingScrollPageRef.current = null;
+    programmaticScrollRef.current = false;
+    scrollRequestIdRef.current = null;
+  }, [pendingScrollPageRef]);
 
   const getPendingScrollTargetTop = useCallback(
     (pageNumber) => {
@@ -740,10 +752,10 @@ export function usePdfViewerState({
     (pageNumber, generation, renderGenerationRef) => {
       if (!mountedRef.current || generation !== renderGenerationRef.current) return;
       if (pendingScrollPageRef.current === pageNumber) {
-        if (programmaticScrollRef.current) {
+        if (programmaticScrollRef.current && scrollRequestIdRef.current != null) {
           scrollToPageRef.current?.(pageNumber, "auto");
         } else {
-          pendingScrollPageRef.current = null;
+          cancelPendingScroll();
         }
       }
       if (
@@ -758,7 +770,7 @@ export function usePdfViewerState({
       }
       search.scheduleCollect();
     },
-    [mountedRef, pendingScrollPageRef, initialScrollDoneRef, searchDriverDoneRef, search],
+    [mountedRef, pendingScrollPageRef, initialScrollDoneRef, searchDriverDoneRef, search, cancelPendingScroll],
   );
 
   const handleScroll = useCallback(
@@ -768,8 +780,7 @@ export function usePdfViewerState({
         const targetTop = getPendingScrollTargetTop(pendingPage);
         const isAtPendingTarget = targetTop != null && Math.abs(scrollY - targetTop) < 32;
         if (!programmaticScrollRef.current || !isAtPendingTarget) {
-          pendingScrollPageRef.current = null;
-          programmaticScrollRef.current = false;
+          cancelPendingScroll();
         }
       }
       clearTimeout(scrollSyncTimerRef.current);
@@ -777,7 +788,7 @@ export function usePdfViewerState({
         page.applyPageFromScroll(scrollY);
       }, SCROLL_SYNC_DEBOUNCE_MS);
     },
-    [page, pendingScrollPageRef, programmaticScrollRef, getPendingScrollTargetTop],
+    [page, pendingScrollPageRef, programmaticScrollRef, getPendingScrollTargetTop, cancelPendingScroll],
   );
 
   const completeInitialJump = useCallback(() => {
