@@ -817,7 +817,7 @@ export function usePdfViewerState({
       }
       clearTimeout(scrollSyncTimerRef.current);
       scrollSyncTimerRef.current = setTimeout(() => {
-        page.applyPageFromScroll(scrollY);
+        page.applyPageFromScroll(window.scrollY);
       }, SCROLL_SYNC_DEBOUNCE_MS);
     },
     [page, pendingScrollPageRef, programmaticScrollRef, cancelPendingScroll],
