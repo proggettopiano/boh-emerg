@@ -12,7 +12,7 @@ export default function SharedLibraryDetail() {
   const [lib, setLib] = useState(null);
   const [allPdfs, setAllPdfs] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
-  const canModifyLibrary = Boolean(user);
+  const canModifyLibrary = Boolean(user && lib?.is_owner);
   const [q, setQ] = useState("");
   const [searchResults, setSearchResults] = useState(null);
   const mountedRef = useRef(false);
@@ -50,7 +50,7 @@ export default function SharedLibraryDetail() {
       const { added = [], protected: protectedIds = [], skipped = [] } = r.data;
       const messages = [];
       if (added.length) messages.push(`${added.length} PDF aggiunti`);
-      if (protectedIds.length) messages.push(`${protectedIds.length} file protetto${protectedIds.length === 1 ? "" : "i"} non aggiunto${protectedIds.length === 1 ? "" : "i"}`);
+      if (protectedIds.length) messages.push(`${protectedIds.length} protetti non aggiunti`);
       if (skipped.length) messages.push(`${skipped.length} già presenti o non validi`);
       toast.success(messages.length ? messages.join(" · ") : "PDF aggiunti");
 
@@ -80,28 +80,14 @@ export default function SharedLibraryDetail() {
 
   useEffect(() => {
     if (!q.trim()) { setSearchResults(null); return undefined; }
-    if (!lib) { setSearchResults([]); return undefined; }
-    const libPdfIds = new Set(
-      (lib.pdf_ids || lib.pdfs || []).map((item) => {
-        if (typeof item === "string" || typeof item === "number") return String(item);
-        if (!item) return null;
-        return String(item.id ?? item.pdf_id ?? item.pdfId ?? item.uuid ?? item.key);
-      }).filter(Boolean),
-    );
-    if (libPdfIds.size === 0) {
-      setSearchResults([]);
-      return undefined;
-    }
-
-    const libPdfIdsArray = Array.from(libPdfIds);
-    const params = { q, pdf_ids: libPdfIdsArray.join(",") };
     const ctrl = new AbortController();
     let alive = true;
     const timer = setTimeout(async () => {
       try {
-        const r = await api.get("/search", { params, signal: ctrl.signal });
-        const allResults = r.data.results || [];
-        const filtered = allResults.filter((res) => libPdfIds.has(String(res.pdf_id || res.id || res.pdfId || res.key)));
+        const r = await api.get("/search", { params: { q }, signal: ctrl.signal });
+        // Filtra solo i risultati che appartengono alla libreria corrente
+        const libPdfIds = new Set(lib.pdf_ids || []);
+        const filtered = (r.data.results || []).filter(res => libPdfIds.has(res.pdf_id));
         if (alive && mountedRef.current) setSearchResults(filtered);
       } catch (e) {
         if (alive && mountedRef.current && e.name !== "CanceledError" && e.name !== "AbortError" && e.code !== "ERR_CANCELED") setSearchResults([]);
@@ -112,7 +98,7 @@ export default function SharedLibraryDetail() {
       clearTimeout(timer);
       ctrl.abort();
     };
-  }, [q, id, lib?.pdf_ids, lib?.pdfs, lib]);
+  }, [q, id, lib?.pdf_ids]);
 
   if (!lib) return <div className="p-12 text-mono text-sm text-muted2">Caricamento...</div>;
 
@@ -206,10 +192,9 @@ export default function SharedLibraryDetail() {
 
 function AddPdfsModal({ allPdfs, existing, onClose, onAdd }) {
   const [picked, setPicked] = useState([]);
-  const candidates = allPdfs.filter((pdf) => !existing.includes(pdf.id));
-  const protectedPdfs = candidates.filter((pdf) => pdf.is_protected);
   const toggle = (pdfId) => setPicked((current) => (current.includes(pdfId) ? current.filter((id) => id !== pdfId) : [...current, pdfId]));
-
+  const candidates = allPdfs.filter((pdf) => !existing.includes(pdf.id));
+  
   return (
     <div className="fixed inset-0 z-50 bg-overlay flex items-center justify-center p-4 backdrop-blur-sm" onClick={onClose}>
       <div className="bg-card border border-rule rounded-md w-full max-w-xl shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -220,47 +205,29 @@ function AddPdfsModal({ allPdfs, existing, onClose, onAdd }) {
           {candidates.length === 0 ? (
             <p className="text-muted2 text-center py-12 italic">Tutti gli spartiti sono già in questa libreria.</p>
           ) : (
-            <div>
-              {protectedPdfs.length > 0 && (
-                <div className="px-6 py-3 bg-surface border-b border-rule text-sm text-muted2">
-                  I file protetti sono disabilitati e non possono essere aggiunti in questa raccolta.
-                </div>
-              )}
-              <ul className="space-y-2">
-                {candidates.map((pdf) => {
-                  const isProtected = pdf.is_protected;
-                  return (
-                    <li
-                      key={pdf.id}
-                      className={`flex items-center gap-4 px-6 py-3 border-b border-rule transition-colors ${isProtected ? "bg-muted/5 text-muted3 cursor-not-allowed" : "hover:bg-canvas2 cursor-pointer"}`}
-                      onClick={() => { if (!isProtected) toggle(pdf.id); }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={picked.includes(pdf.id)}
-                        disabled={isProtected}
-                        onChange={() => {}}
-                        className="w-5 h-5 rounded border-rule text-ink focus:ring-ink"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-bold truncate">{pdf.title}</div>
-                        <div className="text-mono text-[10px] text-muted3 uppercase flex items-center gap-2">
-                          <span>{pdf.pages} pagine — {pdf.created_at?.slice(0, 10)}</span>
-                          {isProtected && <span className="rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[10px] text-amber-800">Protetto</span>}
-                        </div>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
+            <ul className="">
+              {candidates.map((pdf) => (
+                <li key={pdf.id} className="flex items-center gap-4 px-6 py-3 border-b border-rule hover:bg-canvas2 transition-colors cursor-pointer" onClick={() => toggle(pdf.id)}>
+                  <input 
+                    type="checkbox" 
+                    checked={picked.includes(pdf.id)} 
+                    onChange={() => {}} // Gestito dal click sulla riga
+                    className="w-5 h-5 rounded border-rule text-ink focus:ring-ink"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold truncate">{pdf.title}</div>
+                    <div className="text-mono text-[10px] text-muted3 uppercase">{pdf.pages} pagine — {pdf.created_at?.slice(0, 10)}</div>
+                  </div>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
-        <div className="p-6 bg-canvas2 flex justify-between items-center gap-3 rounded-b-md">
+        <div className="p-6 bg-canvas2 flex justify-end gap-3 rounded-b-md">
           <button onClick={onClose} className="px-4 py-2 text-sm font-bold hover:underline">Annulla</button>
-          <button
-            disabled={picked.length === 0}
-            onClick={() => onAdd(picked)}
+          <button 
+            disabled={picked.length === 0} 
+            onClick={() => onAdd(picked)} 
             className="btn-primary disabled:opacity-30 disabled:cursor-not-allowed px-6"
           >
             Aggiungi {picked.length > 0 ? `(${picked.length})` : ""}

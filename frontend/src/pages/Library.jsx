@@ -22,7 +22,6 @@ export default function Library() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const isAdmin = user?.is_admin;
-  const restoreScrollRef = useRef(true);
 
   const load = useCallback(async () => {
     const seq = loadSeq.current + 1;
@@ -54,18 +53,8 @@ export default function Library() {
 
   useEffect(() => {
     mountedRef.current = true;
-    // Restore scroll position when component mounts
-    if (restoreScrollRef.current) {
-      const saved = sessionStorage.getItem("library_scroll_y");
-      if (saved) {
-        window.scrollTo(0, parseInt(saved, 10));
-        restoreScrollRef.current = false;
-      }
-    }
     return () => {
-      // Save scroll position when component unmounts
       mountedRef.current = false;
-      sessionStorage.setItem("library_scroll_y", String(window.scrollY));
       loadSeq.current += 1;
     };
   }, []);
