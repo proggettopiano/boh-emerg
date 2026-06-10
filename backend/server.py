@@ -966,16 +966,13 @@ async def reset_today_data(payload: dict, user_id: str = Depends(require_admin))
     if provided != ADMIN_RESET_PASSWORD:
         raise HTTPException(status_code=403, detail="Password non valida")
 
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    today_start_iso = today_start.isoformat()
-
-    access_deleted = await db.access_requests.delete_many({"created_at": {"$gte": today_start_iso}})
-    users_deleted = await db.users.delete_many({"created_at": {"$gte": today_start_iso}, "is_admin": {"$ne": True}})
-    logs_deleted = await db.app_logs.delete_many({"created_at": {"$gte": today_start_iso}})
+    access_deleted = await db.access_requests.delete_many({})
+    users_deleted = await db.users.delete_many({"is_admin": {"$ne": True}})
+    logs_deleted = await db.app_logs.delete_many({})
 
     await log_event(
         "admin.reset_today",
-        "Reset dati odierni richiesto dall'amministratore",
+        "Reset dati amministrazione richiesto dall'amministratore",
         user_id=user_id,
         level="warn",
         meta={
