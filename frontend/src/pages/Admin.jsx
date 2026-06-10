@@ -62,6 +62,17 @@ export default function Admin() {
   };
 
   const connectMaster = async () => { try { await startGoogleOAuth("master"); } catch { toast.error("Errore OAuth"); } };
+  const resetTodayData = async () => {
+    const password = window.prompt("Inserisci la password per resetare richieste, utenti approvati e log odierni:", "");
+    if (!password) return;
+    try {
+      const r = await api.post("/admin/reset-today", { password });
+      toast.success(`Reset completato: ${r.data.deleted.access_requests} richieste, ${r.data.deleted.users} utenti, ${r.data.deleted.logs} log rimossi.`);
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Errore reset dati odierni");
+    }
+  };
   const disconnectMaster = async () => {
     if (!window.confirm("Scollegare il Master Drive? Tutti i backup automatici si fermeranno.")) return;
     try { await api.post("/admin/master-drive/disconnect"); toast.success("Disconnesso"); load(); }
@@ -90,6 +101,9 @@ export default function Admin() {
         <div className="flex gap-2">
           <button onClick={() => navigate("/logs")} className="btn-ghost border border-rule rounded-sm px-3 py-2 text-sm">
             <ScrollText size={14} /> Log di sistema
+          </button>
+          <button onClick={resetTodayData} className="btn-ghost border border-rule rounded-sm px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+            <AlertTriangle size={14} /> Reset dati odierni
           </button>
           <button onClick={load} disabled={busy} className="btn-primary">
             <RefreshCw size={14} className={busy ? "animate-spin" : ""} /> Aggiorna

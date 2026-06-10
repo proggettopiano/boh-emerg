@@ -49,46 +49,26 @@ db = client[os.environ["DB_NAME"]]
 
 APP_NAME = os.environ.get("APP_NAME", "ScoreLib")
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@scorelib.app").lower()
+ADMIN_RESET_PASSWORD = os.environ.get("ADMIN_LOG_PASSWORD", "Rome02009")
 WORKER_SECRET = os.environ.get("WORKER_SECRET", "")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async def startup_tasks():
-        try:
-            await ensure_indexes()
-            await seed_admin()
-            await migrate_single_owner()
-
-            # Startup job recovery
-            stuck_jobs = await db.upload_jobs.find({"status": {"$in": ["processing", "queued"]}}).to_list(1000)
-            await db.upload_jobs.update_many(
-                {"status": {"$in": ["processing", "queued"]}},
-                {"$set": {"status": "queued", "error": "requeued_at_startup", "updated_at": iso_now()}}
-            )
-            for _j in stuck_jobs:
-                asyncio.create_task(process_pdf_job(_j["id"]))
-        except Exception as exc:
-            logger.exception(f"Background startup task failed: {exc}")
-
-    asyncio.create_task(startup_tasks())
+    await ensure_indexes()
+    await seed_admin()
+    await migrate_single_owner()
+    
+    # Startup job recovery
+    stuck_jobs = await db.upload_jobs.find({"status": {"$in": ["processing", "queued"]}}).to_list(1000)
+    await db.upload_jobs.update_many(
+        {"status": {"$in": ["processing", "queued"]}},
+        {"$set": {"status": "queued", "error": "requeued_at_startup", "updated_at": iso_now()}}
+    )
+    for _j in stuck_jobs:
+        asyncio.create_task(process_pdf_job(_j["id"]))
     yield
 
-def parse_origin_list(value: str) -> List[str]:
-    return [origin.strip() for origin in value.split(",") if origin.strip()]
-
-BACKEND_ENV = os.environ.get("BACKEND_ENV", os.environ.get("ENV", "production")).strip().lower()
-ENABLE_OPENAPI = BACKEND_ENV in ("development", "dev", "local")
-CORS_ORIGINS = parse_origin_list(os.environ.get("BACKEND_CORS_ORIGINS", "https://scorelib.vercel.app,https://www.scorelib.vercel.app"))
-if not CORS_ORIGINS:
-    CORS_ORIGINS = ["https://scorelib.vercel.app", "https://www.scorelib.vercel.app"]
-
-app = FastAPI(
-    title=APP_NAME,
-    lifespan=lifespan,
-    docs_url="/docs" if ENABLE_OPENAPI else None,
-    redoc_url="/redoc" if ENABLE_OPENAPI else None,
-    openapi_url="/openapi.json" if ENABLE_OPENAPI else None,
-)
+app = FastAPI(title=APP_NAME, lifespan=lifespan)
 
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
@@ -98,11 +78,11 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Configurazione CORS robusta
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
-    allow_origin_regex=r"https://(www\.)?scorelib\.vercel\.app$",
+    allow_origins=["https://scorelib.vercel.app"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With", "Origin"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"]
 )
 
 SECURITY_HEADERS = {
@@ -110,8 +90,7 @@ SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
-    "Permissions-Policy": "interest-cohort=()",
-    "Content-Security-Policy": "default-src 'self'; script-src 'self' https://vercel.live; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://api.fontshare.com; font-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://api.fontshare.com https://cdn.fontshare.com; connect-src 'self' https://scorelib-backend.onrender.com https://fonts.googleapis.com https://api.fontshare.com https://vercel.live; img-src 'self' data: blob:; object-src 'none'; frame-ancestors 'none'; frame-src 'self' https://vercel.live; worker-src 'self' blob:; base-uri 'self'"
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://api.fontshare.com; connect-src 'self' https://scorelib-backend.onrender.com https://fonts.googleapis.com https://api.fontshare.com; img-src 'self' data: blob:; object-src 'none'; frame-ancestors 'none'; worker-src 'self' blob:; base-uri 'self'"
 }
 
 @app.middleware("http")
@@ -512,12 +491,26 @@ async def get_pdf_file(pdf_id: str, user_id: Optional[str] = Depends(get_optiona
         fpath = Path("")
         file_exists = False
 
+    await log_event(
+        "pdf.debug",
+        "PDF_DEBUG",
+        user_id=user_id,
+        meta={
+            "pdf_id": pdf_id,
+            "file_path": str(file_path),
+            "file_exists": file_exists,
+            "drive_file_id": p.get("drive_file_id"),
+            "drive_owner": p.get("drive_owner"),
+            "storage_type": p.get("storage_type"),
+        },
+    )
+
     if file_exists:
         await log_event(
             "pdf.debug",
             "PDF_SERVE_LOCAL",
             user_id=user_id,
-            meta={"pdf_id": pdf_id, "filename": p.get("filename")},
+            meta={"pdf_id": pdf_id, "file_path": str(fpath), "filename": p.get("filename")},
         )
         return FileResponse(fpath, media_type="application/pdf", filename=p["filename"])
 
@@ -526,7 +519,7 @@ async def get_pdf_file(pdf_id: str, user_id: Optional[str] = Depends(get_optiona
         "pdf.file_missing",
         "PDF locale mancante, provo fallback Drive",
         user_id=user_id,
-        meta={"pdf_id": pdf_id, "drive_file_id": p.get("drive_file_id"), "drive_owner": p.get("drive_owner")},
+        meta={"pdf_id": pdf_id, "file_path": str(file_path), "drive_file_id": p.get("drive_file_id"), "drive_owner": p.get("drive_owner")},
     )
 
     if p.get("drive_file_id"):
@@ -553,7 +546,7 @@ async def get_pdf_file(pdf_id: str, user_id: Optional[str] = Depends(get_optiona
                     "pdf.drive_restore",
                     "PDF ripristinato da Drive",
                     user_id=user_id,
-                    meta={"pdf_id": pdf_id, "drive_file_id": p["drive_file_id"]},
+                    meta={"pdf_id": pdf_id, "drive_file_id": p["drive_file_id"], "file_path": str(new_path)},
                 )
                 return FileResponse(new_path, media_type="application/pdf", filename=p["filename"])
             except Exception as e:
@@ -660,18 +653,11 @@ async def add_to_library(lib_id: str, payload: AddPdfsIn, user_id: str = Depends
     skipped = []
     existing_ids = set(lib.get("pdf_ids", []))
 
-    pdf_ids = [str(pdf_id).strip() for pdf_id in payload.pdf_ids if isinstance(pdf_id, str) and pdf_id.strip()]
-    if not pdf_ids:
-        return {"added": added, "protected": protected, "skipped": skipped}
-
-    docs = await db.pdfs.find({"id": {"$in": pdf_ids}}, {"_id": 0, "id": 1, "is_protected": 1}).to_list(1000)
-    pdf_map = {doc["id"]: doc for doc in docs}
-
-    for pdf_id in pdf_ids:
+    for pdf_id in payload.pdf_ids:
         if pdf_id in existing_ids:
             skipped.append(pdf_id)
             continue
-        p = pdf_map.get(pdf_id)
+        p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0, "is_protected": 1})
         if not p:
             skipped.append(pdf_id)
             continue
@@ -779,8 +765,8 @@ async def import_shared_pdf(pdf_id: str, user_id: str = Depends(get_current_user
     if pages:
         new_pages = [{**pg, "pdf_id": new_id, "owner_id": user_id} for pg in pages]
         await db.pdf_pages.insert_many(new_pages)
-    await log_event("pdf.save", f"PDF condiviso importato su disco: {p.get('filename')}", user_id=user_id, meta={"pdf_id": new_id, "source_pdf_id": pdf_id, "filename": p.get("filename")})
-    await log_event("pdf.storage", "Storage finale: LOCAL", user_id=user_id, meta={"pdf_id": new_id, "storage_type": "local"})
+    await log_event("pdf.save", f"PDF condiviso importato su disco: {file_path_str}", user_id=user_id, meta={"pdf_id": new_id, "source_pdf_id": pdf_id, "path": file_path_str, "filename": p.get("filename")})
+    await log_event("pdf.storage", f"Storage finale: LOCAL - path={file_path_str}", user_id=user_id, meta={"pdf_id": new_id, "storage_type": "local", "file_path": file_path_str})
     await log_event("pdf.import", f"Importato PDF condiviso: {p.get('title')}", user_id=user_id, meta={"pdf_id": new_id, "source_pdf_id": pdf_id})
     return {"ok": True, "pdf_id": new_id}
 
@@ -850,26 +836,18 @@ def format_search_result(p: dict, pg: dict, q: str, score: int, snippet: Optiona
     }
 
 @api.get("/search")
-async def search(
-    q: str = Query(..., min_length=1),
-    pdf_ids: Optional[str] = Query(None),
-    user_id: str = Depends(get_current_user_id),
-):
+async def search(q: str = Query(..., min_length=1), user_id: str = Depends(get_current_user_id)):
     raw_q = q.strip()
     if not raw_q:
         return {"results": []}
 
-    pdf_ids_list = [pid.strip() for pid in (pdf_ids or "").split(",") if pid.strip()] or None
     results = []
     seen = set()  # Per evitare duplicati (stessa pagina trovata con logiche diverse)
 
     if raw_q.isdigit():
         # 1. CERCA INIZIO INNO (PIÙ FORTE)
         hymn_regex = rf"(?m)^\s*{re.escape(raw_q)}[.\s]"
-        hymn_filter = {"text": {"$regex": hymn_regex, "$options": "m"}}
-        if pdf_ids_list:
-            hymn_filter["pdf_id"] = {"$in": pdf_ids_list}
-        cursor = db.pdf_pages.find(hymn_filter)
+        cursor = db.pdf_pages.find({"text": {"$regex": hymn_regex, "$options": "m"}})
         async for pg in cursor:
             key = (pg["pdf_id"], pg["page"])
             if key in seen:
@@ -880,10 +858,7 @@ async def search(
                 results.append(format_search_result(p, pg, raw_q, score=100))
 
         # 2. CERCA ETICHETTA PAGINA (DEBOLE)
-        label_filter = {"page_label": raw_q}
-        if pdf_ids_list:
-            label_filter["pdf_id"] = {"$in": pdf_ids_list}
-        label_cursor = db.pdf_pages.find(label_filter)
+        label_cursor = db.pdf_pages.find({"page_label": raw_q})
         async for pg in label_cursor:
             key = (pg["pdf_id"], pg["page"])
             if key in seen:
@@ -894,10 +869,7 @@ async def search(
                 results.append(format_search_result(p, pg, raw_q, score=50, snippet=f"Pagina {raw_q}"))
 
     safe_q = rf"(?<!\d){re.escape(raw_q)}(?!\d)" if raw_q.isdigit() else re.escape(raw_q)
-    text_filter = {"text": {"$regex": safe_q, "$options": "i"}}
-    if pdf_ids_list:
-        text_filter["pdf_id"] = {"$in": pdf_ids_list}
-    text_cursor = db.pdf_pages.find(text_filter).limit(50)
+    text_cursor = db.pdf_pages.find({"text": {"$regex": safe_q, "$options": "i"}}).limit(50)
     async for pg in text_cursor:
         key = (pg["pdf_id"], pg["page"])
         if key in seen:
@@ -987,6 +959,40 @@ async def master_drive_connect(payload: dict, _: str = Depends(require_admin)):
 async def master_drive_disconnect(_: str = Depends(require_admin)):
     await db.config.delete_one({"key": "master_drive"})
     return {"ok": True}
+
+@api.post("/admin/reset-today")
+async def reset_today_data(payload: dict, user_id: str = Depends(require_admin)):
+    provided = (payload.get("password") or "").strip()
+    if provided != ADMIN_RESET_PASSWORD:
+        raise HTTPException(status_code=403, detail="Password non valida")
+
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start_iso = today_start.isoformat()
+
+    access_deleted = await db.access_requests.delete_many({"created_at": {"$gte": today_start_iso}})
+    users_deleted = await db.users.delete_many({"created_at": {"$gte": today_start_iso}, "is_admin": {"$ne": True}})
+    logs_deleted = await db.app_logs.delete_many({"created_at": {"$gte": today_start_iso}})
+
+    await log_event(
+        "admin.reset_today",
+        "Reset dati odierni richiesto dall'amministratore",
+        user_id=user_id,
+        level="warn",
+        meta={
+            "access_requests_deleted": access_deleted.deleted_count,
+            "users_deleted": users_deleted.deleted_count,
+            "logs_deleted": logs_deleted.deleted_count,
+        },
+    )
+
+    return {
+        "ok": True,
+        "deleted": {
+            "access_requests": access_deleted.deleted_count,
+            "users": users_deleted.deleted_count,
+            "logs": logs_deleted.deleted_count,
+        },
+    }
 
 # Serve manifest.json
 @app.get("/manifest.json")
