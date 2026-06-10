@@ -99,32 +99,52 @@ function usePageController({
       const requestId = {};
       scrollRequestIdRef.current = requestId;
 
-      const finish = () => {
-        if (scrollRequestIdRef.current !== requestId) return;
+      const finish = (targetTop) => {
+        if (scrollRequestIdRef.current !== requestId) return false;
+        const currentScroll = window.scrollY;
+        const expectedTop = targetTop != null ? targetTop : currentScroll;
+        if (Math.abs(currentScroll - expectedTop) > 4) return false;
         programmaticScrollRef.current = false;
         pendingScrollPageRef.current = null;
         scrollRequestIdRef.current = null;
         if (!initialScrollDoneRef.current) {
           completeInitialJumpRef.current?.();
         }
+        return true;
       };
 
       const tryScroll = (attempts = 0) => {
         if (!mountedRef.current || pendingScrollPageRef.current !== p || scrollRequestIdRef.current !== requestId) return;
         const el = pageRefs.current[p];
-        if (el) {
-          const top = el.getBoundingClientRect().top + window.scrollY - getToolbarOffset();
-          window.scrollTo({ top: Math.max(0, top), behavior });
-          finish();
+        const top = el
+          ? el.getBoundingClientRect().top + window.scrollY - getToolbarOffset()
+          : Math.max(0, (p - 1) * slotHeight);
+        const targetTop = Math.max(0, top);
+        window.scrollTo({ top: targetTop, behavior });
+
+        if (behavior === "auto") {
+          finish(targetTop);
           return;
         }
+
+        if (finish(targetTop)) {
+          return;
+        }
+
         if (attempts < 80) {
           requestAnimationFrame(() => tryScroll(attempts + 1));
           return;
         }
+
         if (pendingScrollPageRef.current !== p || scrollRequestIdRef.current !== requestId) return;
-        window.scrollTo({ top: Math.max(0, (p - 1) * slotHeight), behavior });
-        finish();
+        if (!finish(targetTop)) {
+          programmaticScrollRef.current = false;
+          pendingScrollPageRef.current = null;
+          scrollRequestIdRef.current = null;
+          if (!initialScrollDoneRef.current) {
+            completeInitialJumpRef.current?.();
+          }
+        }
       };
 
       requestAnimationFrame(() => tryScroll());
