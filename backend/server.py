@@ -648,6 +648,9 @@ async def add_to_library(lib_id: str, payload: AddPdfsIn, user_id: str = Depends
     lib = await db.shared_libraries.find_one({"id": lib_id})
     if not lib: raise HTTPException(status_code=404, detail="Libreria non trovata")
 
+    requester = await db.users.find_one({"user_id": user_id})
+    is_admin = bool(requester and (requester.get("is_admin") or requester.get("email", "").lower() == ADMIN_EMAIL))
+
     added = []
     protected = []
     skipped = []
@@ -657,11 +660,12 @@ async def add_to_library(lib_id: str, payload: AddPdfsIn, user_id: str = Depends
         if pdf_id in existing_ids:
             skipped.append(pdf_id)
             continue
-        p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0, "is_protected": 1})
+        p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0, "is_protected": 1, "owner_id": 1})
         if not p:
             skipped.append(pdf_id)
             continue
-        if p.get("is_protected"):
+        can_add_protected = is_admin or p.get("owner_id") == user_id
+        if p.get("is_protected") and not can_add_protected:
             protected.append(pdf_id)
             continue
         added.append(pdf_id)
