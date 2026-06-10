@@ -778,20 +778,18 @@ export function usePdfViewerState({
 
   const handleScroll = useCallback(
     (scrollY) => {
-      const pendingPage = pendingScrollPageRef.current;
-      if (pendingPage != null) {
-        const targetTop = getPendingScrollTargetTop(pendingPage);
-        const isAtPendingTarget = targetTop != null && Math.abs(scrollY - targetTop) < 32;
-        if (!programmaticScrollRef.current || !isAtPendingTarget) {
-          cancelPendingScroll();
-        }
+      if (programmaticScrollRef.current && pendingScrollPageRef.current != null) {
+        return;
+      }
+      if (pendingScrollPageRef.current != null) {
+        cancelPendingScroll();
       }
       clearTimeout(scrollSyncTimerRef.current);
       scrollSyncTimerRef.current = setTimeout(() => {
         page.applyPageFromScroll(scrollY);
       }, SCROLL_SYNC_DEBOUNCE_MS);
     },
-    [page, pendingScrollPageRef, programmaticScrollRef, getPendingScrollTargetTop, cancelPendingScroll],
+    [page, pendingScrollPageRef, programmaticScrollRef, cancelPendingScroll],
   );
 
   const completeInitialJump = useCallback(() => {
