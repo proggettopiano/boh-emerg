@@ -726,7 +726,7 @@ export function usePdfViewerState({
     (pageNumber, generation, renderGenerationRef) => {
       if (!mountedRef.current || generation !== renderGenerationRef.current) return;
       if (pendingScrollPageRef.current === pageNumber) {
-        if (programmaticScrollRef.current || !isPageInView(pageNumber, pageRefs, getToolbarOffset)) {
+        if (programmaticScrollRef.current) {
           scrollToPageRef.current?.(pageNumber, "auto");
         } else {
           pendingScrollPageRef.current = null;
@@ -744,17 +744,20 @@ export function usePdfViewerState({
       }
       search.scheduleCollect();
     },
-    [mountedRef, pendingScrollPageRef, initialScrollDoneRef, searchDriverDoneRef, search, getToolbarOffset, pageRefs],
+    [mountedRef, pendingScrollPageRef, initialScrollDoneRef, searchDriverDoneRef, search],
   );
 
   const handleScroll = useCallback(
     (scrollY) => {
+      if (pendingScrollPageRef.current != null && !programmaticScrollRef.current) {
+        pendingScrollPageRef.current = null;
+      }
       clearTimeout(scrollSyncTimerRef.current);
       scrollSyncTimerRef.current = setTimeout(() => {
         page.applyPageFromScroll(scrollY);
       }, SCROLL_SYNC_DEBOUNCE_MS);
     },
-    [page],
+    [page, pendingScrollPageRef, programmaticScrollRef],
   );
 
   const completeInitialJump = useCallback(() => {
