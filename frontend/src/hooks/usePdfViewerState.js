@@ -104,7 +104,7 @@ function usePageController({
       };
 
       const tryScroll = (attempts = 0) => {
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || pendingScrollPageRef.current !== p) return;
         const el = pageRefs.current[p];
         if (el) {
           const top = el.getBoundingClientRect().top + window.scrollY - getToolbarOffset();
@@ -116,6 +116,7 @@ function usePageController({
           requestAnimationFrame(() => tryScroll(attempts + 1));
           return;
         }
+        if (pendingScrollPageRef.current !== p) return;
         window.scrollTo({ top: Math.max(0, (p - 1) * slotHeight), behavior });
         finish();
       };
@@ -621,6 +622,19 @@ export function usePdfViewerState({
 
   const getCurrentPage = useCallback(() => currentPageRef.current, []);
 
+  const getPendingScrollTargetTop = useCallback(
+    (pageNumber) => {
+      if (pageNumber == null) return null;
+      const el = pageRefs.current[pageNumber];
+      const estimatedTop = Math.max(0, (pageNumber - 1) * slotHeight);
+      const top = el
+        ? el.getBoundingClientRect().top + window.scrollY
+        : estimatedTop;
+      return Math.max(0, top - getToolbarOffset());
+    },
+    [pageRefs, slotHeight, getToolbarOffset],
+  );
+
   const syncUrl = useCallback(
     (page, q) => {
       clearTimeout(urlSyncTimerRef.current);
@@ -749,15 +763,21 @@ export function usePdfViewerState({
 
   const handleScroll = useCallback(
     (scrollY) => {
-      if (pendingScrollPageRef.current != null && !programmaticScrollRef.current) {
-        pendingScrollPageRef.current = null;
+      const pendingPage = pendingScrollPageRef.current;
+      if (pendingPage != null) {
+        const targetTop = getPendingScrollTargetTop(pendingPage);
+        const isAtPendingTarget = targetTop != null && Math.abs(scrollY - targetTop) < 32;
+        if (!programmaticScrollRef.current || !isAtPendingTarget) {
+          pendingScrollPageRef.current = null;
+          programmaticScrollRef.current = false;
+        }
       }
       clearTimeout(scrollSyncTimerRef.current);
       scrollSyncTimerRef.current = setTimeout(() => {
         page.applyPageFromScroll(scrollY);
       }, SCROLL_SYNC_DEBOUNCE_MS);
     },
-    [page, pendingScrollPageRef, programmaticScrollRef],
+    [page, pendingScrollPageRef, programmaticScrollRef, getPendingScrollTargetTop],
   );
 
   const completeInitialJump = useCallback(() => {
