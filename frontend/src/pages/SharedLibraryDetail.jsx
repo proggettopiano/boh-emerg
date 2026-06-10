@@ -86,11 +86,27 @@ export default function SharedLibraryDetail() {
       try {
         const r = await api.get("/search", { params: { q }, signal: ctrl.signal });
         // Filtra solo i risultati che appartengono alla libreria corrente
-        // Normalize ids to strings to avoid mismatches between numeric and string ids
-        const libPdfIds = new Set((lib.pdf_ids || []).map((id) => String(id)));
-        const filtered = (r.data.results || []).filter((res) => libPdfIds.has(String(res.pdf_id)));
+        // La libreria condivisa può avere gli id PDF in `pdf_ids` oppure negli oggetti di `pdfs`.
+        const libPdfIds = new Set(
+          (lib.pdf_ids || lib.pdfs || []).map((item) => {
+            if (typeof item === "string" || typeof item === "number") return String(item);
+            if (!item) return null;
+            return String(item.id ?? item.pdf_id ?? item.pdfId ?? item.uuid ?? item.key);
+          }).filter(Boolean),
+        );
+        const allResults = r.data.results || [];
+        const filtered = allResults.filter((res) => libPdfIds.has(String(res.pdf_id || res.id || res.pdfId || res.key)));
+        console.log("[SharedLibraryDetail Search]", {
+          query: q,
+          libPdfIds: Array.from(libPdfIds),
+          allResultsCount: allResults.length,
+          allResults: allResults.map((item) => ({ pdf_id: item.pdf_id, id: item.id, title: item.title })),
+          filteredCount: filtered.length,
+          filtered: filtered.map((item) => ({ pdf_id: item.pdf_id, id: item.id, title: item.title })),
+        });
         if (alive && mountedRef.current) setSearchResults(filtered);
       } catch (e) {
+        console.error("[SharedLibraryDetail Search Error]", e);
         if (alive && mountedRef.current && e.name !== "CanceledError" && e.name !== "AbortError" && e.code !== "ERR_CANCELED") setSearchResults([]);
       }
     }, 350);
@@ -99,7 +115,7 @@ export default function SharedLibraryDetail() {
       clearTimeout(timer);
       ctrl.abort();
     };
-  }, [q, id, lib?.pdf_ids]);
+  }, [q, id, lib?.pdf_ids, lib?.pdfs]);
 
   if (!lib) return <div className="p-12 text-mono text-sm text-muted2">Caricamento...</div>;
 
