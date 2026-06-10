@@ -50,6 +50,14 @@ function countMatchesOnPage(matches, pageNum) {
   return n;
 }
 
+function isPageInView(pageNumber, pageRefs, getToolbarOffset) {
+  const el = pageRefs.current[pageNumber];
+  if (!el) return false;
+  const rect = el.getBoundingClientRect();
+  const offset = getToolbarOffset();
+  return rect.bottom > offset && rect.top < window.innerHeight;
+}
+
 function usePageController({
   numPages,
   slotHeight,
@@ -718,7 +726,11 @@ export function usePdfViewerState({
     (pageNumber, generation, renderGenerationRef) => {
       if (!mountedRef.current || generation !== renderGenerationRef.current) return;
       if (pendingScrollPageRef.current === pageNumber) {
-        scrollToPageRef.current?.(pageNumber, "auto");
+        if (programmaticScrollRef.current || !isPageInView(pageNumber, pageRefs, getToolbarOffset)) {
+          scrollToPageRef.current?.(pageNumber, "auto");
+        } else {
+          pendingScrollPageRef.current = null;
+        }
       }
       if (
         initialJumpPendingRef.current
@@ -732,7 +744,7 @@ export function usePdfViewerState({
       }
       search.scheduleCollect();
     },
-    [mountedRef, pendingScrollPageRef, initialScrollDoneRef, searchDriverDoneRef, search],
+    [mountedRef, pendingScrollPageRef, initialScrollDoneRef, searchDriverDoneRef, search, getToolbarOffset, pageRefs],
   );
 
   const handleScroll = useCallback(
