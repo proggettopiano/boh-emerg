@@ -91,6 +91,7 @@ function usePageController({
   const scrollToPage = useCallback(
     (page, behavior = "auto") => {
       const p = Math.max(1, Math.min(page, numPages || page));
+      console.log('[scrollToPage] page=', p, 'behavior=', behavior, 'stack:', new Error().stack);
       console.log('[scrollToPage] chiamato con page=', p, 'behavior=', behavior);
       console.log('[scrollToPage] programmaticScrollRef prima=', programmaticScrollRef.current);
       console.log('[scrollToPage] pendingScrollPageRef prima=', pendingScrollPageRef.current);
