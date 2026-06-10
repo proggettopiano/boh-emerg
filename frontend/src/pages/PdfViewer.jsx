@@ -235,9 +235,9 @@ export default function PdfViewer() {
       return false;
     });
     const targetPage = idx >= 0 ? idx + 1 : null;
-    if (!targetPage || targetPage === currentPageRef.current) return;
+    if (!targetPage || targetPage === currentPageRef.current || !initialScrollDoneRef.current) return;
     page.goToPage(targetPage);
-  }, [meta?.page_labels, numPages, pageParam, page, currentPageRef]);
+  }, [meta?.page_labels, numPages, pageParam, page, currentPageRef, initialScrollDoneRef]);
 
   useEffect(() => {
     const update = () => {
