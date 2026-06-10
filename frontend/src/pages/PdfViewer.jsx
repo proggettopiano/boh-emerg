@@ -165,6 +165,7 @@ export default function PdfViewer() {
     scrollToPageRef,
     onPageRender,
     handleScroll,
+    cancelPendingScroll,
     completeInitialJump,
     currentPageRef,
   } = usePdfViewerState({
@@ -398,12 +399,21 @@ export default function PdfViewer() {
         handleScroll(scrollY);
       });
     };
+    const onWheelOrTouch = () => {
+      if (pendingScrollPageRef.current != null) {
+        cancelPendingScroll();
+      }
+    };
     window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("wheel", onWheelOrTouch, { passive: true });
+    window.addEventListener("touchstart", onWheelOrTouch, { passive: true });
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("wheel", onWheelOrTouch);
+      window.removeEventListener("touchstart", onWheelOrTouch);
     };
-  }, [numPages, slotHeight, search.isSearchActive, applyVisibleRange, handleScroll]);
+  }, [numPages, slotHeight, search.isSearchActive, applyVisibleRange, handleScroll, cancelPendingScroll]);
 
   const toggleFavorite = async () => {
     if (!meta) return;

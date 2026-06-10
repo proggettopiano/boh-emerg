@@ -810,6 +810,7 @@ export function usePdfViewerState({
     scrollToPageRef,
     onPageRender,
     handleScroll,
+    cancelPendingScroll,
     completeInitialJump,
     currentPageRef,
   };
