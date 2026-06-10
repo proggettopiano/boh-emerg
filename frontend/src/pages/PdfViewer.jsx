@@ -266,6 +266,7 @@ export default function PdfViewer() {
       const h = await measureSlotHeight(pdf, 1, containerWidth, scale);
       if (cancelled || !mountedRef.current || h <= 0) return;
       setPageHeight(h);
+      if (initialScrollDoneRef.current) return;
       const target = pendingScrollPageRef.current || currentPageRef.current;
       if (target > 1) scrollToPageRef.current?.(target, "auto");
     })();
