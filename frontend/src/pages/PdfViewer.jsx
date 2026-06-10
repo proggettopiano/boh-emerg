@@ -187,6 +187,14 @@ export default function PdfViewer() {
 
   scrollToPageRef.current = page.scrollToPage;
 
+  // Intentionally not listing `currentPageRef` or `scrollToPageRef` as dependencies
+  // because we want this effect to run only when `pageParam` or labels change,
+  // and we read refs directly to avoid re-triggering due to object identity.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Intentionally not listing `currentPageRef` or `scrollToPageRef` as dependencies
+  // because we want this effect to run only when `pageParam` or labels change,
+  // and we read refs directly to avoid re-triggering due to object identity.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -251,7 +259,7 @@ export default function PdfViewer() {
 
     // Use stable ref to call the scroll function to avoid re-triggering from changing `page` object
     scrollToPageRef.current?.(targetPage, "smooth");
-  }, [meta?.page_labels, numPages, pageParam]);
+  }, [meta?.page_labels, numPages, pageParam, currentPageRef, scrollToPageRef]);
 
   useEffect(() => {
     const update = () => {
