@@ -125,9 +125,6 @@ export default function Login() {
             >
               Non hai l'accesso? Richiedilo qui
             </button>
-            {!shouldShowPassword && email && (
-              <p className="text-xs text-muted3">La password verrà richiesta solo per l’account amministratore.</p>
-            )}
           </div>
         </form>
       ) : (
