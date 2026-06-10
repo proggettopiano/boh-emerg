@@ -86,8 +86,9 @@ export default function SharedLibraryDetail() {
       try {
         const r = await api.get("/search", { params: { q }, signal: ctrl.signal });
         // Filtra solo i risultati che appartengono alla libreria corrente
-        const libPdfIds = new Set(lib.pdf_ids || []);
-        const filtered = (r.data.results || []).filter(res => libPdfIds.has(res.pdf_id));
+        // Normalize ids to strings to avoid mismatches between numeric and string ids
+        const libPdfIds = new Set((lib.pdf_ids || []).map((id) => String(id)));
+        const filtered = (r.data.results || []).filter((res) => libPdfIds.has(String(res.pdf_id)));
         if (alive && mountedRef.current) setSearchResults(filtered);
       } catch (e) {
         if (alive && mountedRef.current && e.name !== "CanceledError" && e.name !== "AbortError" && e.code !== "ERR_CANCELED") setSearchResults([]);
