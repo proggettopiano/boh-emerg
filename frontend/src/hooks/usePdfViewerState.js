@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import api from "@/lib/api";
 import { useNavigate } from "react-router-dom";
+import { buildMatchPagesFromResults, dedupePageNumbers } from "./viewerSearchUtils";
 
 export const TOOLBAR_OFFSET = 108;
 export const TOOLBAR_OFFSET_WITH_SEARCH = 148;
@@ -238,16 +239,7 @@ function useSearchController({
       .then((r) => {
         if (cancelled) return;
         const items = (r.data && r.data.results) || [];
-        const pages = [];
-        for (const it of items) {
-          if (it.pdf_id !== pdfId) continue;
-          const p = it.viewer_page ?? it.actual_page ?? it.page;
-          if (p == null) continue;
-          const n = Number(p);
-          if (!Number.isFinite(n)) continue;
-          if (!pages.includes(n)) pages.push(n);
-        }
-        pages.sort((a, b) => a - b);
+        const pages = buildMatchPagesFromResults(items, pdfId);
         setMatchPages(pages);
       })
       .catch(() => {
