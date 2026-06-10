@@ -123,7 +123,18 @@ function usePageController({
         window.scrollTo({ top: targetTop, behavior });
 
         if (behavior === "auto") {
-          finish(targetTop);
+          if (!finish(targetTop)) {
+            if (attempts < 4) {
+              requestAnimationFrame(() => tryScroll(attempts + 1));
+              return;
+            }
+            programmaticScrollRef.current = false;
+            pendingScrollPageRef.current = null;
+            scrollRequestIdRef.current = null;
+            if (!initialScrollDoneRef.current) {
+              completeInitialJumpRef.current?.();
+            }
+          }
           return;
         }
 
