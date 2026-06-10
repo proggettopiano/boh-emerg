@@ -81,14 +81,31 @@ export default function SharedLibraryDetail() {
 
   useEffect(() => {
     if (!q.trim()) { setSearchResults(null); return undefined; }
+    if (!lib) { setSearchResults([]); return undefined; }
+
+    const libPdfIds = new Set(
+      (lib.pdf_ids || lib.pdfs || [])
+        .map((item) => {
+          if (typeof item === "string" || typeof item === "number") return String(item);
+          if (!item) return null;
+          return String(item.id ?? item.pdf_id ?? item.pdfId ?? item.uuid ?? item.key);
+        })
+        .filter(Boolean)
+    );
+
+    if (libPdfIds.size === 0) {
+      setSearchResults([]);
+      return undefined;
+    }
+
+    const params = { q, pdf_ids: Array.from(libPdfIds).join(",") };
     const ctrl = new AbortController();
     let alive = true;
     const timer = setTimeout(async () => {
       try {
-        const r = await api.get("/search", { params: { q }, signal: ctrl.signal });
-        // Filtra solo i risultati che appartengono alla libreria corrente
-        const libPdfIds = new Set(lib.pdf_ids || []);
-        const filtered = (r.data.results || []).filter(res => libPdfIds.has(res.pdf_id));
+        const r = await api.get("/search", { params, signal: ctrl.signal });
+        const allResults = r.data.results || [];
+        const filtered = allResults.filter((res) => libPdfIds.has(String(res.pdf_id || res.id || res.pdfId || res.key)));
         if (alive && mountedRef.current) setSearchResults(filtered);
       } catch (e) {
         if (alive && mountedRef.current && e.name !== "CanceledError" && e.name !== "AbortError" && e.code !== "ERR_CANCELED") setSearchResults([]);
@@ -99,7 +116,7 @@ export default function SharedLibraryDetail() {
       clearTimeout(timer);
       ctrl.abort();
     };
-  }, [q, id, lib?.pdf_ids]);
+  }, [q, id, lib]);
 
   if (!lib) return <div className="p-12 text-mono text-sm text-muted2">Caricamento...</div>;
 
