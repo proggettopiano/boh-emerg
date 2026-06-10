@@ -235,9 +235,23 @@ export default function PdfViewer() {
       return false;
     });
     const targetPage = idx >= 0 ? idx + 1 : null;
-    if (!targetPage || targetPage === currentPageRef.current || !initialScrollDoneRef.current) return;
-    page.goToPage(targetPage);
-  }, [meta?.page_labels, numPages, pageParam, page, currentPageRef, initialScrollDoneRef]);
+    if (!targetPage) return;
+
+    // Do not act before initial jump has completed
+    if (!initialScrollDoneRef.current) return;
+
+    // If there's a pending programmatic scroll (we're moving to another page), don't interrupt
+    if (pendingScrollPageRef.current != null) {
+      console.log('[page_labels effect] skip goToPage target=', targetPage, 'pendingScroll=', pendingScrollPageRef.current);
+      return;
+    }
+
+    // If already on target, nothing to do
+    if (targetPage === currentPageRef.current) return;
+
+    // Use stable ref to call the scroll function to avoid re-triggering from changing `page` object
+    scrollToPageRef.current?.(targetPage, "smooth");
+  }, [meta?.page_labels, numPages, pageParam]);
 
   useEffect(() => {
     const update = () => {
