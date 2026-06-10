@@ -850,18 +850,26 @@ def format_search_result(p: dict, pg: dict, q: str, score: int, snippet: Optiona
     }
 
 @api.get("/search")
-async def search(q: str = Query(..., min_length=1), user_id: str = Depends(get_current_user_id)):
+async def search(
+    q: str = Query(..., min_length=1),
+    pdf_ids: Optional[str] = Query(None),
+    user_id: str = Depends(get_current_user_id),
+):
     raw_q = q.strip()
     if not raw_q:
         return {"results": []}
 
+    pdf_ids_list = [pid.strip() for pid in (pdf_ids or "").split(",") if pid.strip()] or None
     results = []
     seen = set()  # Per evitare duplicati (stessa pagina trovata con logiche diverse)
 
     if raw_q.isdigit():
         # 1. CERCA INIZIO INNO (PIÙ FORTE)
         hymn_regex = rf"(?m)^\s*{re.escape(raw_q)}[.\s]"
-        cursor = db.pdf_pages.find({"text": {"$regex": hymn_regex, "$options": "m"}})
+        hymn_filter = {"text": {"$regex": hymn_regex, "$options": "m"}}
+        if pdf_ids_list:
+            hymn_filter["pdf_id"] = {"$in": pdf_ids_list}
+        cursor = db.pdf_pages.find(hymn_filter)
         async for pg in cursor:
             key = (pg["pdf_id"], pg["page"])
             if key in seen:
@@ -872,7 +880,10 @@ async def search(q: str = Query(..., min_length=1), user_id: str = Depends(get_c
                 results.append(format_search_result(p, pg, raw_q, score=100))
 
         # 2. CERCA ETICHETTA PAGINA (DEBOLE)
-        label_cursor = db.pdf_pages.find({"page_label": raw_q})
+        label_filter = {"page_label": raw_q}
+        if pdf_ids_list:
+            label_filter["pdf_id"] = {"$in": pdf_ids_list}
+        label_cursor = db.pdf_pages.find(label_filter)
         async for pg in label_cursor:
             key = (pg["pdf_id"], pg["page"])
             if key in seen:
@@ -883,7 +894,10 @@ async def search(q: str = Query(..., min_length=1), user_id: str = Depends(get_c
                 results.append(format_search_result(p, pg, raw_q, score=50, snippet=f"Pagina {raw_q}"))
 
     safe_q = rf"(?<!\d){re.escape(raw_q)}(?!\d)" if raw_q.isdigit() else re.escape(raw_q)
-    text_cursor = db.pdf_pages.find({"text": {"$regex": safe_q, "$options": "i"}}).limit(50)
+    text_filter = {"text": {"$regex": safe_q, "$options": "i"}}
+    if pdf_ids_list:
+        text_filter["pdf_id"] = {"$in": pdf_ids_list}
+    text_cursor = db.pdf_pages.find(text_filter).limit(50)
     async for pg in text_cursor:
         key = (pg["pdf_id"], pg["page"])
         if key in seen:
