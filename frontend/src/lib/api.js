@@ -34,4 +34,4 @@ api.interceptors.request.use((config) => {
 });
 
 export default api;
-export { BACKEND_URL };
+export { BACKEND_URL, getAuthToken };

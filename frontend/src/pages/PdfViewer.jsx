@@ -4,7 +4,7 @@ import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/TextLayer.css";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import { toast } from "sonner";
-import api, { API } from "@/lib/api";
+import api, { API, getAuthToken } from "@/lib/api";
 import ViewerToolbar from "@/components/ViewerToolbar";
 import usePdfViewerState, {
   TOOLBAR_OFFSET,
@@ -104,7 +104,7 @@ export default function PdfViewer() {
   const renderGenerationRef = useRef(0);
   const [renderGeneration, setRenderGeneration] = useState(0);
   const initialSearchScrollRef = useRef(false);
-  const token = localStorage.getItem("scorelib_token");
+  const token = getAuthToken();
   const fileUrl = `${API}/pdfs/${id}/file`;
   const fileObj = useMemo(() => ({
     url: fileUrl,
