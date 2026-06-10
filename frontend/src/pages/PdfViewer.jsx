@@ -314,7 +314,14 @@ export default function PdfViewer() {
   useEffect(() => {
     if (numPages > 0 && pageHeight && initialPage > 1 && !initialScrollDoneRef.current) {
       page.scrollToPage(initialPage, "auto");
-      return;
+      
+      const safetyTimeout = setTimeout(() => {
+        if (!initialScrollDoneRef.current) {
+          completeInitialJump();
+        }
+      }, 300);
+      
+      return () => clearTimeout(safetyTimeout);
     }
     if (numPages > 0 && pageHeight && !initialScrollDoneRef.current && initialPage <= 1) {
       completeInitialJump();
