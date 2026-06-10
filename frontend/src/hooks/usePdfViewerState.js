@@ -91,10 +91,6 @@ function usePageController({
   const scrollToPage = useCallback(
     (page, behavior = "auto") => {
       const p = Math.max(1, Math.min(page, numPages || page));
-      console.log('[scrollToPage] page=', p, 'behavior=', behavior, 'stack:', new Error().stack);
-      console.log('[scrollToPage] chiamato con page=', p, 'behavior=', behavior);
-      console.log('[scrollToPage] programmaticScrollRef prima=', programmaticScrollRef.current);
-      console.log('[scrollToPage] pendingScrollPageRef prima=', pendingScrollPageRef.current);
       programmaticScrollRef.current = true;
       pendingScrollPageRef.current = p;
       setRangeAround(p);
@@ -108,7 +104,6 @@ function usePageController({
         const currentScroll = window.scrollY;
         const expectedTop = targetTop != null ? targetTop : currentScroll;
         if (Math.abs(currentScroll - expectedTop) > 4) {
-          console.log('[finish] FALLITO, scrollY=', window.scrollY, 'targetTop=', targetTop, 'diff=', Math.abs(window.scrollY - targetTop));
           return false;
         }
         programmaticScrollRef.current = false;
@@ -117,7 +112,6 @@ function usePageController({
         if (!initialScrollDoneRef.current) {
           completeInitialJumpRef.current?.();
         }
-        console.log('[finish] completato, reset flags, scrollY=', window.scrollY, 'targetTop=', targetTop);
         return true;
       };
 
@@ -202,11 +196,9 @@ function usePageController({
 
   const applyPageFromScroll = useCallback(
     (scrollY) => {
-      console.log('[applyPageFromScroll] scrollY=', scrollY, 'programmatic=', programmaticScrollRef.current, 'initialDone=', initialScrollDoneRef.current);
       if (numPages <= 0 || programmaticScrollRef.current) return;
       if (initialScrollDoneRef && !initialScrollDoneRef.current) return;
       const detected = detectVisiblePage(scrollY, getToolbarOffset, pageRefs, numPages, slotHeight);
-      console.log('[applyPageFromScroll] detected=', detected, 'currentPageRef=', currentPageRef.current);
       if (detected !== currentPageRef.current) {
         setPageState(detected, { source: "scroll" });
       }
@@ -222,11 +214,9 @@ function usePageController({
     setPageState,
     goToPage,
     goToPrevPage: () => {
-      console.log('[goToPrevPage] currentPageRef.current=', currentPageRef.current);
       return goToPage(currentPageRef.current - 1);
     },
     goToNextPage: () => {
-      console.log('[goToNextPage] currentPageRef.current=', currentPageRef.current);
       return goToPage(currentPageRef.current + 1);
     },
     commitPageInput,
