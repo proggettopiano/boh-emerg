@@ -38,19 +38,6 @@ const PAGE_FOOTER_H = 28;
 const PAGE_ASPECT = 297 / 210;
 const PAGE_BUFFER = 4;
 
-const AUTH_TOKEN_KEY = "scorelib_session_token";
-const LEGACY_AUTH_TOKEN_KEY = "scorelib_token";
-
-function getAuthToken() {
-  const token = sessionStorage.getItem(AUTH_TOKEN_KEY);
-  if (token) return token;
-  const legacy = localStorage.getItem(LEGACY_AUTH_TOKEN_KEY);
-  if (!legacy) return null;
-  sessionStorage.setItem(AUTH_TOKEN_KEY, legacy);
-  localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
-  return legacy;
-}
-
 const PDF_FULL_BLEED = {
   width: "100vw",
   maxWidth: "100vw",
@@ -117,7 +104,7 @@ export default function PdfViewer() {
   const renderGenerationRef = useRef(0);
   const [renderGeneration, setRenderGeneration] = useState(0);
   const initialSearchScrollRef = useRef(false);
-  const token = getAuthToken();
+  const token = localStorage.getItem("scorelib_token");
   const fileUrl = `${API}/pdfs/${id}/file`;
   const fileObj = useMemo(() => ({
     url: fileUrl,
@@ -165,7 +152,6 @@ export default function PdfViewer() {
     scrollToPageRef,
     onPageRender,
     handleScroll,
-    cancelPendingScroll,
     completeInitialJump,
     currentPageRef,
   } = usePdfViewerState({
@@ -187,14 +173,6 @@ export default function PdfViewer() {
 
   scrollToPageRef.current = page.scrollToPage;
 
-  // Intentionally not listing `currentPageRef` or `scrollToPageRef` as dependencies
-  // because we want this effect to run only when `pageParam` or labels change,
-  // and we read refs directly to avoid re-triggering due to object identity.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  // Intentionally not listing `currentPageRef` or `scrollToPageRef` as dependencies
-  // because we want this effect to run only when `pageParam` or labels change,
-  // and we read refs directly to avoid re-triggering due to object identity.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -243,22 +221,9 @@ export default function PdfViewer() {
       return false;
     });
     const targetPage = idx >= 0 ? idx + 1 : null;
-    if (!targetPage) return;
-
-    // Do not act before initial jump has completed
-    if (!initialScrollDoneRef.current) return;
-
-    // If there's a pending programmatic scroll (we're moving to another page), don't interrupt
-    if (pendingScrollPageRef.current != null) {
-      return;
-    }
-
-    // If already on target, nothing to do
-    if (targetPage === currentPageRef.current) return;
-
-    // Use stable ref to call the scroll function to avoid re-triggering from changing `page` object
-    scrollToPageRef.current?.(targetPage, "smooth");
-  }, [meta?.page_labels, numPages, pageParam, currentPageRef, scrollToPageRef]);
+    if (!targetPage || targetPage === currentPageRef.current) return;
+    page.goToPage(targetPage);
+  }, [meta?.page_labels, numPages, pageParam, page, currentPageRef]);
 
   useEffect(() => {
     const update = () => {
@@ -287,7 +252,6 @@ export default function PdfViewer() {
       const h = await measureSlotHeight(pdf, 1, containerWidth, scale);
       if (cancelled || !mountedRef.current || h <= 0) return;
       setPageHeight(h);
-      if (initialScrollDoneRef.current) return;
       const target = pendingScrollPageRef.current || currentPageRef.current;
       if (target > 1) scrollToPageRef.current?.(target, "auto");
     })();
@@ -336,14 +300,7 @@ export default function PdfViewer() {
   useEffect(() => {
     if (numPages > 0 && pageHeight && initialPage > 1 && !initialScrollDoneRef.current) {
       page.scrollToPage(initialPage, "auto");
-      
-      const safetyTimeout = setTimeout(() => {
-        if (!initialScrollDoneRef.current) {
-          completeInitialJump();
-        }
-      }, 300);
-      
-      return () => clearTimeout(safetyTimeout);
+      return;
     }
     if (numPages > 0 && pageHeight && !initialScrollDoneRef.current && initialPage <= 1) {
       completeInitialJump();
@@ -397,9 +354,7 @@ export default function PdfViewer() {
         if (!el) continue;
         const match = el.querySelector("mark.hl");
         if (match) {
-          if (p !== currentPageRef.current) {
-            page.goToPage(p);
-          }
+          if (p !== currentPageRef.current) page.goToPage(p);
           try { match.scrollIntoView({ behavior: "auto", block: "center" }); } catch (err) {}
           initialSearchScrollRef.current = true;
           return;
@@ -416,12 +371,7 @@ export default function PdfViewer() {
     if (numPages <= 0) return undefined;
     const toolbarOffset = search.isSearchActive ? TOOLBAR_OFFSET_WITH_SEARCH : TOOLBAR_OFFSET;
     let raf = 0;
-    let skipNextScroll = true; // Skip the initial scroll to prevent restoring old position
     const onScroll = () => {
-      if (skipNextScroll) {
-        skipNextScroll = false;
-        return;
-      }
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
         const scrollY = window.scrollY;
@@ -430,21 +380,13 @@ export default function PdfViewer() {
         handleScroll(scrollY);
       });
     };
-    const onWheelOrTouch = () => {
-      if (pendingScrollPageRef.current != null) {
-        cancelPendingScroll();
-      }
-    };
+    onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("wheel", onWheelOrTouch, { passive: true });
-    window.addEventListener("touchstart", onWheelOrTouch, { passive: true });
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("wheel", onWheelOrTouch);
-      window.removeEventListener("touchstart", onWheelOrTouch);
     };
-  }, [numPages, slotHeight, search.isSearchActive, applyVisibleRange, handleScroll, cancelPendingScroll]);
+  }, [numPages, slotHeight, search.isSearchActive, applyVisibleRange, handleScroll]);
 
   const toggleFavorite = async () => {
     if (!meta) return;

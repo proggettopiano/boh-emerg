@@ -196,17 +196,14 @@
   }
   mark.hl.hl-active,
   span.hl.hl-active {
-    /* Brighter yellow highlight for stronger visibility */
-    background: rgba(255, 235, 59, 0.95);
-    color: #000;
+    background: rgba(245, 158, 11, 0.35);
+    color: inherit;
     box-shadow: none;
-    padding: 0 0.1em;
-    border-radius: 2px;
   }
   html.dark mark.hl.hl-active,
   html.dark span.hl.hl-active {
-    background: rgba(255, 235, 59, 0.95);
-    color: #000;
+    background: rgba(245, 158, 11, 0.35);
+    color: inherit;
   }
   @keyframes hl-pulse {
     0%, 100% { outline-width: 2px; }

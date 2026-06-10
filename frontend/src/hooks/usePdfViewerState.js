@@ -50,14 +50,6 @@ function countMatchesOnPage(matches, pageNum) {
   return n;
 }
 
-function isPageInView(pageNumber, pageRefs, getToolbarOffset) {
-  const el = pageRefs.current[pageNumber];
-  if (!el) return false;
-  const rect = el.getBoundingClientRect();
-  const offset = getToolbarOffset();
-  return rect.bottom > offset && rect.top < window.innerHeight;
-}
-
 function usePageController({
   numPages,
   slotHeight,
@@ -67,7 +59,6 @@ function usePageController({
   mountedRef,
   pendingScrollPageRef,
   programmaticScrollRef,
-  scrollRequestIdRef,
   initialScrollDoneRef,
   completeInitialJumpRef,
   currentPageRef,
@@ -96,68 +87,29 @@ function usePageController({
       setRangeAround(p);
       setPageState(p, { source: "programmatic", skipNotify: false });
 
-      const requestId = {};
-      scrollRequestIdRef.current = requestId;
-
-      const finish = (targetTop) => {
-        if (scrollRequestIdRef.current !== requestId) return false;
-        const currentScroll = window.scrollY;
-        const expectedTop = targetTop != null ? targetTop : currentScroll;
-        if (Math.abs(currentScroll - expectedTop) > 4) {
-          return false;
-        }
+      const finish = () => {
         programmaticScrollRef.current = false;
         pendingScrollPageRef.current = null;
-        scrollRequestIdRef.current = null;
         if (!initialScrollDoneRef.current) {
           completeInitialJumpRef.current?.();
         }
-        return true;
       };
 
       const tryScroll = (attempts = 0) => {
-        if (!mountedRef.current || pendingScrollPageRef.current !== p || scrollRequestIdRef.current !== requestId) return;
+        if (!mountedRef.current) return;
         const el = pageRefs.current[p];
-        const top = el
-          ? el.getBoundingClientRect().top + window.scrollY - getToolbarOffset()
-          : Math.max(0, (p - 1) * slotHeight);
-        const targetTop = Math.max(0, top);
-        window.scrollTo({ top: targetTop, behavior });
-
-        if (behavior === "auto") {
-          if (!finish(targetTop)) {
-            if (attempts < 4) {
-              requestAnimationFrame(() => tryScroll(attempts + 1));
-              return;
-            }
-            programmaticScrollRef.current = false;
-            pendingScrollPageRef.current = null;
-            scrollRequestIdRef.current = null;
-            if (!initialScrollDoneRef.current) {
-              completeInitialJumpRef.current?.();
-            }
-          }
+        if (el) {
+          const top = el.getBoundingClientRect().top + window.scrollY - getToolbarOffset();
+          window.scrollTo({ top: Math.max(0, top), behavior });
+          finish();
           return;
         }
-
-        if (finish(targetTop)) {
-          return;
-        }
-
         if (attempts < 80) {
           requestAnimationFrame(() => tryScroll(attempts + 1));
           return;
         }
-
-        if (pendingScrollPageRef.current !== p || scrollRequestIdRef.current !== requestId) return;
-        if (!finish(targetTop)) {
-          programmaticScrollRef.current = false;
-          pendingScrollPageRef.current = null;
-          scrollRequestIdRef.current = null;
-          if (!initialScrollDoneRef.current) {
-            completeInitialJumpRef.current?.();
-          }
-        }
+        window.scrollTo({ top: Math.max(0, (p - 1) * slotHeight), behavior });
+        finish();
       };
 
       requestAnimationFrame(() => tryScroll());
@@ -171,7 +123,6 @@ function usePageController({
       mountedRef,
       pendingScrollPageRef,
       programmaticScrollRef,
-      scrollRequestIdRef,
       initialScrollDoneRef,
       completeInitialJumpRef,
       setPageState,
@@ -213,12 +164,8 @@ function usePageController({
     setPageInput,
     setPageState,
     goToPage,
-    goToPrevPage: () => {
-      return goToPage(currentPageRef.current - 1);
-    },
-    goToNextPage: () => {
-      return goToPage(currentPageRef.current + 1);
-    },
+    goToPrevPage: () => goToPage(currentPage - 1),
+    goToNextPage: () => goToPage(currentPage + 1),
     commitPageInput,
     applyPageFromScroll,
     scrollToPage,
@@ -656,7 +603,6 @@ export function usePdfViewerState({
 }) {
   const navigate = useNavigate();
   const programmaticScrollRef = useRef(false);
-  const scrollRequestIdRef = useRef(null);
   const searchDriverDoneRef = useRef(false);
   const initialJumpPendingRef = useRef(initialPage > 1);
   const currentPageRef = useRef(initialPage);
@@ -666,25 +612,6 @@ export function usePdfViewerState({
   const activeQueryRef = useRef(initialQuery);
 
   const getCurrentPage = useCallback(() => currentPageRef.current, []);
-
-  const cancelPendingScroll = useCallback(() => {
-    pendingScrollPageRef.current = null;
-    programmaticScrollRef.current = false;
-    scrollRequestIdRef.current = null;
-  }, [pendingScrollPageRef]);
-
-  const getPendingScrollTargetTop = useCallback(
-    (pageNumber) => {
-      if (pageNumber == null) return null;
-      const el = pageRefs.current[pageNumber];
-      const estimatedTop = Math.max(0, (pageNumber - 1) * slotHeight);
-      const top = el
-        ? el.getBoundingClientRect().top + window.scrollY
-        : estimatedTop;
-      return Math.max(0, top - getToolbarOffset());
-    },
-    [pageRefs, slotHeight, getToolbarOffset],
-  );
 
   const syncUrl = useCallback(
     (page, q) => {
@@ -720,7 +647,6 @@ export function usePdfViewerState({
     mountedRef,
     pendingScrollPageRef,
     programmaticScrollRef,
-    scrollRequestIdRef,
     initialScrollDoneRef,
     completeInitialJumpRef,
     currentPageRef,
@@ -792,11 +718,7 @@ export function usePdfViewerState({
     (pageNumber, generation, renderGenerationRef) => {
       if (!mountedRef.current || generation !== renderGenerationRef.current) return;
       if (pendingScrollPageRef.current === pageNumber) {
-        if (programmaticScrollRef.current && scrollRequestIdRef.current != null) {
-          scrollToPageRef.current?.(pageNumber, "auto");
-        } else {
-          cancelPendingScroll();
-        }
+        scrollToPageRef.current?.(pageNumber, "auto");
       }
       if (
         initialJumpPendingRef.current
@@ -810,23 +732,17 @@ export function usePdfViewerState({
       }
       search.scheduleCollect();
     },
-    [mountedRef, pendingScrollPageRef, initialScrollDoneRef, searchDriverDoneRef, search, cancelPendingScroll],
+    [mountedRef, pendingScrollPageRef, initialScrollDoneRef, searchDriverDoneRef, search],
   );
 
   const handleScroll = useCallback(
     (scrollY) => {
-      if (programmaticScrollRef.current && pendingScrollPageRef.current != null) {
-        return;
-      }
-      if (pendingScrollPageRef.current != null) {
-        cancelPendingScroll();
-      }
       clearTimeout(scrollSyncTimerRef.current);
       scrollSyncTimerRef.current = setTimeout(() => {
-        page.applyPageFromScroll(window.scrollY);
+        page.applyPageFromScroll(scrollY);
       }, SCROLL_SYNC_DEBOUNCE_MS);
     },
-    [page, pendingScrollPageRef, programmaticScrollRef, cancelPendingScroll],
+    [page],
   );
 
   const completeInitialJump = useCallback(() => {
@@ -845,7 +761,6 @@ export function usePdfViewerState({
     scrollToPageRef,
     onPageRender,
     handleScroll,
-    cancelPendingScroll,
     completeInitialJump,
     currentPageRef,
   };
