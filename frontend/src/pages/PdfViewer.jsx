@@ -267,6 +267,7 @@ export default function PdfViewer() {
       if (cancelled || !mountedRef.current || h <= 0) return;
       setPageHeight(h);
       if (initialScrollDoneRef.current) return;
+      console.log('[layout effect] scrolling to target, initialScrollDone=', initialScrollDoneRef.current);
       const target = pendingScrollPageRef.current || currentPageRef.current;
       if (target > 1) scrollToPageRef.current?.(target, "auto");
     })();
@@ -347,6 +348,7 @@ export default function PdfViewer() {
     if (search.matchPages && search.matchPages.length > 0) {
       const target = search.matchPages[0];
       let attempts = 0;
+      console.log('[search effect] goToPage target=', target);
       page.goToPage(target);
       const tryScrollOnTarget = () => {
         if (cancelled) return;
@@ -376,7 +378,10 @@ export default function PdfViewer() {
         if (!el) continue;
         const match = el.querySelector("mark.hl");
         if (match) {
-          if (p !== currentPageRef.current) page.goToPage(p);
+          if (p !== currentPageRef.current) {
+            console.log('[search effect fallback] goToPage p=', p, 'currentPageRef=', currentPageRef.current);
+            page.goToPage(p);
+          }
           try { match.scrollIntoView({ behavior: "auto", block: "center" }); } catch (err) {}
           initialSearchScrollRef.current = true;
           return;
