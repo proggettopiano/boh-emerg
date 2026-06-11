@@ -207,8 +207,12 @@ export default function PdfViewer() {
     return () => ctrl.abort();
   }, [id]);
 
+  /* eslint-disable react-hooks/exhaustive-deps */
+  // This effect intentionally avoids page/currentPageRef in its dependency list to prevent
+  // stale URL-driven jumps from interrupting an in-flight programmatic scroll.
   useEffect(() => {
     if (!meta?.page_labels?.length || numPages <= 0 || !pageParam) return;
+
     const normalizedLabel = pageParam.trim();
     const idx = meta.page_labels.findIndex((label) => {
       if (label == null) return false;
@@ -220,10 +224,16 @@ export default function PdfViewer() {
       if (Number.isFinite(an) && Number.isFinite(bn) && an === bn) return true;
       return false;
     });
+
     const targetPage = idx >= 0 ? idx + 1 : null;
-    if (!targetPage || targetPage === currentPageRef.current) return;
+    if (!targetPage) return;
+    if (targetPage === currentPageRef.current) return;
+    if (pendingScrollPageRef.current != null) return;
+
     page.goToPage(targetPage);
-  }, [meta?.page_labels, numPages, pageParam, page, currentPageRef]);
+  }, [meta?.page_labels, numPages, pageParam]);
+
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   useEffect(() => {
     const update = () => {
