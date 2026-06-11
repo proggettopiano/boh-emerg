@@ -9,7 +9,11 @@ export default function Settings() {
   const [backup, setBackup] = useState(null);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [theme, setTheme] = useState(localStorage.getItem("theme") || "system");
+  const [theme, setTheme] = useState(() => {
+    const stored = localStorage.getItem("theme");
+    if (stored && ["light", "dark", "system"].includes(stored)) return stored;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  });
 
   const isAdmin = user?.is_admin;
 
