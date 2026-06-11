@@ -49,7 +49,7 @@ db = client[os.environ["DB_NAME"]]
 
 APP_NAME = os.environ.get("APP_NAME", "ScoreLib")
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@scorelib.app").lower()
-ADMIN_RESET_PASSWORD = os.environ.get("ADMIN_LOG_PASSWORD", "Rome02009")
+ADMIN_RESET_PASSWORD = os.environ.get("ADMIN_LOG_PASSWORD")
 WORKER_SECRET = os.environ.get("WORKER_SECRET", "")
 
 @asynccontextmanager
@@ -68,7 +68,14 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(process_pdf_job(_j["id"]))
     yield
 
-app = FastAPI(title=APP_NAME, lifespan=lifespan)
+ENABLE_DOCS = os.environ.get("ENABLE_DOCS", "0") == "1"
+app = FastAPI(
+    title=APP_NAME,
+    lifespan=lifespan,
+    docs_url="/docs" if ENABLE_DOCS else None,
+    redoc_url="/redoc" if ENABLE_DOCS else None,
+    openapi_url="/openapi.json" if ENABLE_DOCS else None,
+)
 
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
@@ -159,7 +166,10 @@ async def ensure_indexes():
 async def seed_admin():
     admin = await db.users.find_one({"email": ADMIN_EMAIL})
     if not admin:
-        pwd = os.environ.get("ADMIN_PASSWORD", "admin123")
+        pwd = os.environ.get("ADMIN_PASSWORD")
+        if not pwd:
+            logger.error("ADMIN_PASSWORD non definita: utente admin non creato. Impostare la variabile d'ambiente e riavviare.")
+            return
         user_id = f"user_{uuid.uuid4().hex[:12]}"
         await db.users.insert_one({
             "user_id": user_id,
@@ -219,8 +229,8 @@ async def require_admin(user_id: str = Depends(get_current_user_id)):
         raise HTTPException(status_code=403, detail="Solo amministratori")
     return user_id
 
-@limiter.limit("5/minute")
 @api.post("/auth/login")
+@limiter.limit("5/minute")
 async def login(payload: LoginIn, request: Request):
     ip = get_client_ip(request)
     email = payload.email.lower().strip()
@@ -263,8 +273,8 @@ async def login(payload: LoginIn, request: Request):
     # no request found
     raise HTTPException(status_code=403, detail="Nessuna richiesta trovata. Richiedi l'accesso.")
 
-@limiter.limit("3/hour")
 @api.post("/auth/request-access")
+@limiter.limit("3/hour")
 async def request_access(payload: AccessRequestIn, request: Request):
     email = payload.email.lower().strip()
     ip = get_client_ip(request)
@@ -680,6 +690,10 @@ async def add_to_library(lib_id: str, payload: AddPdfsIn, user_id: str = Depends
 async def remove_from_library(lib_id: str, pdf_id: str, user_id: str = Depends(get_current_user_id)):
     lib = await db.shared_libraries.find_one({"id": lib_id})
     if not lib: raise HTTPException(status_code=404, detail="Libreria non trovata")
+    u = await db.users.find_one({"user_id": user_id})
+    is_admin = u and (u.get("is_admin") or u.get("email", "").lower() == ADMIN_EMAIL)
+    if not is_admin and lib.get("owner_id") != user_id:
+        raise HTTPException(status_code=403, detail="Solo il proprietario o un amministratore possono modificare questa libreria")
     await db.shared_libraries.update_one({"id": lib_id}, {"$pull": {"pdf_ids": pdf_id}})
     return {"ok": True}
 
@@ -689,6 +703,8 @@ async def delete_library(lib_id: str, user_id: str = Depends(get_current_user_id
     if not lib: raise HTTPException(status_code=404, detail="Libreria non trovata")
     u = await db.users.find_one({"user_id": user_id})
     is_admin = u and (u.get("is_admin") or u.get("email", "").lower() == ADMIN_EMAIL)
+    if not is_admin and lib.get("owner_id") != user_id:
+        raise HTTPException(status_code=403, detail="Solo il proprietario o un amministratore possono eliminare questa libreria")
     await db.shared_libraries.delete_one({"id": lib_id})
     return {"ok": True}
 
@@ -980,8 +996,10 @@ async def master_drive_disconnect(_: str = Depends(require_admin)):
 
 @api.post("/admin/reset-today")
 async def reset_today_data(payload: dict, user_id: str = Depends(require_admin)):
+    if not ADMIN_RESET_PASSWORD:
+        raise HTTPException(status_code=503, detail="Funzione non configurata: impostare ADMIN_LOG_PASSWORD")
     provided = (payload.get("password") or "").strip()
-    if provided != ADMIN_RESET_PASSWORD:
+    if not secrets.compare_digest(provided, ADMIN_RESET_PASSWORD):
         raise HTTPException(status_code=403, detail="Password non valida")
 
     access_deleted = await db.access_requests.delete_many({})
