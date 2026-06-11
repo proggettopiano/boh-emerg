@@ -49,10 +49,11 @@ export default function SharedLibraryDetail() {
       setShowAdd(false);
 
       const { added = [], protected: protectedIds = [], skipped = [] } = r.data;
+      const formatCount = (count, singular, plural) => `${count} ${count === 1 ? singular : plural}`;
       const messages = [];
-      if (added.length) messages.push(`${added.length} PDF aggiunti`);
-      if (protectedIds.length) messages.push(`${protectedIds.length} protetti non aggiunti`);
-      if (skipped.length) messages.push(`${skipped.length} già presenti o non validi`);
+      if (added.length) messages.push(formatCount(added.length, "PDF aggiunto", "PDF aggiunti"));
+      if (protectedIds.length) messages.push(formatCount(protectedIds.length, "protetto non aggiunto", "protetti non aggiunti"));
+      if (skipped.length) messages.push(formatCount(skipped.length, "già presente o non valido", "già presenti o non validi"));
       toast.success(messages.length ? messages.join(" · ") : "PDF aggiunti");
 
       load();
