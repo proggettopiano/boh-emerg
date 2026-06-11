@@ -136,13 +136,24 @@ function applyThemeSetting(theme) {
   }
 }
 
+function resolveInitialTheme() {
+  const stored = localStorage.getItem("theme");
+  if (stored && ["light", "dark", "system"].includes(stored)) {
+    return stored;
+  }
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
 export default function App() {
   useEffect(() => {
-    const initialTheme = localStorage.getItem("theme") || "system";
+    const initialTheme = resolveInitialTheme();
     applyThemeSetting(initialTheme);
 
     const onThemeChange = () => {
-      const nextTheme = localStorage.getItem("theme") || "system";
+      const stored = localStorage.getItem("theme");
+      const nextTheme = stored && ["light", "dark", "system"].includes(stored)
+        ? stored
+        : resolveInitialTheme();
       applyThemeSetting(nextTheme);
     };
 

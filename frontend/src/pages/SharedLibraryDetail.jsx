@@ -13,7 +13,6 @@ export default function SharedLibraryDetail() {
   const [allPdfs, setAllPdfs] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
   const canModifyLibrary = Boolean(user);
-  const canAddProtected = Boolean(user && (user.is_admin || lib?.is_owner));
   const [q, setQ] = useState("");
   const [searchResults, setSearchResults] = useState(null);
   const mountedRef = useRef(false);
@@ -206,7 +205,6 @@ export default function SharedLibraryDetail() {
         <AddPdfsModal
           allPdfs={allPdfs}
           existing={lib.pdf_ids}
-          canAddProtected={canAddProtected}
           onClose={() => setShowAdd(false)}
           onAdd={addPdfs}
         />
@@ -215,7 +213,7 @@ export default function SharedLibraryDetail() {
   );
 }
 
-function AddPdfsModal({ allPdfs, existing, canAddProtected, onClose, onAdd }) {
+function AddPdfsModal({ allPdfs, existing, onClose, onAdd }) {
   const [picked, setPicked] = useState([]);
   const toggle = (pdfId) => setPicked((current) => (current.includes(pdfId) ? current.filter((id) => id !== pdfId) : [...current, pdfId]));
   const candidates = allPdfs.filter((pdf) => !existing.includes(pdf.id));
@@ -234,13 +232,13 @@ function AddPdfsModal({ allPdfs, existing, canAddProtected, onClose, onAdd }) {
             <div>
               {protectedPdfs.length > 0 && (
                 <div className="px-6 py-3 bg-canvas2 border-b border-rule text-sm text-muted2">
-                  I file protetti restano bloccati per la condivisione, salvo il caso di amministratore o proprietario.
+                  I file protetti non possono essere aggiunti da questa vista.
                 </div>
               )}
               <ul className="">
                 {candidates.map((pdf) => {
                   const isProtected = Boolean(pdf.is_protected);
-                  const canSelect = !isProtected || canAddProtected;
+                  const canSelect = !isProtected;
                   return (
                     <li
                       key={pdf.id}
