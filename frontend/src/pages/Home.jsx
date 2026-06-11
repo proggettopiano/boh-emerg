@@ -100,12 +100,19 @@ export default function Home() {
     const normalized = String(term || "").trim().replace(/\s+/g, " ");
     if (!normalized) return;
     setRecentSearches((current) => {
-      const currentNorm = current.map((item) => normalizeRecentTerm(item));
       const next = [normalized, ...current.filter((item) => normalizeRecentTerm(item) !== normalizeRecentTerm(normalized))]
         .slice(0, MAX_RECENT_SEARCHES);
       saveRecentSearches(next);
       return next;
     });
+  };
+
+  const submitSearch = (event) => {
+    event.preventDefault();
+    const nextTerm = q.trim().replace(/\s+/g, " ");
+    if (!nextTerm) return;
+    setQ(nextTerm);
+    addRecentSearch(nextTerm);
   };
 
   useEffect(() => {
@@ -118,7 +125,6 @@ export default function Home() {
         const r = await api.get(`/search`, { params: { q }, signal: ctrl.signal });
         if (alive) {
           setResults(r.data.results);
-          addRecentSearch(q);
         }
       } catch (e) {
         if (alive && e.name !== "CanceledError" && e.name !== "AbortError" && e.code !== "ERR_CANCELED") setResults([]);
@@ -137,19 +143,22 @@ export default function Home() {
         <p className="text-muted2">Premi <kbd className="text-mono text-xs border border-rule rounded px-1.5 py-0.5">/</kbd> per cercare ovunque.</p>
       </div>
 
-      <div className="bg-card border-2 border-ink rounded-md mb-3" style={{ boxShadow: "0 6px 0 0 rgba(0,0,0,0.18)" }}>
+      <form onSubmit={submitSearch} className="bg-card border-2 border-ink rounded-md mb-3" style={{ boxShadow: "0 6px 0 0 rgba(0,0,0,0.18)" }}>
         <div className="flex items-center gap-3 px-5">
           <SearchIcon size={20} className="text-muted2" strokeWidth={1.75} />
           <input
             ref={inputRef}
             value={q}
             onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submitSearch(e);
+            }}
             placeholder="Cerca per titolo, contenuto, accordi..."
             className="w-full text-xl md:text-2xl py-5 outline-none placeholder:text-muted3 bg-transparent"
           />
-          {q && <button onClick={() => setQ("")} className="text-mono text-xs text-muted2 hover:text-ink">CANCELLA</button>}
+          {q && <button type="button" onClick={() => setQ("")} className="text-mono text-xs text-muted2 hover:text-ink">CANCELLA</button>}
         </div>
-      </div>
+      </form>
       {recentSearches.length > 0 && (
         <div className="bg-card border-2 border-rule rounded-md mb-6 px-5 py-4 text-sm text-muted2" style={{ boxShadow: "0 6px 0 0 rgba(0,0,0,0.08)" }}>
           <div className="mb-2 uppercase tracking-[0.18em] text-[10px] font-semibold">Ricerche recenti</div>
