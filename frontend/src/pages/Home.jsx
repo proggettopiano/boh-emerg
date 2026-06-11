@@ -12,6 +12,10 @@ function escapeRegExp(value) {
 const RECENT_SEARCHES_KEY = "scorelib.recentSearches";
 const MAX_RECENT_SEARCHES = 8;
 
+function normalizeRecentTerm(value) {
+  return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 function highlight(text, q) {
   if (!text || !q) return text;
   try {
@@ -40,7 +44,10 @@ function loadRecentSearches() {
     if (!stored) return [];
     const parsed = JSON.parse(stored);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((item) => typeof item === "string" && item.trim()).slice(0, MAX_RECENT_SEARCHES);
+    return parsed
+      .map((item) => (typeof item === "string" ? item.trim().replace(/\s+/g, " ") : ""))
+      .filter(Boolean)
+      .slice(0, MAX_RECENT_SEARCHES);
   } catch {
     return [];
   }
@@ -48,7 +55,11 @@ function loadRecentSearches() {
 
 function saveRecentSearches(list) {
   try {
-    window.localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(list.slice(0, MAX_RECENT_SEARCHES)));
+    const normalized = list
+      .map((item) => String(item || "").trim().replace(/\s+/g, " "))
+      .filter(Boolean)
+      .slice(0, MAX_RECENT_SEARCHES);
+    window.localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(normalized));
   } catch {
     // ignore localStorage errors
   }
@@ -86,10 +97,12 @@ export default function Home() {
   }, []);
 
   const addRecentSearch = (term) => {
-    const trimmed = term.trim();
-    if (!trimmed) return;
+    const normalized = String(term || "").trim().replace(/\s+/g, " ");
+    if (!normalized) return;
     setRecentSearches((current) => {
-      const next = [trimmed, ...current.filter((item) => item !== trimmed)].slice(0, MAX_RECENT_SEARCHES);
+      const currentNorm = current.map((item) => normalizeRecentTerm(item));
+      const next = [normalized, ...current.filter((item) => normalizeRecentTerm(item) !== normalizeRecentTerm(normalized))]
+        .slice(0, MAX_RECENT_SEARCHES);
       saveRecentSearches(next);
       return next;
     });
@@ -146,6 +159,7 @@ export default function Home() {
                 key={term}
                 onClick={() => setQ(term)}
                 className="rounded-full border border-rule px-3 py-1 text-sm text-muted3 hover:bg-canvas3"
+                title={term}
               >
                 {term}
               </button>
