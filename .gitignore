@@ -121,3 +121,6 @@ credentials.json
 .credentials
 frontend/node_modules/.cache/default-development/0.pack
 .env*.local
+
+# Uploaded user content (must never be committed)
+backend/uploads/
