@@ -90,11 +90,6 @@ export default function ViewerToolbar({
           <span className="viewer-toolbar-meta">
             di <span data-testid="viewer-page-total">{page.totalPages || "…"}</span>
           </span>
-          {meta?.page_labels?.[page.currentPage - 1] && (
-            <span className="viewer-toolbar-meta block text-[10px] text-muted3 mt-1">
-              Etichetta pagina {meta.page_labels[page.currentPage - 1]}
-            </span>
-          )}
         </div>
 
         <div className="viewer-toolbar-divider" aria-hidden />
