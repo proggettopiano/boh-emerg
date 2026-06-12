@@ -6,6 +6,7 @@ import "react-pdf/dist/Page/AnnotationLayer.css";
 import { toast } from "sonner";
 import api, { API, getAuthToken } from "@/lib/api";
 import ViewerToolbar from "@/components/ViewerToolbar";
+import { stripChords } from "@/lib/searchText";
 import usePdfViewerState, {
   TOOLBAR_OFFSET,
   TOOLBAR_OFFSET_WITH_SEARCH,
@@ -303,6 +304,26 @@ export default function PdfViewer() {
       if (el?.offsetHeight > 0) {
         const measured = el.offsetHeight;
         setPageHeight((prev) => (prev && Math.abs(prev - measured) < 4 ? prev : measured));
+      }
+      // Post-process the PDF text layer to strip chord tokens which disrupt reading
+      try {
+        const root = pageRefs.current[pageNumber];
+        const textLayer = root?.querySelector(".react-pdf__Page__textContent") || root?.querySelector(".textLayer");
+        if (textLayer) {
+          const walker = document.createTreeWalker(textLayer, NodeFilter.SHOW_TEXT, null, false);
+          const textNodes = [];
+          let n;
+          // collect nodes first to avoid modifying walker iteration
+          while ((n = walker.nextNode())) textNodes.push(n);
+          for (const node of textNodes) {
+            const original = node.nodeValue;
+            if (!original || !original.trim()) continue;
+            const cleaned = stripChords(original);
+            if (cleaned !== original) node.nodeValue = cleaned;
+          }
+        }
+      } catch (err) {
+        console.error("[PdfViewer] stripChords post-process failed:", err);
       }
       onPageRender(pageNumber, renderGeneration, renderGenerationRef);
     },
