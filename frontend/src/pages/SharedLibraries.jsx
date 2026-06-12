@@ -98,7 +98,7 @@ export default function SharedLibraries() {
                   </div>
                 </Link>
                 {canDeleteLibrary(l) ? (
-                  <button onClick={() => del(l.id)} className="btn-ghost shrink-0 text-muted3 hover:text-red-600 transition-colors" data-testid={`shared-lib-delete-${l.id}`} title="Elimina libreria" aria-label="Elimina libreria"><Trash2 size={14} /></button>
+                  <button onClick={() => del(l.id)} className="btn-ghost shrink-0 text-muted3 hover:text-red-600 transition-colors text-muted3 hover:text-red-600 transition-colors" data-testid={`shared-lib-delete-${l.id}`} title="Elimina libreria" aria-label="Elimina libreria"><Trash2 size={14} /></button>
                 ) : (
                   <button
                     type="button"
