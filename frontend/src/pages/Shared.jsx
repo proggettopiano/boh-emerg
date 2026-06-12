@@ -54,6 +54,8 @@ export default function Shared() {
     }
   };
 
+  const canDeleteLibrary = (library) => Boolean(user && (user.is_admin || user.role === "admin" || user.user_id === library.owner_id));
+
   return (
     <div className="max-w-7xl mx-auto px-6 md:px-12 py-12">
       <div className="flex items-end justify-between flex-wrap gap-4 mb-10">
@@ -84,8 +86,8 @@ export default function Shared() {
                 <div className="p-2 bg-canvas2 rounded-sm text-ink">
                   <Users size={20} />
                 </div>
-                {(user?.user_id === l.owner_id || user?.is_admin) && (
-                  <button onClick={() => del(l.id)} className="text-muted3 hover:text-red-600 transition-colors" title="Elimina libreria">
+                {canDeleteLibrary(l) && (
+                  <button onClick={() => del(l.id)} className="text-muted3 hover:text-red-600 transition-colors" title="Elimina libreria" aria-label="Elimina libreria">
                     <Trash2 size={16} />
                   </button>
                 )}

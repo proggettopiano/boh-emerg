@@ -46,6 +46,7 @@ export default function SharedLibraries() {
     catch (e) { toast.error(getErrorMessage(e)); }
   };
   const del = async (id) => { if (!window.confirm("Eliminare la libreria condivisa?")) return; await api.delete(`/libraries/${id}`); load(); };
+  const canDeleteLibrary = (library) => Boolean(user && (user.is_admin || user.role === "admin" || user.user_id === library.owner_id));
   const leaveLibrary = async (id, libName) => {
     if (!window.confirm(`Abbandonare la libreria "${libName}"? Potrai rientrare tramite il link di condivisione.`)) return;
     try {
@@ -96,8 +97,8 @@ export default function SharedLibraries() {
                     {l.description && <p className="text-sm text-muted2 mt-1 line-clamp-2">{l.description}</p>}
                   </div>
                 </Link>
-                {(user?.is_admin || l.owner_id === user?.user_id) ? (
-                  <button onClick={() => del(l.id)} className="btn-ghost shrink-0" data-testid={`shared-lib-delete-${l.id}`} title="Elimina libreria"><Trash2 size={14} /></button>
+                {canDeleteLibrary(l) ? (
+                  <button onClick={() => del(l.id)} className="btn-ghost shrink-0" data-testid={`shared-lib-delete-${l.id}`} title="Elimina libreria" aria-label="Elimina libreria"><Trash2 size={14} /></button>
                 ) : (
                   <button
                     type="button"
