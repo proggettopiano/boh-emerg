@@ -130,18 +130,13 @@
       stroke: #000000 !important;
       fill: none !important;
     }
-    html.dark .admin-reset-btn { color: #fcd34d !important; }
+    /* In dark theme use the foreground variable (white) for text and SVG stroke */
+    html.dark .admin-reset-btn { color: hsl(var(--foreground)) !important; }
     html.dark .admin-reset-btn svg,
     html.dark .admin-reset-btn svg * {
-      stroke: #fcd34d !important;
+      stroke: hsl(var(--foreground)) !important;
       fill: none !important;
     }
-  html.dark .admin-reset-btn,
-  html.dark .admin-reset-btn * {
-    color: #fcd34d !important;
-    fill: #fcd34d !important;
-    stroke: #fcd34d !important;
-  }
   .input-base {
     @apply w-full bg-canvas2 border border-rule px-4 py-3 rounded-sm outline-none transition-colors text-ink;
   }
