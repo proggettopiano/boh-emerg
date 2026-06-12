@@ -765,6 +765,10 @@ async def hide_library(lib_id: str, user_id: str = Depends(get_current_user_id))
     await db.shared_libraries.update_one({"id": lib_id}, {"$addToSet": {"hidden_by_users": user_id}})
     return {"ok": True}
 
+@api.post("/libraries/{lib_id}/leave")
+async def leave_library(lib_id: str, user_id: str = Depends(get_current_user_id)):
+    return await hide_library(lib_id, user_id)
+
 @api.delete("/libraries/{lib_id}/hide")
 async def unhide_library(lib_id: str, user_id: str = Depends(get_current_user_id)):
     lib = await db.shared_libraries.find_one({"id": lib_id}, {"_id": 0})
@@ -772,6 +776,10 @@ async def unhide_library(lib_id: str, user_id: str = Depends(get_current_user_id
         raise HTTPException(status_code=404, detail="Libreria non trovata")
     await db.shared_libraries.update_one({"id": lib_id}, {"$pull": {"hidden_by_users": user_id}})
     return {"ok": True}
+
+@api.delete("/libraries/{lib_id}/leave")
+async def restore_library(lib_id: str, user_id: str = Depends(get_current_user_id)):
+    return await unhide_library(lib_id, user_id)
 
 # ----------------- Shared -----------------
 @api.get("/shared/{token}")
