@@ -120,7 +120,14 @@ export default function SharedLibraryDetail() {
   if (!lib) return <div className="p-12 text-mono text-sm text-muted2">Caricamento...</div>;
 
   const canAddToLibrary = Boolean(user);
-  const canManageLibrary = Boolean(user && (user.is_admin || user.role === "admin" || lib.owner_id === user.user_id));
+  const canManageLibrary = Boolean(
+    user && (
+      user.is_admin ||
+      user.role === "admin" ||
+      lib.owner_id === user.user_id ||
+      (lib.members || []).includes(user.user_id)
+    )
+  );
 
   return (
     <div className="max-w-6xl mx-auto px-6 md:px-12 py-12">

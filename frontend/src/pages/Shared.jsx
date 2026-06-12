@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Plus, Users, Trash2, Share2, ExternalLink } from "lucide-react";
+import { Plus, Users, Trash2, Share2, ExternalLink, DoorOpen } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
@@ -55,6 +55,18 @@ export default function Shared() {
   };
 
   const canDeleteLibrary = (library) => Boolean(user && (user.is_admin || user.role === "admin" || user.user_id === library.owner_id));
+  const canLeaveLibrary = (library) => Boolean(user && user.user_id && user.user_id !== library.owner_id && !user.is_admin && user.role !== "admin");
+
+  const leaveLibrary = async (id, libName) => {
+    if (!window.confirm(`Abbandonare la libreria "${libName}"? Potrai rientrare tramite il link di condivisione.`)) return;
+    try {
+      await api.post(`/libraries/${id}/hide`);
+      toast.success("Hai abbandonato la libreria");
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Errore abbandono libreria");
+    }
+  };
 
   return (
     <div className="max-w-7xl mx-auto px-6 md:px-12 py-12">
@@ -86,11 +98,15 @@ export default function Shared() {
                 <div className="p-2 bg-canvas2 rounded-sm text-ink">
                   <Users size={20} />
                 </div>
-                {canDeleteLibrary(l) && (
+                {canDeleteLibrary(l) ? (
                   <button onClick={() => del(l.id)} className="text-muted3 hover:text-red-600 transition-colors" title="Elimina libreria" aria-label="Elimina libreria">
                     <Trash2 size={16} />
                   </button>
-                )}
+                ) : canLeaveLibrary(l) ? (
+                  <button onClick={() => leaveLibrary(l.id, l.name)} className="text-muted3 hover:text-red-600 transition-colors" title="Abbandona libreria" aria-label="Abbandona libreria">
+                    <DoorOpen size={16} />
+                  </button>
+                ) : null}
               </div>
               <h3 className="font-bold text-xl leading-tight mb-1 truncate">{l.name}</h3>
               <p className="text-sm text-muted2 line-clamp-2 mb-4 h-10">{l.description || "Nessuna descrizione"}</p>

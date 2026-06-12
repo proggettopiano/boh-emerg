@@ -675,7 +675,16 @@ async def create_library(payload: CreateLibraryIn, user_id: str = Depends(get_cu
 
 @api.get("/libraries")
 async def list_libraries(user_id: str = Depends(get_current_user_id)):
-    cursor = db.shared_libraries.find({}, {"_id": 0}).sort("created_at", -1)
+    cursor = db.shared_libraries.find(
+        {"$or": [{"owner_id": user_id}, {"members": user_id}], "hidden_by_users": {"$ne": user_id}},
+        {"_id": 0},
+    ).sort("created_at", -1)
+    items = await cursor.to_list(1000)
+    return {"items": items}
+
+@api.get("/libraries/hidden")
+async def list_hidden_libraries(user_id: str = Depends(get_current_user_id)):
+    cursor = db.shared_libraries.find({"hidden_by_users": user_id}, {"_id": 0}).sort("created_at", -1)
     items = await cursor.to_list(1000)
     return {"items": items}
 
@@ -727,8 +736,9 @@ async def remove_from_library(lib_id: str, pdf_id: str, user_id: str = Depends(g
     if not lib: raise HTTPException(status_code=404, detail="Libreria non trovata")
     u = await db.users.find_one({"user_id": user_id})
     is_admin = u and (u.get("is_admin") or u.get("email", "").lower() == ADMIN_EMAIL)
-    if not is_admin and lib.get("owner_id") != user_id:
-        raise HTTPException(status_code=403, detail="Solo il proprietario o un amministratore possono modificare questa libreria")
+    is_member = user_id in lib.get("members", [])
+    if not is_admin and lib.get("owner_id") != user_id and not is_member:
+        raise HTTPException(status_code=403, detail="Solo il proprietario, un amministratore o un membro possono modificare questa libreria")
     await db.shared_libraries.update_one({"id": lib_id}, {"$pull": {"pdf_ids": pdf_id}})
     return {"ok": True}
 
@@ -741,6 +751,26 @@ async def delete_library(lib_id: str, user_id: str = Depends(get_current_user_id
     if not is_admin and lib.get("owner_id") != user_id:
         raise HTTPException(status_code=403, detail="Solo il proprietario o un amministratore possono eliminare questa libreria")
     await db.shared_libraries.delete_one({"id": lib_id})
+    return {"ok": True}
+
+@api.post("/libraries/{lib_id}/hide")
+async def hide_library(lib_id: str, user_id: str = Depends(get_current_user_id)):
+    lib = await db.shared_libraries.find_one({"id": lib_id}, {"_id": 0})
+    if not lib:
+        raise HTTPException(status_code=404, detail="Libreria non trovata")
+    if lib.get("owner_id") == user_id:
+        raise HTTPException(status_code=403, detail="Il proprietario non può nascondere la propria libreria")
+    if user_id not in lib.get("members", []):
+        raise HTTPException(status_code=403, detail="Solo i membri possono nascondere questa libreria")
+    await db.shared_libraries.update_one({"id": lib_id}, {"$addToSet": {"hidden_by_users": user_id}})
+    return {"ok": True}
+
+@api.delete("/libraries/{lib_id}/hide")
+async def unhide_library(lib_id: str, user_id: str = Depends(get_current_user_id)):
+    lib = await db.shared_libraries.find_one({"id": lib_id}, {"_id": 0})
+    if not lib:
+        raise HTTPException(status_code=404, detail="Libreria non trovata")
+    await db.shared_libraries.update_one({"id": lib_id}, {"$pull": {"hidden_by_users": user_id}})
     return {"ok": True}
 
 # ----------------- Shared -----------------
