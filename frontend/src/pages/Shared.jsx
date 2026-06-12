@@ -60,7 +60,7 @@ export default function Shared() {
   const leaveLibrary = async (id, libName) => {
     if (!window.confirm(`Abbandonare la libreria "${libName}"? Potrai rientrare tramite il link di condivisione.`)) return;
     try {
-      await api.post(`/libraries/${id}/hide`);
+      await api.post(`/libraries/${id}/leave`);
       toast.success("Hai abbandonato la libreria");
       load();
     } catch (e) {

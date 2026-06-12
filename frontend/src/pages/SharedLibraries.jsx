@@ -50,7 +50,7 @@ export default function SharedLibraries() {
   const leaveLibrary = async (id, libName) => {
     if (!window.confirm(`Abbandonare la libreria "${libName}"? Potrai rientrare tramite il link di condivisione.`)) return;
     try {
-      await api.post(`/libraries/${id}/hide`);
+      await api.post(`/libraries/${id}/leave`);
       toast.success("Hai abbandonato la libreria");
       load();
       loadHidden();
@@ -58,7 +58,7 @@ export default function SharedLibraries() {
       toast.error(getErrorMessage(e));
     }
   };
-  const unhide = async (id) => { await api.delete(`/libraries/${id}/hide`); toast.success("Libreria ripristinata"); load(); loadHidden(); };
+  const unhide = async (id) => { await api.delete(`/libraries/${id}/leave`); toast.success("Libreria ripristinata"); load(); loadHidden(); };
 
   return (
     <div className="max-w-6xl mx-auto px-6 md:px-12 py-12">
