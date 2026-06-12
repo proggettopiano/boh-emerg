@@ -88,7 +88,7 @@ export default function Admin() {
 
     const applyColor = () => {
       const dark = document.documentElement.classList.contains("dark");
-      const color = dark ? "#fcd34d" : "#000000";
+      const color = dark ? "hsl(var(--foreground))" : "#000000";
       try {
         // Set text color on the button (for label)
         el.style.setProperty("color", color, "important");
