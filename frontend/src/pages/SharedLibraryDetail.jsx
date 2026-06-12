@@ -120,7 +120,7 @@ export default function SharedLibraryDetail() {
   if (!lib) return <div className="p-12 text-mono text-sm text-muted2">Caricamento...</div>;
 
   const canAddToLibrary = Boolean(user);
-  const canManageLibrary = Boolean(user && (user.is_admin || lib.owner_id === user.user_id));
+  const canManageLibrary = Boolean(user && (user.is_admin || user.role === "admin" || lib.owner_id === user.user_id));
 
   return (
     <div className="max-w-6xl mx-auto px-6 md:px-12 py-12">
@@ -193,8 +193,9 @@ export default function SharedLibraryDetail() {
             {canManageLibrary && (
               <button 
                 onClick={() => removePdf(p.id)} 
-                className="btn-ghost text-muted3 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-all"
+                className="btn-ghost text-muted3 hover:text-red-600 transition-all shrink-0"
                 title="Rimuovi dalla libreria"
+                aria-label="Rimuovi dalla libreria"
               >
                 <Trash2 size={16} />
               </button>
