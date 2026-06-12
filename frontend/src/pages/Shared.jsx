@@ -100,7 +100,7 @@ export default function Shared() {
                 </div>
                 {canDeleteLibrary(l) ? (
                   <button onClick={() => del(l.id)} className="text-black dark:text-white transition-colors" title="Elimina libreria" aria-label="Elimina libreria">
-                    <Trash2 size={16} className="transition-colors text-black dark:text-white" />
+                    <Trash2 size={16} className="transition-colors text-black dark:text-white" style={{ color: 'hsl(var(--foreground))' }} />
                   </button>
                 ) : canLeaveLibrary(l) ? (
                   <button onClick={() => leaveLibrary(l.id, l.name)} className="text-muted3 hover:text-red-600 transition-colors" title="Abbandona libreria" aria-label="Abbandona libreria">
