@@ -203,7 +203,7 @@ export default function SharedLibraryDetail() {
             {canManageLibrary && (
               <button
                 onClick={() => removePdf(p.id)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-all duration-150 text-muted3 hover:text-red-600 shrink-0 p-2 rounded-md border border-transparent hover:border-rule hover:bg-canvas2/90"
+                className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-all duration-150 text-muted3 hover:text-red-600 shrink-0 p-2 rounded-none border-0 bg-transparent"
                 title="Rimuovi dalla libreria"
                 aria-label="Rimuovi dalla libreria"
               >
