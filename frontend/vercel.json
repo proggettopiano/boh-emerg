@@ -1,4 +1,10 @@
 {
+  "routes": [
+    {
+      "src": "/(\\.env(?:\\..*)?|\\.git(?:/.*)?|package\\.json|package-lock\\.json|yarn\\.lock|pnpm-lock\\.yaml|requirements\\.txt|poetry\\.lock|Pipfile|Pipfile\\.lock|Dockerfile(?:\\..*)?|docker-compose\\.ya?ml|Procfile|Makefile)$",
+      "status": 404
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",
