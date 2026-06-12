@@ -96,7 +96,7 @@ export default function SharedLibraries() {
                     {l.description && <p className="text-sm text-muted2 mt-1 line-clamp-2">{l.description}</p>}
                   </div>
                 </Link>
-                {l.owner_id === user?.user_id ? (
+                {(user?.is_admin || l.owner_id === user?.user_id) ? (
                   <button onClick={() => del(l.id)} className="btn-ghost shrink-0" data-testid={`shared-lib-delete-${l.id}`} title="Elimina libreria"><Trash2 size={14} /></button>
                 ) : (
                   <button
