@@ -192,8 +192,8 @@ export default function SharedLibraryDetail() {
       <ul className="border-t border-rule">
         {(lib.pdfs || []).length === 0 && <li className="py-12 text-center text-muted2 text-sm italic">Questa libreria è vuota.</li>}
         {(lib.pdfs || []).map((p) => (
-          <li key={p.id} className="flex items-center justify-between gap-4 py-4 border-b border-rule group hover:bg-canvas2 px-2 -mx-2 transition-colors">
-            <button onClick={() => navigate(`/viewer/${p.id}`)} className="text-left flex-1 flex items-center gap-4 min-w-0">
+          <li key={p.id} className="group relative flex items-center justify-between gap-4 py-4 border-b border-rule hover:bg-canvas2 px-2 -mx-2 transition-colors">
+            <button onClick={() => navigate(`/viewer/${p.id}`)} className="text-left flex-1 flex items-center gap-4 min-w-0 pr-10">
               <FileText size={20} strokeWidth={1.5} className="text-muted2 shrink-0" />
               <div className="min-w-0">
                 <div className="font-display font-bold text-lg group-hover:underline decoration-2 underline-offset-4 truncate">{p.title}</div>
@@ -201,9 +201,9 @@ export default function SharedLibraryDetail() {
               </div>
             </button>
             {canManageLibrary && (
-              <button 
-                onClick={() => removePdf(p.id)} 
-                className="btn-ghost text-muted3 hover:text-red-600 transition-all shrink-0"
+              <button
+                onClick={() => removePdf(p.id)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-muted3 hover:text-red-600 shrink-0"
                 title="Rimuovi dalla libreria"
                 aria-label="Rimuovi dalla libreria"
               >
