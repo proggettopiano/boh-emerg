@@ -11,7 +11,7 @@ MUSIC_SYMBOL_RE = re.compile(r"[\u0000-\u001F\u007F]+")
 
 
 def clean_pdf_text(text: str) -> str:
-    """Keep readable text and remove music-notation / OCR noise artifacts."""
+    """Keep only readable letters, numbers, and whitespace from PDF text."""
     if not text:
         return ""
 
@@ -19,12 +19,9 @@ def clean_pdf_text(text: str) -> str:
     text = text.replace("\u00a0", " ")
     text = "".join(ch for ch in text if not unicodedata.category(ch).startswith("C"))
 
-    # Remove common music-notation glyphs and non-text symbols.
-    text = text.replace("œ", " ").replace("Œ", " ").replace("˙", " ")
-    text = text.replace("…", " ").replace("…", " ")
-
-    # Keep letters, numbers and standard punctuation only.
-    text = re.sub(r"[^\w\s.,;:!?()'\-\/#&%@]+", " ", text, flags=re.UNICODE)
+    # Keep only standard word characters and digits in the Latin alphabet (including accented letters),
+    # and drop all other symbols, punctuation and notation glyphs.
+    text = re.sub(r"[^A-Za-z0-9À-ÿ\s]+", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
