@@ -122,12 +122,20 @@
   }
   /* Force reset button color: black in light theme, amber in dark theme.
      Also force svg/child fill+stroke to ensure icon follows color. */
-  .admin-reset-btn,
-  .admin-reset-btn * {
-    color: #000000 !important;
-    fill: #000000 !important;
-    stroke: #000000 !important;
-  }
+    /* Force reset button color: black in light theme, amber in dark theme.
+       Keep SVG as stroke-only (no fill) so icons remain outlined. */
+    .admin-reset-btn { color: #000000 !important; }
+    .admin-reset-btn svg,
+    .admin-reset-btn svg * {
+      stroke: #000000 !important;
+      fill: none !important;
+    }
+    html.dark .admin-reset-btn { color: #fcd34d !important; }
+    html.dark .admin-reset-btn svg,
+    html.dark .admin-reset-btn svg * {
+      stroke: #fcd34d !important;
+      fill: none !important;
+    }
   html.dark .admin-reset-btn,
   html.dark .admin-reset-btn * {
     color: #fcd34d !important;
