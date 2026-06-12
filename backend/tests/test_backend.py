@@ -190,7 +190,7 @@ class TestPdfs:
 def test_clean_pdf_text_removes_music_symbols():
     from pdf_processor import clean_pdf_text
 
-    text = "Pace vera pace œ ˙ œ 1 2 3 …"
+    text = "Pace vera pace œ ˙ œ 1 2 3 … D7 G#min GesùCristo"
 
     cleaned = clean_pdf_text(text)
 
@@ -198,6 +198,10 @@ def test_clean_pdf_text_removes_music_symbols():
     assert "œ" not in cleaned
     assert "˙" not in cleaned
     assert "…" not in cleaned
+    assert "D7" not in cleaned
+    assert "G#min" not in cleaned
+    assert "Gesù Cristo" in cleaned
+    assert "GesùCristo" not in cleaned
 
 
 # ---------------- SEARCH ----------------
