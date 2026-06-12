@@ -190,7 +190,7 @@ export default function Library() {
                   </button>
                 )}
                 <button onClick={() => setEditTagsFor(p)} className="btn-ghost" title="Tag"><TagIcon size={15} /></button>
-                <button onClick={() => remove(p.id, p.title)} className="btn-ghost text-red-600" title="Elimina"><Trash2 size={15} /></button>
+                <button onClick={() => remove(p.id, p.title)} className="btn-ghost text-white" title="Elimina"><Trash2 size={15} className="transition-colors text-white" /></button>
               </div>
             </li>
           ))}
