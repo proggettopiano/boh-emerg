@@ -22,3 +22,13 @@ export function sanitizeSearchText(value) {
   text = text.replace(/\s+/g, " ");
   return text.trim();
 }
+
+// Remove chord/note tokens but otherwise preserve the original text content
+export function stripChords(value) {
+  if (value == null) return "";
+  let text = String(value).replace(/\u00a0/g, " ").replace(/\r/g, " ").replace(/\n/g, " ");
+  text = text.replace(NOTE_CHORD_RE, " ");
+  text = text.replace(CHORD_RE, " ");
+  text = text.replace(/\s+/g, " ");
+  return text.trim();
+}
