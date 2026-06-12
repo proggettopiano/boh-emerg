@@ -187,6 +187,19 @@ class TestPdfs:
         assert r.content[:4] == b"%PDF"
 
 
+def test_clean_pdf_text_removes_music_symbols():
+    from pdf_processor import clean_pdf_text
+
+    text = "Pace vera pace œ ˙ œ 1 2 3 …"
+
+    cleaned = clean_pdf_text(text)
+
+    assert "Pace" in cleaned
+    assert "œ" not in cleaned
+    assert "˙" not in cleaned
+    assert "…" not in cleaned
+
+
 # ---------------- SEARCH ----------------
 class TestSearch:
     def test_search_returns_results(self, api_client, auth_headers, uploaded_pdf):

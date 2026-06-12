@@ -31,7 +31,7 @@ from auth_utils import (
     hash_password, verify_password, create_jwt, decode_jwt,
     get_client_ip, get_current_user_id, get_optional_user_id,
 )
-from pdf_processor import extract_pages, compress_pdf, make_snippet
+from pdf_processor import extract_pages, compress_pdf, make_snippet, clean_pdf_text
 import google_integration as gi
 
 ROOT_DIR = Path(__file__).parent
@@ -919,7 +919,7 @@ def format_search_result(p: dict, pg: dict, q: str, score: int, snippet: Optiona
         # `viewer_page` is the canonical numeric page the viewer should open (physical page)
         "viewer_page": pg["page"],
         "page_label": pg.get("page_label", pg["page"]),
-        "snippet": snippet if snippet is not None else make_snippet(pg["text"], q),
+        "snippet": snippet if snippet is not None else make_snippet(clean_pdf_text(pg.get("text", "")), q),
         "score": score,
         "is_protected": p.get("is_protected", False),
     }
