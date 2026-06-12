@@ -204,6 +204,18 @@ def test_clean_pdf_text_removes_music_symbols():
     assert "GesùCristo" not in cleaned
 
 
+def test_clean_pdf_text_keeps_common_words_while_removing_chords():
+    from pdf_processor import clean_pdf_text
+
+    text = "LA-7 la tua fedeltà DO SOL FA DO son sulla via"
+
+    cleaned = clean_pdf_text(text)
+
+    assert "la tua fedeltà" in cleaned
+    assert "DO SOL FA DO" not in cleaned
+    assert "son sulla via" in cleaned
+
+
 # ---------------- SEARCH ----------------
 class TestSearch:
     def test_search_returns_results(self, api_client, auth_headers, uploaded_pdf):

@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { FileText, Lock } from "lucide-react";
 import api from "@/lib/api";
-import { sanitizeSearchText } from "@/lib/searchText";
+import { sanitizeSearchText, sanitizeSnippetText } from "@/lib/searchText";
 
 export default function SharedView() {
   const { token } = useParams();
@@ -55,7 +55,7 @@ export default function SharedView() {
     const ctrl = new AbortController();
     const timer = setTimeout(async () => {
       try {
-        const r = await api.get("/search", { params: { q: safeQ, pdf_ids: Array.from(libPdfIds).join(",") }, signal: ctrl.signal });
+        const r = await api.get("/search", { params: { q: safeQ, pdf_ids: Array.from(libPdfIds).join(","), share_token: token }, signal: ctrl.signal });
         const allResults = r.data.results || [];
         const filtered = allResults.filter((res) => libPdfIds.has(String(res.pdf_id || res.id)));
         if (mountedRef.current) setSearchResults(filtered);
@@ -70,7 +70,7 @@ export default function SharedView() {
       clearTimeout(timer);
       ctrl.abort();
     };
-  }, [q, lib]);
+  }, [q, lib, token]);
 
   if (error) return (
     <div className="max-w-2xl mx-auto p-12 text-center">
@@ -82,6 +82,7 @@ export default function SharedView() {
 
   if (!lib) return <div className="p-12 text-mono text-sm text-muted2">Caricamento…</div>;
 
+  const safeQ = sanitizeSearchText(q);
   const visiblePdfs = q.trim() ? (searchResults ?? []) : (lib.pdfs || []);
 
   return (
@@ -120,14 +121,14 @@ export default function SharedView() {
             return (
               <li key={p.pdf_id || p.id || idx} className="py-4 border-b border-rule hover:bg-canvas2 px-2 -mx-2 transition-colors">
                 <button
-                  onClick={() => navigate(`/viewer/${p.pdf_id || p.id}?page=${encodeURIComponent(p.page_label || p.page || 1)}&q=${encodeURIComponent(safeQ)}`)}
+                  onClick={() => navigate(`/viewer/${p.pdf_id || p.id}?page=${encodeURIComponent(p.page_label || p.page || 1)}&q=${encodeURIComponent(safeQ)}&share=${encodeURIComponent(token)}`)}
                   className="text-left w-full flex items-start gap-4"
                 >
                   <FileText size={18} className="text-muted2 mt-1 shrink-0" />
                   <div className="min-w-0">
                     <div className="font-display font-bold text-lg hover:underline decoration-2 underline-offset-4">{p.title}</div>
                     <div className="text-mono text-xs text-muted3 mt-1">PAGINA {p.page_label || p.page}</div>
-                    {p.snippet && <p className="text-sm text-muted2 mt-2 leading-relaxed">{p.snippet}</p>}
+                    {p.snippet && <p className="text-sm text-muted2 mt-2 leading-relaxed">{sanitizeSnippetText(p.snippet)}</p>}
                   </div>
                 </button>
               </li>

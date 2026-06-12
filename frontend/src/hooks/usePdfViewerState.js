@@ -178,6 +178,7 @@ function usePageController({
 function useSearchController({
   pdfId,
   initialQuery,
+  shareToken,
   containerRef,
   mountedRef,
   searchDriverDoneRef,
@@ -195,6 +196,7 @@ function useSearchController({
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
 
   const collectTimerRef = useRef(null);
+  const collectRetryRef = useRef(0);
   const matchesRef = useRef([]);
   const currentMatchIndexRef = useRef(0);
   const searchNavigationRef = useRef(false);
@@ -217,6 +219,7 @@ function useSearchController({
     setCurrentMatchIndex(0);
     currentMatchIndexRef.current = 0;
     searchNavigationRef.current = false;
+    collectRetryRef.current = 0;
     if (searchNavigationTimerRef.current != null) {
       window.clearTimeout(searchNavigationTimerRef.current);
       searchNavigationTimerRef.current = null;
@@ -235,7 +238,7 @@ function useSearchController({
     }
     setMatchNavigationLoading(true);
     const ctrl = new AbortController();
-    api.get(`/search`, { params: { q }, signal: ctrl.signal })
+    api.get(`/search`, { params: { q, share_token: shareToken || undefined }, signal: ctrl.signal })
       .then((r) => {
         if (cancelled) return;
         const items = (r.data && r.data.results) || [];
@@ -247,7 +250,7 @@ function useSearchController({
       })
       .finally(() => { if (!cancelled) setMatchNavigationLoading(false); });
     return () => { cancelled = true; ctrl.abort(); };
-  }, [query, pdfId]);
+  }, [query, pdfId, shareToken]);
 
   const setSearchNavigationLock = useCallback((locked) => {
     if (searchNavigationTimerRef.current != null) {
@@ -359,6 +362,15 @@ function useSearchController({
     const list = Array.from(containerRef.current.querySelectorAll("mark.hl"));
     matchesRef.current = list;
     setMatches(list);
+
+    if (list.length === 0 && collectRetryRef.current < 8) {
+      collectRetryRef.current += 1;
+      clearTimeout(collectTimerRef.current);
+      collectTimerRef.current = window.setTimeout(collectMatches, 180);
+      return;
+    }
+
+    collectRetryRef.current = 0;
 
     if (pendingSearchDirectionRef.current !== 0) {
       resolvePendingSearch();
@@ -510,8 +522,9 @@ function useSearchController({
       window.clearTimeout(searchNavigationTimerRef.current);
       searchNavigationTimerRef.current = null;
     }
-    navigate(`/viewer/${pdfId}?page=${getCurrentPage()}`, { replace: true });
-  }, [pdfId, getCurrentPage, navigate]);
+    const sharePart = shareToken ? `&share=${encodeURIComponent(shareToken)}` : "";
+    navigate(`/viewer/${pdfId}?page=${getCurrentPage()}${sharePart}`, { replace: true });
+  }, [pdfId, getCurrentPage, navigate, shareToken]);
 
   const handleSearchEscape = useCallback(() => {
     if (!hasSearchQuery) return false;
@@ -583,6 +596,7 @@ export function usePdfViewerState({
   pdfId,
   initialPage,
   initialQuery,
+  shareToken,
   numPages,
   slotHeight,
   getToolbarOffset,
@@ -610,10 +624,11 @@ export function usePdfViewerState({
       clearTimeout(urlSyncTimerRef.current);
       urlSyncTimerRef.current = setTimeout(() => {
         const queryPart = q ? `&q=${encodeURIComponent(q)}` : "";
-        navigate(`/viewer/${pdfId}?page=${page}${queryPart}`, { replace: true });
+        const sharePart = shareToken ? `&share=${encodeURIComponent(shareToken)}` : "";
+        navigate(`/viewer/${pdfId}?page=${page}${queryPart}${sharePart}`, { replace: true });
       }, URL_SYNC_DEBOUNCE_MS);
     },
-    [pdfId, navigate],
+    [pdfId, navigate, shareToken],
   );
 
   const onPageChange = useCallback(
@@ -648,6 +663,7 @@ export function usePdfViewerState({
   const search = useSearchController({
     pdfId,
     initialQuery,
+    shareToken,
     containerRef,
     mountedRef,
     searchDriverDoneRef,
@@ -720,7 +736,10 @@ export function usePdfViewerState({
         initialJumpPendingRef.current = false;
         initialScrollDoneRef.current = true;
         searchDriverDoneRef.current = true;
-        if (search.hasSearchQuery) search.collectMatches();
+        if (search.hasSearchQuery) {
+          window.setTimeout(() => search.collectMatches(), 0);
+          window.setTimeout(() => search.collectMatches(), 250);
+        }
       }
       search.scheduleCollect();
     },
@@ -741,7 +760,8 @@ export function usePdfViewerState({
     initialScrollDoneRef.current = true;
     searchDriverDoneRef.current = true;
     if (search.hasSearchQuery) {
-      search.collectMatches();
+      window.setTimeout(() => search.collectMatches(), 0);
+      window.setTimeout(() => search.collectMatches(), 250);
     }
   }, [initialScrollDoneRef, searchDriverDoneRef, search]);
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search as SearchIcon, Upload as UploadIcon } from "lucide-react";
 import api from "@/lib/api";
+import { sanitizeSnippetText } from "@/lib/searchText";
 import UploadModal from "@/components/UploadModal";
 import TrebleClef from "@/components/TrebleClef";
 
@@ -232,7 +233,7 @@ export default function Home() {
                     </span>
                   )}
                 </div>
-                {r.snippet && <p className="text-muted2 leading-relaxed">{highlight(r.snippet, q)}</p>}
+                {r.snippet && <p className="text-muted2 leading-relaxed">{highlight(sanitizeSnippetText(r.snippet), q)}</p>}
               </button>
             </li>
           ))}

@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Copy, FileText, Plus, Trash2, Search as SearchIcon, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
-import { sanitizeSearchText } from "@/lib/searchText";
+import { sanitizeSearchText, sanitizeSnippetText } from "@/lib/searchText";
 import { useAuth } from "@/context/AuthContext";
 
 export default function SharedLibraryDetail() {
@@ -99,7 +99,7 @@ export default function SharedLibraryDetail() {
     }
 
     const safeQ = sanitizeSearchText(q);
-    const params = { q: safeQ, pdf_ids: Array.from(libPdfIds).join(",") };
+    const params = { q: safeQ, pdf_ids: Array.from(libPdfIds).join(","), share_token: lib?.share_token || "" };
     const ctrl = new AbortController();
     let alive = true;
     const timer = setTimeout(async () => {
@@ -175,11 +175,11 @@ export default function SharedLibraryDetail() {
             {searchResults.length === 0 && <li className="py-8 text-center text-muted2 text-sm italic">Nessun risultato trovato in questa libreria.</li>}
             {searchResults.map((r, idx) => (
               <li key={idx} className="py-4 border-b border-rule hover:bg-canvas2 px-2 -mx-2 transition-colors">
-                <button onClick={() => navigate(`/viewer/${r.pdf_id}?page=${encodeURIComponent(r.page_label || r.page)}&q=${encodeURIComponent(sanitizeSearchText(q))}`)} className="text-left w-full flex items-start gap-4">
+                <button onClick={() => navigate(`/viewer/${r.pdf_id}?page=${encodeURIComponent(r.page_label || r.page)}&q=${encodeURIComponent(sanitizeSearchText(q))}&share=${encodeURIComponent(lib?.share_token || "")}`)} className="text-left w-full flex items-start gap-4">
                   <FileText size={20} className="text-muted2 mt-1 shrink-0" />
                   <div className="min-w-0">
                     <div className="font-display font-bold text-lg hover:underline decoration-2 underline-offset-4">{r.title} <span className="text-mono text-xs font-normal text-muted3 ml-2">PAGINA {r.page_label || r.page}</span></div>
-                    {r.snippet && <p className="text-sm text-muted2 mt-1 leading-relaxed">{r.snippet}</p> }
+                    {r.snippet && <p className="text-sm text-muted2 mt-1 leading-relaxed">{sanitizeSnippetText(r.snippet)}</p> }
                   </div>
                 </button>
               </li>
