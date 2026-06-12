@@ -17,15 +17,16 @@ def clean_pdf_text(text: str) -> str:
 
     text = text.replace("\xa0", " ")
     text = text.replace("\u00a0", " ")
+    text = text.replace("\r", " ").replace("\n", " ")
     text = "".join(ch for ch in text if not unicodedata.category(ch).startswith("C"))
 
-    # Drop music notation, chord symbols, OCR artifacts and punctuation.
+    # Remove music notation, chord tokens and OCR noise.
     text = re.sub(r"[\u0000-\u001F\u007F]", " ", text)
     text = re.sub(r"[œŒ˙…]+", " ", text)
-    text = re.sub(r"(?<![A-Za-zÀ-ÿ])(?:[A-G](?:#|b)?(?:maj|min|m|dim|aug|sus|add)?\d*(?:/[A-G](?:#|b)?)?)(?![A-Za-zÀ-ÿ])", " ", text, flags=re.IGNORECASE)
-    text = re.sub(r"[^A-Za-z0-9À-ÿ\s]+", " ", text)
+    text = re.sub(r"(?<![A-Za-zÀ-ÿ])(?:[A-G](?:#|b)?(?:maj|min|m|dim|aug|sus|add)?\d*(?:/[A-G](?:#|b)?\d*)?)(?![A-Za-zÀ-ÿ])", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"[^A-Za-z0-9À-ÿ\s]+", " ", text, flags=re.UNICODE)
 
-    # Split only likely OCR-glued words such as "GesùCristo".
+    # Split likely OCR-glued words such as "GesùCristo" or words broken across lines.
     text = re.sub(r"(?<=[a-zà-ÿ])(?=[A-ZÀ-Ý][a-zà-ÿ])", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()

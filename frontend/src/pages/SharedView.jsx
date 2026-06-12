@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { FileText, Lock } from "lucide-react";
 import api from "@/lib/api";
+import { sanitizeSearchText } from "@/lib/searchText";
 
 export default function SharedView() {
   const { token } = useParams();
@@ -44,6 +45,7 @@ export default function SharedView() {
       return undefined;
     }
 
+    const safeQ = sanitizeSearchText(q);
     const libPdfIds = new Set((lib.pdfs || []).map((item) => String(item.id)));
     if (libPdfIds.size === 0) {
       setSearchResults([]);
@@ -53,7 +55,7 @@ export default function SharedView() {
     const ctrl = new AbortController();
     const timer = setTimeout(async () => {
       try {
-        const r = await api.get("/search", { params: { q, pdf_ids: Array.from(libPdfIds).join(",") }, signal: ctrl.signal });
+        const r = await api.get("/search", { params: { q: safeQ, pdf_ids: Array.from(libPdfIds).join(",") }, signal: ctrl.signal });
         const allResults = r.data.results || [];
         const filtered = allResults.filter((res) => libPdfIds.has(String(res.pdf_id || res.id)));
         if (mountedRef.current) setSearchResults(filtered);
@@ -118,7 +120,7 @@ export default function SharedView() {
             return (
               <li key={p.pdf_id || p.id || idx} className="py-4 border-b border-rule hover:bg-canvas2 px-2 -mx-2 transition-colors">
                 <button
-                  onClick={() => navigate(`/viewer/${p.pdf_id || p.id}?page=${encodeURIComponent(p.page_label || p.page || 1)}&q=${encodeURIComponent(q)}`)}
+                  onClick={() => navigate(`/viewer/${p.pdf_id || p.id}?page=${encodeURIComponent(p.page_label || p.page || 1)}&q=${encodeURIComponent(safeQ)}`)}
                   className="text-left w-full flex items-start gap-4"
                 >
                   <FileText size={18} className="text-muted2 mt-1 shrink-0" />
