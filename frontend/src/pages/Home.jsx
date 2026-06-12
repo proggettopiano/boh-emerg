@@ -193,6 +193,7 @@ export default function Home() {
             <li key={idx} className="py-5 border-b border-rule animate-fade-in">
               <button
                 onClick={async () => {
+                  addRecentSearch(q);
                   let pageNum = r.viewer_page ?? r.actual_page ?? r.page;
                   if (!pageNum && r.page_label) {
                     try {

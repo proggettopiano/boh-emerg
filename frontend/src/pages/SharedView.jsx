@@ -8,6 +8,7 @@ export default function SharedView() {
   const navigate = useNavigate();
   const [lib, setLib] = useState(null);
   const [error, setError] = useState(null);
+  const [q, setQ] = useState("");
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -36,6 +37,12 @@ export default function SharedView() {
   
   if (!lib) return <div className="p-12 text-mono text-sm text-muted2">Caricamento…</div>;
 
+  const filteredPdfs = (lib.pdfs || []).filter((p) => {
+    const term = q.trim().toLowerCase();
+    if (!term) return true;
+    return [p.title, p.filename, String(p.pages || "")].some((value) => String(value || "").toLowerCase().includes(term));
+  });
+
   return (
     <div className="max-w-6xl mx-auto px-6 md:px-12 py-12">
       <p className="overline mb-2">LIBRERIA CONDIVISA</p>
@@ -53,11 +60,21 @@ export default function SharedView() {
         </div>
       </div>
 
+      <div className="mb-6">
+        <label className="overline block mb-2">Cerca nella condivisione</label>
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Cerca titolo o pagine..."
+          className="w-full border border-rule rounded-md bg-card px-4 py-3 text-sm focus:outline-none focus:border-ink"
+        />
+      </div>
+
       <ul className="border-t border-rule">
-        {(lib.pdfs || []).length === 0 && (
-          <li className="py-12 text-center text-muted2 text-sm">Nessun PDF disponibile pubblicamente.</li>
+        {filteredPdfs.length === 0 && (
+          <li className="py-12 text-center text-muted2 text-sm">Nessun PDF disponibile pubblicamente{q ? " per la ricerca richiesta" : ""}.</li>
         )}
-        {(lib.pdfs || []).map((p, idx) => (
+        {filteredPdfs.map((p, idx) => (
           <li key={idx} className="flex items-center justify-between gap-3 py-4 border-b border-rule group hover:bg-canvas2 px-2 -mx-2 transition-colors">
             <div className="text-left flex-1 flex items-center gap-3 min-w-0">
               <FileText size={18} strokeWidth={1.5} className="text-muted2" />
