@@ -12,7 +12,6 @@ export default function SharedLibraryDetail() {
   const [lib, setLib] = useState(null);
   const [allPdfs, setAllPdfs] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
-  const canModifyLibrary = Boolean(user);
   const [q, setQ] = useState("");
   const [searchResults, setSearchResults] = useState(null);
   const mountedRef = useRef(false);
@@ -120,6 +119,9 @@ export default function SharedLibraryDetail() {
 
   if (!lib) return <div className="p-12 text-mono text-sm text-muted2">Caricamento...</div>;
 
+  const canAddToLibrary = Boolean(user);
+  const canManageLibrary = Boolean(user && (user.is_admin || lib.owner_id === user.user_id));
+
   return (
     <div className="max-w-6xl mx-auto px-6 md:px-12 py-12">
       <button onClick={() => navigate("/shared")} className="flex items-center gap-2 text-mono text-xs text-muted2 hover:text-ink mb-6 uppercase tracking-widest">
@@ -136,7 +138,7 @@ export default function SharedLibraryDetail() {
           <button onClick={copyLink} className="btn-ghost border border-rule rounded-sm px-4 py-2 text-sm font-bold flex items-center gap-2">
             <Copy size={14} /> Copia Link Pubblico
           </button>
-          {canModifyLibrary && (
+          {canAddToLibrary && (
             <button onClick={openAdd} className="btn-primary flex items-center gap-2">
               <Plus size={16} /> Aggiungi PDF
             </button>
@@ -188,7 +190,7 @@ export default function SharedLibraryDetail() {
                 <div className="text-mono text-xs text-muted3 mt-0.5">{p.created_at?.slice(0, 10)} — {p.pages} pagine — {(p.size / 1024).toFixed(0)} KB</div>
               </div>
             </button>
-            {canModifyLibrary && (
+            {canManageLibrary && (
               <button 
                 onClick={() => removePdf(p.id)} 
                 className="btn-ghost text-muted3 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-all"

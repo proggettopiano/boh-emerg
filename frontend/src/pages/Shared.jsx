@@ -84,9 +84,11 @@ export default function Shared() {
                 <div className="p-2 bg-canvas2 rounded-sm text-ink">
                   <Users size={20} />
                 </div>
-                <button onClick={() => del(l.id)} className="text-muted3 hover:text-red-600 transition-colors">
-                  <Trash2 size={16} />
-                </button>
+                {(user?.user_id === l.owner_id || user?.is_admin) && (
+                  <button onClick={() => del(l.id)} className="text-muted3 hover:text-red-600 transition-colors" title="Elimina libreria">
+                    <Trash2 size={16} />
+                  </button>
+                )}
               </div>
               <h3 className="font-bold text-xl leading-tight mb-1 truncate">{l.name}</h3>
               <p className="text-sm text-muted2 line-clamp-2 mb-4 h-10">{l.description || "Nessuna descrizione"}</p>
