@@ -110,6 +110,7 @@
   }
   .btn-ghost-danger:hover {
     background: rgba(248, 113, 113, 0.25);
+    color: #b91c1c;
   }
   html.dark .btn-ghost-danger {
     color: #fecaca !important;
@@ -117,6 +118,7 @@
   }
   html.dark .btn-ghost-danger:hover {
     background: rgba(185, 28, 28, 0.3) !important;
+    color: #fecaca !important;
   }
   .input-base {
     @apply w-full bg-canvas2 border border-rule px-4 py-3 rounded-sm outline-none transition-colors text-ink;

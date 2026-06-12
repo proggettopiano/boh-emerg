@@ -236,7 +236,7 @@ export default function Admin() {
                 ) : (
                   <button
                     onClick={disconnectMaster}
-                    className="btn-ghost border border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-950/30 dark:hover:text-red-100 rounded-sm px-3 py-1.5 text-sm"
+                    className="btn-ghost btn-ghost-danger border border-red-300 rounded-sm px-3 py-1.5 text-sm"
                   >
                     <Unlink size={14} /> Scollega Drive
                   </button>
