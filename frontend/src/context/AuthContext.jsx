@@ -5,21 +5,25 @@ const AUTH_TOKEN_KEY = "scorelib_session_token";
 const LEGACY_AUTH_TOKEN_KEY = "scorelib_token";
 
 function getAuthToken() {
-  const token = sessionStorage.getItem(AUTH_TOKEN_KEY);
-  if (token) return token;
+  const stored = localStorage.getItem(AUTH_TOKEN_KEY) || sessionStorage.getItem(AUTH_TOKEN_KEY);
+  if (stored) {
+    if (!localStorage.getItem(AUTH_TOKEN_KEY)) localStorage.setItem(AUTH_TOKEN_KEY, stored);
+    return stored;
+  }
   const legacy = localStorage.getItem(LEGACY_AUTH_TOKEN_KEY);
   if (!legacy) return null;
-  sessionStorage.setItem(AUTH_TOKEN_KEY, legacy);
-  localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
+  saveAuthToken(legacy);
   return legacy;
 }
 
 function saveAuthToken(token) {
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
   sessionStorage.setItem(AUTH_TOKEN_KEY, token);
   localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
 }
 
 function clearAuthToken() {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
   sessionStorage.removeItem(AUTH_TOKEN_KEY);
   localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
 }
