@@ -124,6 +124,7 @@ export default function SharedLibraryDetail() {
     user && (
       user.is_admin ||
       user.role === "admin" ||
+      lib.is_owner ||
       lib.owner_id === user.user_id ||
       (lib.members || []).includes(user.user_id)
     )
