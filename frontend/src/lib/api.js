@@ -13,10 +13,15 @@ const AUTH_TOKEN_KEY = "scorelib_session_token";
 const LEGACY_AUTH_TOKEN_KEY = "scorelib_token";
 
 function getAuthToken() {
-  const token = sessionStorage.getItem(AUTH_TOKEN_KEY);
-  if (token) return token;
+  const token = localStorage.getItem(AUTH_TOKEN_KEY) || sessionStorage.getItem(AUTH_TOKEN_KEY);
+  if (token) {
+    localStorage.setItem(AUTH_TOKEN_KEY, token);
+    sessionStorage.setItem(AUTH_TOKEN_KEY, token);
+    return token;
+  }
   const legacy = localStorage.getItem(LEGACY_AUTH_TOKEN_KEY);
   if (!legacy) return null;
+  localStorage.setItem(AUTH_TOKEN_KEY, legacy);
   sessionStorage.setItem(AUTH_TOKEN_KEY, legacy);
   localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
   return legacy;

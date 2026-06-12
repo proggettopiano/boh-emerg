@@ -9,13 +9,6 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-const RECENT_SEARCHES_KEY = "scorelib.recentSearches";
-const MAX_RECENT_SEARCHES = 8;
-
-function normalizeRecentTerm(value) {
-  return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
-}
-
 function highlight(text, q) {
   if (!text || !q) return text;
   try {
@@ -38,32 +31,6 @@ function highlight(text, q) {
   }
 }
 
-function loadRecentSearches() {
-  try {
-    const stored = window.localStorage.getItem(RECENT_SEARCHES_KEY);
-    if (!stored) return [];
-    const parsed = JSON.parse(stored);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((item) => (typeof item === "string" ? item.trim().replace(/\s+/g, " ") : ""))
-      .filter(Boolean)
-      .slice(0, MAX_RECENT_SEARCHES);
-  } catch {
-    return [];
-  }
-}
-
-function saveRecentSearches(list) {
-  try {
-    const normalized = list
-      .map((item) => String(item || "").trim().replace(/\s+/g, " "))
-      .filter(Boolean)
-      .slice(0, MAX_RECENT_SEARCHES);
-    window.localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(normalized));
-  } catch {
-    // ignore localStorage errors
-  }
-}
 
 export default function Home() {
   const [q, setQ] = useState("");
@@ -71,7 +38,6 @@ export default function Home() {
   const [count, setCount] = useState(0);
   const [countLoading, setCountLoading] = useState(true);
   const [openUpload, setOpenUpload] = useState(false);
-  const [recentSearches, setRecentSearches] = useState([]);
   const tref = useRef(null);
   const navigate = useNavigate();
   const inputRef = useRef(null);
@@ -92,27 +58,11 @@ export default function Home() {
     return () => { alive = false; window.removeEventListener("keydown", onKey); };
   }, []);
 
-  useEffect(() => {
-    setRecentSearches(loadRecentSearches());
-  }, []);
-
-  const addRecentSearch = (term) => {
-    const normalized = String(term || "").trim().replace(/\s+/g, " ");
-    if (!normalized) return;
-    setRecentSearches((current) => {
-      const next = [normalized, ...current.filter((item) => normalizeRecentTerm(item) !== normalizeRecentTerm(normalized))]
-        .slice(0, MAX_RECENT_SEARCHES);
-      saveRecentSearches(next);
-      return next;
-    });
-  };
-
   const submitSearch = (event) => {
     event.preventDefault();
     const nextTerm = q.trim().replace(/\s+/g, " ");
     if (!nextTerm) return;
     setQ(nextTerm);
-    addRecentSearch(nextTerm);
   };
 
   useEffect(() => {
@@ -159,24 +109,6 @@ export default function Home() {
           {q && <button type="button" onClick={() => setQ("")} className="text-mono text-xs text-muted2 hover:text-ink">CANCELLA</button>}
         </div>
       </form>
-      {recentSearches.length > 0 && (
-        <div className="bg-card border-2 border-rule rounded-md mb-6 px-5 py-4 text-sm text-muted2" style={{ boxShadow: "0 6px 0 0 rgba(0,0,0,0.08)" }}>
-          <div className="mb-2 uppercase tracking-[0.18em] text-[10px] font-semibold">Ricerche recenti</div>
-          <div className="flex flex-wrap gap-2">
-            {recentSearches.map((term) => (
-              <button
-                key={term}
-                onClick={() => setQ(term)}
-                className="rounded-full border border-rule px-3 py-1 text-sm text-muted3 hover:bg-canvas3"
-                title={term}
-              >
-                {term}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       <div className="flex items-center justify-between text-sm text-muted2 mb-8">
         <span>{countLoading ? "Caricamento libreria..." : `${count} PDF nella libreria globale`}</span>
         <button onClick={() => setOpenUpload(true)} className="btn-primary !py-2 !px-4 text-sm">
@@ -193,7 +125,6 @@ export default function Home() {
             <li key={idx} className="py-5 border-b border-rule animate-fade-in">
               <button
                 onClick={async () => {
-                  addRecentSearch(q);
                   let pageNum = r.viewer_page ?? r.actual_page ?? r.page;
                   if (!pageNum && r.page_label) {
                     try {
