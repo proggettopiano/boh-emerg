@@ -102,7 +102,7 @@ export default function Admin() {
           <button onClick={() => navigate("/logs")} className="btn-ghost border border-rule rounded-sm px-3 py-2 text-sm">
             <ScrollText size={14} /> Log di sistema
           </button>
-          <button onClick={resetTodayData} className="btn-ghost border border-rule rounded-sm px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+          <button onClick={resetTodayData} className="btn-ghost border border-rule rounded-sm px-3 py-2 text-sm text-black dark:text-amber-300">
             <AlertTriangle size={14} /> Reset dati odierni
           </button>
           <button onClick={load} disabled={busy} className="btn-primary">
