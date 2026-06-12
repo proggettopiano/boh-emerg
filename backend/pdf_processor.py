@@ -20,10 +20,12 @@ def clean_pdf_text(text: str) -> str:
     text = text.replace("\r", " ").replace("\n", " ")
     text = "".join(ch for ch in text if not unicodedata.category(ch).startswith("C"))
 
-    # Remove music notation, chord tokens and OCR noise.
+    # Remove music notation, note/chord tokens and OCR noise.
     text = re.sub(r"[\u0000-\u001F\u007F]", " ", text)
     text = re.sub(r"[œŒ˙…]+", " ", text)
+    text = re.sub(r"\b(?:DO|RE|MI|FA|SOL|LA|SI)(?:[#b]|[-/][A-Z0-9#b]+|\d+|maj|min|m|dim|aug|sus|add|7|9|11|13)*\b", " ", text, flags=re.IGNORECASE)
     text = re.sub(r"(?<![A-Za-zÀ-ÿ])(?:[A-G](?:#|b)?(?:maj|min|m|dim|aug|sus|add)?\d*(?:/[A-G](?:#|b)?\d*)?)(?![A-Za-zÀ-ÿ])", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?<=[A-Za-zÀ-ÿ])\s*[-–—]\s*(?=[A-Za-zÀ-ÿ])", "", text)
     text = re.sub(r"[^A-Za-z0-9À-ÿ\s]+", " ", text, flags=re.UNICODE)
 
     # Split likely OCR-glued words such as "GesùCristo" or words broken across lines.
