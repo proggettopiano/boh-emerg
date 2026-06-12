@@ -120,6 +120,9 @@
     background: rgba(185, 28, 28, 0.3) !important;
     color: #fecaca !important;
   }
+  /* Force reset button color: black in light theme, amber-300 in dark theme */
+  .admin-reset-btn { color: #000000 !important; }
+  html.dark .admin-reset-btn { color: #fcd34d !important; }
   .input-base {
     @apply w-full bg-canvas2 border border-rule px-4 py-3 rounded-sm outline-none transition-colors text-ink;
   }
