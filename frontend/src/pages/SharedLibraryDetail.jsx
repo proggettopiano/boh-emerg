@@ -207,7 +207,7 @@ export default function SharedLibraryDetail() {
                 title="Rimuovi dalla libreria"
                 aria-label="Rimuovi dalla libreria"
               >
-                <Trash2 size={16} className="transition-colors text-black dark:text-white" />
+                <Trash2 size={16} className="transition-colors text-black dark:text-white" style={{ color: 'hsl(var(--foreground))' }} />
               </button>
             )}
           </li>
