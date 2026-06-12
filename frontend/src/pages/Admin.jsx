@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Shield, Cloud, Users, FileText, AlertTriangle, RefreshCw, ScrollText, Unlink, HardDriveUpload, Check, X, CheckCircle } from "lucide-react";
 import { toast } from "sonner";
@@ -81,6 +81,41 @@ export default function Admin() {
 
   useEffect(() => { if (isAdmin) load(); }, [isAdmin]);
 
+  const resetBtnRef = useRef(null);
+  useEffect(() => {
+    const el = resetBtnRef.current;
+    if (!el || typeof document === "undefined") return undefined;
+
+    const applyColor = () => {
+      const dark = document.documentElement.classList.contains("dark");
+      const color = dark ? "#fcd34d" : "#000000";
+      try {
+        el.style.setProperty("color", color, "important");
+        el.style.setProperty("fill", color, "important");
+        el.style.setProperty("stroke", color, "important");
+        el.querySelectorAll("*").forEach((child) => {
+          child.style.setProperty("color", color, "important");
+          child.style.setProperty("fill", color, "important");
+          child.style.setProperty("stroke", color, "important");
+        });
+      } catch (err) {
+        // ignore in older browsers
+      }
+    };
+
+    applyColor();
+    const obs = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.type === "attributes" && m.attributeName === "class") {
+          applyColor();
+          break;
+        }
+      }
+    });
+    obs.observe(document.documentElement, { attributes: true });
+    return () => obs.disconnect();
+  }, []);
+
   if (!isAdmin) {
     return (
       <div className="max-w-2xl mx-auto p-12 text-center">
@@ -102,7 +137,7 @@ export default function Admin() {
           <button onClick={() => navigate("/logs")} className="btn-ghost border border-rule rounded-sm px-3 py-2 text-sm">
             <ScrollText size={14} /> Log di sistema
           </button>
-          <button onClick={resetTodayData} className="btn-ghost border border-rule rounded-sm px-3 py-2 text-sm !text-black dark:!text-amber-300 admin-reset-btn">
+          <button ref={resetBtnRef} onClick={resetTodayData} className="btn-ghost border border-rule rounded-sm px-3 py-2 text-sm !text-black dark:!text-amber-300 admin-reset-btn">
             <AlertTriangle size={14} /> Reset dati odierni
           </button>
           <button onClick={load} disabled={busy} className="btn-primary">
