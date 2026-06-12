@@ -930,7 +930,7 @@ async def search(
     pdf_ids: Optional[str] = Query(None),
     user_id: str = Depends(get_current_user_id),
 ):
-    raw_q = q.strip()
+    raw_q = clean_pdf_text(q).strip()
     if not raw_q:
         return {"results": []}
 
