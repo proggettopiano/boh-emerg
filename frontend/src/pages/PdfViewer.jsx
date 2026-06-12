@@ -78,6 +78,7 @@ function rangeFromScroll(scrollY, viewportHeight, slotHeight, numPages, toolbarO
 export default function PdfViewer() {
   const { id } = useParams();
   const [params] = useSearchParams();
+  const shareToken = params.get("share") || params.get("share_token") || "";
   const rawPageParam = params.get("page");
   const pageParam = (rawPageParam && rawPageParam !== "undefined" && rawPageParam !== "null") ? rawPageParam : "";
   const _parsedPage = parseInt(pageParam, 10);
@@ -105,7 +106,7 @@ export default function PdfViewer() {
   const [renderGeneration, setRenderGeneration] = useState(0);
   const initialSearchScrollRef = useRef(false);
   const token = getAuthToken();
-  const fileUrl = `${API}/pdfs/${id}/file`;
+  const fileUrl = `${API}/pdfs/${id}/file${shareToken ? `?share_token=${encodeURIComponent(shareToken)}` : ""}`;
   const fileObj = useMemo(() => ({
     url: fileUrl,
     httpHeaders: token ? { Authorization: `Bearer ${token}` } : undefined,
@@ -158,6 +159,7 @@ export default function PdfViewer() {
     pdfId: id,
     initialPage,
     initialQuery,
+    shareToken,
     numPages,
     slotHeight,
     getToolbarOffset,
@@ -197,7 +199,7 @@ export default function PdfViewer() {
 
   useEffect(() => {
     const ctrl = new AbortController();
-    api.get(`/pdfs/${id}`, { signal: ctrl.signal })
+    api.get(`/pdfs/${id}`, { params: shareToken ? { share_token: shareToken } : undefined, signal: ctrl.signal })
       .then((r) => {
         if (mountedRef.current) setMeta(r.data);
       })
@@ -205,7 +207,7 @@ export default function PdfViewer() {
         if (!isCanceled(e) && mountedRef.current) setError(e.response?.data?.detail || "PDF non trovato");
       });
     return () => ctrl.abort();
-  }, [id]);
+  }, [id, shareToken]);
 
   /* eslint-disable react-hooks/exhaustive-deps */
   // This effect intentionally avoids page/currentPageRef in its dependency list to prevent
@@ -335,7 +337,7 @@ export default function PdfViewer() {
     if (search.matchPages && search.matchPages.length > 0) {
       const target = search.matchPages[0];
       let attempts = 0;
-      page.goToPage(target);
+      page.scrollToPage(target, "auto");
       const tryScrollOnTarget = () => {
         if (cancelled) return;
         attempts += 1;
@@ -364,7 +366,7 @@ export default function PdfViewer() {
         if (!el) continue;
         const match = el.querySelector("mark.hl");
         if (match) {
-          if (p !== currentPageRef.current) page.goToPage(p);
+          if (p !== currentPageRef.current) page.scrollToPage(p, "auto");
           try { match.scrollIntoView({ behavior: "auto", block: "center" }); } catch (err) {}
           initialSearchScrollRef.current = true;
           return;

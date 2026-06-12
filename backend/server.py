@@ -487,12 +487,17 @@ async def get_pdf_status(pdf_id: str, user_id: str = Depends(get_current_user_id
     return p
 
 @api.get("/pdfs/{pdf_id}")
-async def get_pdf(pdf_id: str, user_id: str = Depends(get_current_user_id)):
+async def get_pdf(pdf_id: str, user_id: Optional[str] = Depends(get_optional_user_id), share_token: Optional[str] = Query(None)):
     p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
-    if not p: raise HTTPException(status_code=404, detail="PDF non trovato")
-    # Check access
-    can_access = await _user_can_access_pdf(user_id, pdf_id)
-    if not can_access: raise HTTPException(status_code=403, detail="Accesso negato")
+    if not p:
+        raise HTTPException(status_code=404, detail="PDF non trovato")
+
+    can_access = await _user_can_access_pdf(user_id, pdf_id, share_token)
+    if not can_access:
+        if p.get("is_protected") and not user_id:
+            raise HTTPException(status_code=401, detail="Protetto")
+        raise HTTPException(status_code=403, detail="Accesso negato")
+
     return _serialize_pdf(p)
 
 @api.patch("/pdfs/{pdf_id}")
@@ -539,14 +544,16 @@ async def delete_pdf(pdf_id: str, user_id: str = Depends(get_current_user_id)):
     return {"ok": True}
 
 @api.get("/pdfs/{pdf_id}/file")
-async def get_pdf_file(pdf_id: str, user_id: Optional[str] = Depends(get_optional_user_id)):
+async def get_pdf_file(pdf_id: str, user_id: Optional[str] = Depends(get_optional_user_id), share_token: Optional[str] = Query(None)):
     p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
-    if not p: raise HTTPException(status_code=404, detail="PDF non trovato")
-    if p.get("is_protected") and not user_id: raise HTTPException(status_code=401, detail="Protetto")
-    # Check access
-    if user_id:
-        can_access = await _user_can_access_pdf(user_id, pdf_id)
-        if not can_access: raise HTTPException(status_code=403, detail="Accesso negato")
+    if not p:
+        raise HTTPException(status_code=404, detail="PDF non trovato")
+
+    can_access = await _user_can_access_pdf(user_id, pdf_id, share_token)
+    if not can_access:
+        if p.get("is_protected") and not user_id:
+            raise HTTPException(status_code=401, detail="Protetto")
+        raise HTTPException(status_code=403, detail="Accesso negato")
     # Diagnostic logging: capture metadata and whether local file exists
     file_path = p.get("file_path")
     try:
@@ -889,22 +896,32 @@ async def share_pdf(pdf_id: str, user_id: str = Depends(get_current_user_id)):
     return {"ok": True, "share_token": share_token, "share_url": f"/shared/{share_token}"}
 
 
-async def _user_can_access_pdf(user_id: str, pdf_id: str) -> bool:
+async def _user_can_access_pdf(user_id: Optional[str], pdf_id: str, share_token: Optional[str] = None) -> bool:
     """
     Access rules:
     - admin sees everything
     - approved users see everything
+    - shared-link viewers may access the PDF if the share token belongs to that PDF
     - otherwise no access
     """
-    u = await db.users.find_one({"user_id": user_id})
-    if not u:
-        return False
+    if user_id:
+        u = await db.users.find_one({"user_id": user_id})
+        if not u:
+            return False
 
-    if u.get("is_admin", False) or u.get("email", "").lower() == ADMIN_EMAIL:
-        return True
+        if u.get("is_admin", False) or u.get("email", "").lower() == ADMIN_EMAIL:
+            return True
 
-    approved = await db.access_requests.find_one({"email": u.get("email", "").lower(), "status": "approved"})
-    return bool(approved)
+        approved = await db.access_requests.find_one({"email": u.get("email", "").lower(), "status": "approved"})
+        if approved:
+            return True
+
+    if share_token:
+        lib = await db.shared_libraries.find_one({"share_token": share_token, "pdf_ids": pdf_id}, {"_id": 0})
+        if lib:
+            return True
+
+    return False
 
 # ----------------- Search -----------------
 
@@ -928,13 +945,27 @@ def format_search_result(p: dict, pg: dict, q: str, score: int, snippet: Optiona
 async def search(
     q: str = Query(..., min_length=1),
     pdf_ids: Optional[str] = Query(None),
-    user_id: str = Depends(get_current_user_id),
+    share_token: Optional[str] = Query(None),
+    user_id: Optional[str] = Depends(get_optional_user_id),
 ):
     raw_q = clean_pdf_text(q).strip()
     if not raw_q:
         return {"results": []}
 
+    if not user_id and not share_token:
+        raise HTTPException(status_code=401, detail="Login richiesto")
+
     pdf_ids_list = [pid.strip() for pid in (pdf_ids or "").split(",") if pid.strip()] or None
+    if share_token:
+        lib = await db.shared_libraries.find_one({"share_token": share_token}, {"_id": 0, "pdf_ids": 1})
+        if not lib:
+            raise HTTPException(status_code=404, detail="Link non valido o rimosso")
+        allowed_pdf_ids = set(lib.get("pdf_ids", []))
+        if pdf_ids_list:
+            pdf_ids_list = [pid for pid in pdf_ids_list if pid in allowed_pdf_ids]
+        else:
+            pdf_ids_list = list(allowed_pdf_ids)
+
     results = []
     seen = set()  # Per evitare duplicati (stessa pagina trovata con logiche diverse)
 
