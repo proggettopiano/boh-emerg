@@ -295,6 +295,61 @@ async def me(user_id: str = Depends(get_current_user_id)):
 async def get_master_drive():
     return await db.config.find_one({"key": "master_drive"})
 
+
+async def _resolve_drive_refresh_token(pdf_record: dict) -> Optional[str]:
+    """Return the best available Google Drive refresh token for a PDF backup.
+
+    Prefer the owner token, but fall back to the master Drive token when the
+    owner token is missing or invalid, which helps recover PDFs after a revoked
+    refresh token.
+    """
+    refresh = None
+
+    if pdf_record.get("drive_owner") == "master":
+        master = await get_master_drive()
+        refresh = master.get("refresh_token") if master else None
+        return refresh
+
+    owner = await db.users.find_one({"user_id": pdf_record.get("owner_id")}, {"_id": 0})
+    refresh = (owner or {}).get("google_refresh_token")
+
+    if refresh:
+        return refresh
+
+    master = await get_master_drive()
+    return master.get("refresh_token") if master else None
+
+
+async def _download_from_drive_with_fallback(pdf_record: dict) -> bytes:
+    """Download a PDF backup from Drive, trying the owner token first and then
+    master Drive as a fallback if the owner token is invalid or revoked.
+    """
+    primary = await _resolve_drive_refresh_token(pdf_record)
+    candidates = [primary] if primary else []
+
+    master = await get_master_drive()
+    master_token = master.get("refresh_token") if master else None
+    if master_token and master_token not in candidates:
+        candidates.append(master_token)
+
+    last_error = None
+    for token in candidates:
+        try:
+            return await asyncio.to_thread(gi.download_from_drive, token, pdf_record["drive_file_id"])
+        except Exception as exc:
+            last_error = exc
+            await log_event(
+                "pdf.error",
+                f"Drive download fallback failed with token source: {type(exc).__name__}: {exc}",
+                user_id=pdf_record.get("owner_id"),
+                level="error",
+                meta={"pdf_id": pdf_record.get("id"), "drive_file_id": pdf_record.get("drive_file_id"), "stage": "drive_download_fallback"},
+            )
+
+    if last_error:
+        raise last_error
+    raise RuntimeError("Nessun token Drive disponibile per il recupero del PDF")
+
 @api.get("/backup/status")
 async def backup_status(user_id: str = Depends(get_current_user_id)):
     master = await get_master_drive()
@@ -533,33 +588,24 @@ async def get_pdf_file(pdf_id: str, user_id: Optional[str] = Depends(get_optiona
     )
 
     if p.get("drive_file_id"):
-        refresh = None
-        if p.get("drive_owner") == "master":
-            master = await get_master_drive()
-            refresh = master.get("refresh_token") if master else None
-        else:
-            owner = await db.users.find_one({"user_id": p["owner_id"]}, {"_id": 0})
-            refresh = (owner or {}).get("google_refresh_token")
-
-        if refresh:
-            try:
-                data = await asyncio.to_thread(gi.download_from_drive, refresh, p["drive_file_id"])
-                new_path = UPLOAD_DIR / Path(file_path).name
-                new_path.parent.mkdir(parents=True, exist_ok=True)
-                new_path.write_bytes(data)
-                await db.pdfs.update_one({"id": pdf_id}, {"$set": {
-                    "file_path": str(new_path),
-                    "storage_type": "local",
-                    "synced_at": iso_now(),
-                }})
-                await log_event(
-                    "pdf.drive_restore",
-                    "PDF ripristinato da Drive",
-                    user_id=user_id,
-                    meta={"pdf_id": pdf_id, "drive_file_id": p["drive_file_id"], "file_path": str(new_path)},
-                )
-                return FileResponse(new_path, media_type="application/pdf", filename=p["filename"])
-            except Exception as e:
+        try:
+            data = await _download_from_drive_with_fallback(p)
+            new_path = UPLOAD_DIR / Path(file_path).name
+            new_path.parent.mkdir(parents=True, exist_ok=True)
+            new_path.write_bytes(data)
+            await db.pdfs.update_one({"id": pdf_id}, {"$set": {
+                "file_path": str(new_path),
+                "storage_type": "local",
+                "synced_at": iso_now(),
+            }})
+            await log_event(
+                "pdf.drive_restore",
+                "PDF ripristinato da Drive",
+                user_id=user_id,
+                meta={"pdf_id": pdf_id, "drive_file_id": p["drive_file_id"], "file_path": str(new_path)},
+            )
+            return FileResponse(new_path, media_type="application/pdf", filename=p["filename"])
+        except Exception as e:
                 await log_event(
                     "pdf.debug",
                     "PDF_DRIVE_FALLBACK_ERROR",
@@ -591,19 +637,8 @@ async def reload_pdf(pdf_id: str, user_id: str = Depends(get_current_user_id)):
     if not drive_file_id:
         raise HTTPException(status_code=404, detail="Backup Drive non disponibile")
 
-    refresh = None
-    if p.get("drive_owner") == "master":
-        master = await get_master_drive()
-        refresh = master.get("refresh_token") if master else None
-    else:
-        owner = await db.users.find_one({"user_id": p["owner_id"]}, {"_id": 0})
-        refresh = (owner or {}).get("google_refresh_token")
-
-    if not refresh:
-        raise HTTPException(status_code=503, detail="Impossibile ottenere token Drive")
-
     try:
-        data = await asyncio.to_thread(gi.download_from_drive, refresh, drive_file_id)
+        data = await _download_from_drive_with_fallback(p)
         new_path = UPLOAD_DIR / Path(p["file_path"]).name
         new_path.parent.mkdir(parents=True, exist_ok=True)
         new_path.write_bytes(data)
@@ -748,17 +783,9 @@ async def import_shared_pdf(pdf_id: str, user_id: str = Depends(get_current_user
     if src.exists():
         data = src.read_bytes()
     elif p.get("drive_file_id"):
-        refresh = None
-        if p.get("drive_owner") == "master":
-            master = await get_master_drive()
-            refresh = master.get("refresh_token") if master else None
-        else:
-            owner = await db.users.find_one({"user_id": p["owner_id"]}, {"_id": 0})
-            refresh = (owner or {}).get("google_refresh_token")
-        if refresh:
-            try:
-                data = await asyncio.to_thread(gi.download_from_drive, refresh, p["drive_file_id"])
-            except Exception as e:
+        try:
+            data = await _download_from_drive_with_fallback(p)
+        except Exception as e:
                 await log_event("pdf.error", f"Import da Drive fallito: {e}", user_id=user_id, level="error", meta={"pdf_id": pdf_id, "drive_file_id": p.get("drive_file_id"), "stage": "import_drive_download"})
     if data is None:
         raise HTTPException(status_code=404, detail="File mancante")
