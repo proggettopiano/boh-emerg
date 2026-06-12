@@ -1,9 +1,33 @@
 """PDF text extraction logic based on stable-pdf-v1 (NO OCR)."""
 import logging
+import re
+import unicodedata
 from typing import List, Tuple
 import fitz  # PyMuPDF
 
 logger = logging.getLogger(__name__)
+
+MUSIC_SYMBOL_RE = re.compile(r"[\u0000-\u001F\u007F]+")
+
+
+def clean_pdf_text(text: str) -> str:
+    """Keep readable text and remove music-notation / OCR noise artifacts."""
+    if not text:
+        return ""
+
+    text = text.replace("\xa0", " ")
+    text = text.replace("\u00a0", " ")
+    text = "".join(ch for ch in text if not unicodedata.category(ch).startswith("C"))
+
+    # Remove common music-notation glyphs and non-text symbols.
+    text = text.replace("œ", " ").replace("Œ", " ").replace("˙", " ")
+    text = text.replace("…", " ").replace("…", " ")
+
+    # Keep letters, numbers and standard punctuation only.
+    text = re.sub(r"[^\w\s.,;:!?()'\-\/#&%@]+", " ", text, flags=re.UNICODE)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
 
 def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool, List[str]]:
     """Extract text from each page. OCR logic removed for stability.
@@ -30,7 +54,7 @@ def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool, List[str]]:
         try:
             page = doc[page_num]
             text = page.get_text("text") or ""
-            pages_text.append(text.strip())
+            pages_text.append(clean_pdf_text(text))
         except Exception as e:
             logger.warning(f"Failed to extract page {page_num + 1}: {e}")
             pages_text.append("")
