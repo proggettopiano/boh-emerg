@@ -90,13 +90,19 @@ export default function Admin() {
       const dark = document.documentElement.classList.contains("dark");
       const color = dark ? "#fcd34d" : "#000000";
       try {
+        // Set text color on the button (for label)
         el.style.setProperty("color", color, "important");
-        el.style.setProperty("fill", color, "important");
-        el.style.setProperty("stroke", color, "important");
-        el.querySelectorAll("*").forEach((child) => {
-          child.style.setProperty("color", color, "important");
-          child.style.setProperty("fill", color, "important");
-          child.style.setProperty("stroke", color, "important");
+
+        // For SVG elements: set stroke to color and ensure fill is none
+        const all = el.querySelectorAll("*");
+        all.forEach((child) => {
+          // Use namespace check to detect SVG elements
+          if (child instanceof SVGElement) {
+            child.style.setProperty("stroke", color, "important");
+            child.style.setProperty("fill", "none", "important");
+          } else {
+            child.style.setProperty("color", color, "important");
+          }
         });
       } catch (err) {
         // ignore in older browsers
