@@ -120,6 +120,11 @@ api = APIRouter(prefix="/api")
 logger = logging.getLogger("scorelib")
 logging.basicConfig(level=logging.INFO)
 
+if not RESEND_API_KEY:
+    logger.warning("RESEND_API_KEY non configurata: invio email disabilitato.")
+elif "scorelib.app" in RESEND_FROM_EMAIL:
+    logger.warning("RESEND_FROM_EMAIL usa dominio scorelib.app. Assicurati che il dominio sia verificato in Resend.")
+
 # ----------------- Helpers -----------------
 def iso_now(): return datetime.now(timezone.utc).isoformat()
 
