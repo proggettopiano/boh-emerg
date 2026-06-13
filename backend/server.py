@@ -174,24 +174,20 @@ async def send_resend_event(event_name: str, email: str, properties: Optional[Di
         logger.warning("RESEND_API_KEY non configurata: evento non inviato %s a %s", event_name, email)
         return
     payload = {
-        "name": event_name,
+        "event": event_name,
         "email": email,
-        "properties": properties or {},
+        "payload": properties or {},
     }
-    logger.info("Invio evento Resend %s a %s properties=%s", event_name, email, payload["properties"])
+    logger.info("Invio evento Resend %s a %s payload=%s", event_name, email, payload["payload"])
     try:
-        if hasattr(resend, "Events") and callable(getattr(resend.Events, "create", None)):
-            await asyncio.to_thread(resend.Events.create, payload)
-            logger.info("Evento Resend %s inviato a %s tramite SDK", event_name, email)
-            return
         headers = {
             "Authorization": f"Bearer {RESEND_API_KEY}",
             "Content-Type": "application/json",
         }
         async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post("https://api.resend.com/events", headers=headers, json=payload)
+            resp = await client.post("https://api.resend.com/events/send", headers=headers, json=payload)
             resp.raise_for_status()
-            logger.info("Evento Resend %s inviato a %s tramite HTTP fallback response=%s", event_name, email, resp.text)
+            logger.info("Evento Resend %s inviato a %s response=%s", event_name, email, resp.text)
     except Exception as exc:
         logger.error("Errore invio evento Resend %s per %s: %s", event_name, email, exc)
 
