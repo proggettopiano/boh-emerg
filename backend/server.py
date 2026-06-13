@@ -10,7 +10,7 @@ import asyncio
 import psutil
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict, Any
 
@@ -26,6 +26,7 @@ from slowapi.util import get_remote_address
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 import httpx
+import resend
 
 from auth_utils import (
     hash_password, verify_password, create_jwt, decode_jwt,
@@ -51,12 +52,18 @@ APP_NAME = os.environ.get("APP_NAME", "ScoreLib")
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@scorelib.app").lower()
 ADMIN_RESET_PASSWORD = os.environ.get("ADMIN_LOG_PASSWORD")
 WORKER_SECRET = os.environ.get("WORKER_SECRET", "")
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "").strip()
+RESEND_FROM_EMAIL = os.environ.get("RESEND_FROM_EMAIL", f"{APP_NAME} <no-reply@scorelib.app>")
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://scorelib.vercel.app")
+if RESEND_API_KEY:
+    resend.api_key = RESEND_API_KEY
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await ensure_indexes()
     await seed_admin()
     await migrate_single_owner()
+    asyncio.create_task(access_request_reminder_loop())
     
     # Startup job recovery
     stuck_jobs = await db.upload_jobs.find({"status": {"$in": ["processing", "queued"]}}).to_list(1000)
@@ -134,6 +141,85 @@ async def log_event(event_type: str, description: str, user_id: Optional[str] = 
     await db.app_logs.insert_one(doc)
     log_func = getattr(logger, level.lower(), logger.info)
     log_func(f"[{event_type.upper()}] {description} (user={user_id})")
+
+async def send_resend_email(to_email: str, subject: str, html: str):
+    if not RESEND_API_KEY:
+        logger.warning("RESEND_API_KEY non configurata: email non inviata a %s", to_email)
+        return
+    params = {
+        "from": RESEND_FROM_EMAIL,
+        "to": [to_email],
+        "subject": subject,
+        "html": html,
+    }
+    try:
+        await asyncio.to_thread(resend.Emails.send, params)
+        logger.info("Email inviata a %s subject=%s", to_email, subject)
+    except Exception as exc:
+        logger.error("Errore invio email a %s: %s", to_email, exc)
+
+async def send_access_request_outcome_email(email: str, status: str, name: Optional[str] = None):
+    safe_name = name or email
+    if status == "approved":
+        subject = "Esito richiesta di accesso ScoreLib"
+        html = f"""
+            <h1>Richiesta approvata</h1>
+            <p>Ciao {safe_name},</p>
+            <p>La tua richiesta di accesso per <strong>{email}</strong> è stata approvata.</p>
+            <p>Potrai effettuare il login con il tuo indirizzo email.</p>
+            <p>Grazie,<br />ScoreLib</p>
+        """
+    else:
+        subject = "Esito richiesta di accesso ScoreLib"
+        html = f"""
+            <h1>Richiesta rifiutata</h1>
+            <p>Ciao {safe_name},</p>
+            <p>La tua richiesta di accesso per <strong>{email}</strong> non è stata approvata.</p>
+            <p>Se desideri riprovare, invia nuovamente la richiesta di accesso.</p>
+            <p>Grazie,<br />ScoreLib</p>
+        """
+    await send_resend_email(email, subject, html)
+
+async def send_access_request_reminder_email(email: str, name: Optional[str] = None):
+    safe_name = name or email
+    subject = "Ricorda: completa la tua richiesta di accesso a ScoreLib"
+    html = f"""
+        <h1>Richiesta ancora in attesa</h1>
+        <p>Ciao {safe_name},</p>
+        <p>La tua richiesta di accesso per <strong>{email}</strong> è ancora in stato di attesa.</p>
+        <p>Se desideri utilizzare ScoreLib, ti preghiamo di inviare nuovamente la richiesta da <a href=\"{FRONTEND_URL}\">qui</a>.</p>
+        <p>Grazie,<br />ScoreLib</p>
+    """
+    await send_resend_email(email, subject, html)
+
+async def send_pending_access_request_reminders():
+    threshold = datetime.now(timezone.utc) - timedelta(days=3)
+    cutoff = threshold.isoformat()
+    query = {
+        "status": "pending",
+        "created_at": {"$lte": cutoff},
+        "$or": [
+            {"reminder_sent_at": {"$exists": False}},
+            {"reminder_sent_at": None}
+        ],
+    }
+    reqs = await db.access_requests.find(query).to_list(1000)
+    for req in reqs:
+        try:
+            await send_access_request_reminder_email(req["email"], req.get("name"))
+            await db.access_requests.update_one(
+                {"_id": req["_id"]},
+                {"$set": {"reminder_sent_at": iso_now()}}
+            )
+            logger.info("Promemoria inviato per richiesta di accesso %s", req["email"])
+        except Exception as exc:
+            logger.error("Errore invio promemoria access request per %s: %s", req["email"], exc)
+
+async def access_request_reminder_loop():
+    await send_pending_access_request_reminders()
+    while True:
+        await asyncio.sleep(24 * 3600)
+        await send_pending_access_request_reminders()
 
 async def ensure_indexes():
     async def safe_create_index(collection, keys, **kwargs):
@@ -280,7 +366,10 @@ async def request_access(payload: AccessRequestIn, request: Request):
     ip = get_client_ip(request)
     await db.access_requests.update_one(
         {"email": email},
-        {"$set": {"name": payload.name, "email": email, "ip": ip, "status": "pending", "created_at": iso_now()}},
+        {
+            "$set": {"name": payload.name, "email": email, "ip": ip, "status": "pending", "created_at": iso_now()},
+            "$unset": {"reminder_sent_at": ""}
+        },
         upsert=True
     )
     return {"message": "Richiesta inviata."}
@@ -1061,15 +1150,19 @@ async def list_access_requests(_: str = Depends(require_admin)):
 @api.post("/admin/access-requests/approve")
 async def approve_access(payload: dict, user_id: str = Depends(require_admin)):
     email = payload["email"].lower().strip()
+    req = await db.access_requests.find_one({"email": email})
     await db.access_requests.update_one({"email": email}, {"$set": {"status": "approved", "email": email}})
     await log_event("access.approved", f"Richiesta accesso approvata: {email}", user_id=user_id, meta={"email": email})
+    asyncio.create_task(send_access_request_outcome_email(email, "approved", req.get("name") if req else None))
     return {"ok": True}
 
 @api.post("/admin/access-requests/reject")
 async def reject_access(payload: dict, user_id: str = Depends(require_admin)):
     email = payload["email"].lower().strip()
+    req = await db.access_requests.find_one({"email": email})
     await db.access_requests.update_one({"email": email}, {"$set": {"status": "rejected", "email": email}})
     await log_event("access.rejected", f"Richiesta accesso rifiutata: {email}", user_id=user_id, meta={"email": email})
+    asyncio.create_task(send_access_request_outcome_email(email, "rejected", req.get("name") if req else None))
     return {"ok": True}
 
 @api.get("/admin/master-drive/status")
