@@ -164,10 +164,16 @@ async def send_resend_email(to_email: str, subject: str, html: str):
         }
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post("https://api.resend.com/emails", headers=headers, json=params)
+            logger.info("Resend API response status=%s body=%s", resp.status_code, resp.text)
             resp.raise_for_status()
             logger.info("Email inviata a %s subject=%s tramite HTTP fallback response=%s", to_email, subject, resp.text)
+    except httpx.HTTPStatusError as exc:
+        response = exc.response
+        body = response.text if response is not None else "<no response>"
+        status_code = response.status_code if response is not None else "?"
+        logger.error("Errore invio email a %s subject=%s status=%s body=%s", to_email, subject, status_code, body)
     except Exception as exc:
-        logger.error("Errore invio email a %s subject=%s: %s", to_email, subject, exc)
+        logger.exception("Errore invio email a %s subject=%s", to_email, subject)
 
 async def send_access_request_outcome_email(email: str, status: str, name: Optional[str] = None):
     safe_name = name or email
