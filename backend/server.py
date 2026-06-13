@@ -152,14 +152,52 @@ async def send_resend_email(to_email: str, subject: str, html: str):
         "subject": subject,
         "html": html,
     }
+    logger.info("Invio email Resend a %s subject=%s", to_email, subject)
     try:
-        await asyncio.to_thread(resend.Emails.send, params)
-        logger.info("Email inviata a %s subject=%s", to_email, subject)
+        if hasattr(resend, "Emails") and callable(getattr(resend.Emails, "send", None)):
+            await asyncio.to_thread(resend.Emails.send, params)
+            logger.info("Email inviata a %s subject=%s tramite SDK", to_email, subject)
+            return
+        headers = {
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post("https://api.resend.com/emails", headers=headers, json=params)
+            resp.raise_for_status()
+            logger.info("Email inviata a %s subject=%s tramite HTTP fallback response=%s", to_email, subject, resp.text)
     except Exception as exc:
-        logger.error("Errore invio email a %s: %s", to_email, exc)
+        logger.error("Errore invio email a %s subject=%s: %s", to_email, subject, exc)
+
+async def send_resend_event(event_name: str, email: str, properties: Optional[Dict[str, Any]] = None):
+    if not RESEND_API_KEY:
+        logger.warning("RESEND_API_KEY non configurata: evento non inviato %s a %s", event_name, email)
+        return
+    payload = {
+        "name": event_name,
+        "email": email,
+        "properties": properties or {},
+    }
+    logger.info("Invio evento Resend %s a %s properties=%s", event_name, email, payload["properties"])
+    try:
+        if hasattr(resend, "Events") and callable(getattr(resend.Events, "create", None)):
+            await asyncio.to_thread(resend.Events.create, payload)
+            logger.info("Evento Resend %s inviato a %s tramite SDK", event_name, email)
+            return
+        headers = {
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post("https://api.resend.com/events", headers=headers, json=payload)
+            resp.raise_for_status()
+            logger.info("Evento Resend %s inviato a %s tramite HTTP fallback response=%s", event_name, email, resp.text)
+    except Exception as exc:
+        logger.error("Errore invio evento Resend %s per %s: %s", event_name, email, exc)
 
 async def send_access_request_outcome_email(email: str, status: str, name: Optional[str] = None):
     safe_name = name or email
+    logger.info("send_access_request_outcome_email status=%s email=%s name=%s", status, email, safe_name)
     if status == "approved":
         subject = "Esito richiesta di accesso ScoreLib"
         html = f"""
@@ -182,6 +220,7 @@ async def send_access_request_outcome_email(email: str, status: str, name: Optio
 
 async def send_access_request_reminder_email(email: str, name: Optional[str] = None):
     safe_name = name or email
+    logger.info("send_access_request_reminder_email email=%s name=%s", email, safe_name)
     subject = "Ricorda: completa la tua richiesta di accesso a ScoreLib"
     html = f"""
         <h1>Richiesta ancora in attesa</h1>
@@ -203,15 +242,18 @@ async def send_pending_access_request_reminders():
             {"reminder_sent_at": None}
         ],
     }
+    logger.info("Ricerca richieste accesso pending oltre 3 giorni cutoff=%s", cutoff)
     reqs = await db.access_requests.find(query).to_list(1000)
+    logger.info("Trovate %d richieste pending da ricordare", len(reqs))
     for req in reqs:
         try:
             await send_access_request_reminder_email(req["email"], req.get("name"))
+            await send_resend_event("access_reminder", req["email"], {"name": req.get("name"), "email": req["email"]})
             await db.access_requests.update_one(
                 {"_id": req["_id"]},
                 {"$set": {"reminder_sent_at": iso_now()}}
             )
-            logger.info("Promemoria inviato per richiesta di accesso %s", req["email"])
+            logger.info("Promemoria inviato e trigger access_reminder per %s", req["email"])
         except Exception as exc:
             logger.error("Errore invio promemoria access request per %s: %s", req["email"], exc)
 
@@ -1154,6 +1196,8 @@ async def approve_access(payload: dict, user_id: str = Depends(require_admin)):
     await db.access_requests.update_one({"email": email}, {"$set": {"status": "approved", "email": email}})
     await log_event("access.approved", f"Richiesta accesso approvata: {email}", user_id=user_id, meta={"email": email})
     asyncio.create_task(send_access_request_outcome_email(email, "approved", req.get("name") if req else None))
+    asyncio.create_task(send_resend_event("access_approved", email, {"name": req.get("name") if req else None, "email": email}))
+    logger.info("Trigger evento access_approved creato per %s", email)
     return {"ok": True}
 
 @api.post("/admin/access-requests/reject")
@@ -1163,6 +1207,8 @@ async def reject_access(payload: dict, user_id: str = Depends(require_admin)):
     await db.access_requests.update_one({"email": email}, {"$set": {"status": "rejected", "email": email}})
     await log_event("access.rejected", f"Richiesta accesso rifiutata: {email}", user_id=user_id, meta={"email": email})
     asyncio.create_task(send_access_request_outcome_email(email, "rejected", req.get("name") if req else None))
+    asyncio.create_task(send_resend_event("access_rejected", email, {"name": req.get("name") if req else None, "email": email}))
+    logger.info("Trigger evento access_rejected creato per %s", email)
     return {"ok": True}
 
 @api.get("/admin/master-drive/status")
