@@ -216,6 +216,29 @@ def test_clean_pdf_text_keeps_common_words_while_removing_chords():
     assert "son sulla via" in cleaned
 
 
+def test_clean_pdf_text_preserves_apostrophes_and_normalizes_typographic_quotes():
+    from pdf_processor import clean_pdf_text
+
+    text = "L’amore è qui"
+
+    cleaned = clean_pdf_text(text)
+
+    assert "L'amore" in cleaned
+    assert "è qui" in cleaned
+
+
+def test_clean_pdf_text_removes_decorative_number_tokens():
+    from pdf_processor import clean_pdf_text
+
+    text = "Canto ~ 542 ~ della domenica"
+
+    cleaned = clean_pdf_text(text)
+
+    assert "~ 542 ~" not in cleaned
+    assert "Canto" in cleaned
+    assert "domenica" in cleaned
+
+
 # ---------------- SEARCH ----------------
 class TestSearch:
     def test_search_returns_results(self, api_client, auth_headers, uploaded_pdf):
