@@ -361,7 +361,9 @@ export default function PdfViewer() {
     if (search.matchPages && search.matchPages.length > 0 && !explicitPageRequested) {
       const target = search.matchPages[0];
       let attempts = 0;
-      page.scrollToPage(target, "auto");
+      if (target !== currentPageRef.current) {
+        page.scrollToPage(target, "auto");
+      }
       const tryScrollOnTarget = () => {
         if (cancelled) return;
         attempts += 1;
@@ -369,7 +371,6 @@ export default function PdfViewer() {
         if (el) {
           const match = el.querySelector("mark.hl");
           if (match) {
-            try { match.scrollIntoView({ behavior: "auto", block: "center" }); } catch (e) {}
             initialSearchScrollRef.current = true;
             return;
           }
@@ -392,7 +393,6 @@ export default function PdfViewer() {
         const match = el.querySelector("mark.hl");
         if (match) {
           if (p !== currentPageRef.current) page.scrollToPage(p, "auto");
-          try { match.scrollIntoView({ behavior: "auto", block: "center" }); } catch (err) {}
           initialSearchScrollRef.current = true;
           return;
         }
