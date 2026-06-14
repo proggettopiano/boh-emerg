@@ -1360,13 +1360,16 @@ async def process_pdf_job(job_id):
         pdf = await db.pdfs.find_one({"id": job["pdf_id"]})
         fpath = Path(pdf["file_path"])
         if fpath.exists():
-            pages_text, total, _, page_labels = extract_pages(fpath.read_bytes())
+            pages_text, total, used_ocr, page_labels = extract_pages(fpath.read_bytes())
+            logger.info(f"PDF extraction for {pdf['id']}: {total} pages, OCR used: {used_ocr}")
             for i, txt in enumerate(pages_text):
+                logger.info(f"  Page {i+1}: {len(txt)} chars, preview: {txt[:80] if txt else '(empty)'}")
                 await db.pdf_pages.update_one(
                     {"pdf_id": pdf["id"], "page": i+1},
                     {"$set": {"text": txt, "page_label": page_labels[i]}},
                     upsert=True,
                 )
+            logger.info(f"PDF {pdf['id']} indexing complete")
             await db.pdfs.update_one({"id": pdf["id"]}, {"$set": {"status": "ready", "pages": total, "page_labels": page_labels}})
             # Backup to master Drive if configured and not already synced
             master = await get_master_drive()
