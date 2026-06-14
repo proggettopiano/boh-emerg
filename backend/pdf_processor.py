@@ -83,18 +83,21 @@ def _get_google_vision_auth() -> Tuple[str, str]:
     if api_key:
         return "key", api_key
 
-    # Support Application Default Credentials JSON via env var
-    adc_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-    if adc_path and os.path.isfile(adc_path):
-        try:
-            with open(adc_path, "r", encoding="utf-8") as f:
-                creds_json = json.load(f)
-            client_email = creds_json.get("client_email")
-            private_key = creds_json.get("private_key")
-            if client_email and private_key:
-                return "adc", adc_path
-        except Exception as exc:
-            logger.warning("Failed to read GOOGLE_APPLICATION_CREDENTIALS: %s", exc)
+    # Support GOOGLE_APPLICATION_CREDENTIALS as either a service account JSON path or an API key.
+    adc_value = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if adc_value:
+        if adc_value.startswith("AIza"):
+            return "key", adc_value
+        if os.path.isfile(adc_value):
+            try:
+                with open(adc_value, "r", encoding="utf-8") as f:
+                    creds_json = json.load(f)
+                client_email = creds_json.get("client_email")
+                private_key = creds_json.get("private_key")
+                if client_email and private_key:
+                    return "adc", adc_value
+            except Exception as exc:
+                logger.warning("Failed to read GOOGLE_APPLICATION_CREDENTIALS: %s", exc)
 
     try:
         import google.auth
