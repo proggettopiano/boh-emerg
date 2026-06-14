@@ -1,11 +1,22 @@
-"""PDF text extraction logic based on stable-pdf-v1 (NO OCR)."""
+"""PDF text extraction logic with safe OCR fallback.
+
+Uses Google Vision OCR when configured in production, and falls back to local
+Tesseract only if cloud OCR is not available.
+"""
+import base64
+import io
 import logging
+import os
 import re
+import shutil
 import unicodedata
 from typing import List, Tuple
 import fitz  # PyMuPDF
+import httpx
 
 logger = logging.getLogger(__name__)
+
+_OCR_NOT_CONFIGURED_WARNING_SHOWN = False
 
 MUSIC_SYMBOL_RE = re.compile(r"[\u0000-\u001F\u007F]+")
 APOSTROPHE_RE = re.compile(r"[’‘`]")
@@ -38,13 +49,130 @@ def clean_pdf_text(text: str) -> str:
     return text.strip()
 
 
+def _find_tesseract_binary() -> str:
+    # Prefer explicit environment override, otherwise fall back to discovery.
+    explicit = os.environ.get("TESSERACT_PATH") or os.environ.get("TESSERACT_CMD")
+    if explicit:
+        return explicit
+
+    binary_path = shutil.which("tesseract")
+    if binary_path:
+        return binary_path
+
+    # Windows common install locations (user may have installed without PATH).
+    possible_paths = [
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        "/usr/bin/tesseract",
+        "/usr/local/bin/tesseract",
+        "/opt/homebrew/bin/tesseract",
+        "/usr/share/bin/tesseract",
+    ]
+    for path in possible_paths:
+        if os.path.isfile(path):
+            return path
+    return ""
+
+
+def _get_google_vision_auth() -> Tuple[str, str]:
+    """Return a tuple (mode, value) for Google Vision HTTP auth.
+    mode is either 'key' or 'bearer'.
+    """
+    api_key = os.environ.get("GOOGLE_VISION_API_KEY") or os.environ.get("GOOGLE_CLOUD_VISION_API_KEY")
+    if api_key:
+        return "key", api_key
+
+    try:
+        import google.auth
+        from google.auth.transport.requests import Request as GoogleRequest
+
+        creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        if not creds.valid:
+            creds.refresh(GoogleRequest())
+        if creds and creds.token:
+            return "bearer", creds.token
+    except Exception as exc:
+        logger.debug("Google Vision auth unavailable: %s", exc)
+
+    return "", ""
+
+
+def _extract_text_with_google_vision(page) -> str:
+    auth_type, auth_value = _get_google_vision_auth()
+    if not auth_type:
+        return ""
+
+    try:
+        from PIL import Image
+        pix = page.get_pixmap(alpha=False, dpi=300)
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        image_content = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+        url = "https://vision.googleapis.com/v1/images:annotate"
+        params = {"requests": [{
+            "image": {"content": image_content},
+            "features": [{"type": "DOCUMENT_TEXT_DETECTION", "maxResults": 1}],
+        }]}
+        headers = {"Content-Type": "application/json"}
+        if auth_type == "key":
+            url = f"{url}?key={auth_value}"
+        else:
+            headers["Authorization"] = f"Bearer {auth_value}"
+
+        resp = httpx.post(url, json=params, headers=headers, timeout=60.0)
+        resp.raise_for_status()
+        response_data = resp.json()
+        responses = response_data.get("responses", [])
+        if not responses:
+            return ""
+        response = responses[0]
+        text = response.get("fullTextAnnotation", {}).get("text")
+        if not text:
+            text = (response.get("textAnnotations", [{}])[0].get("description") or "")
+        return text or ""
+    except Exception as exc:
+        logger.warning("Google Vision OCR failed: %s", exc)
+        return ""
+
+
+def _warn_no_ocr_backend():
+    global _OCR_NOT_CONFIGURED_WARNING_SHOWN
+    if not _OCR_NOT_CONFIGURED_WARNING_SHOWN:
+        logger.warning(
+            "Nessuna backend OCR configurata: impostare GOOGLE_VISION_API_KEY, GOOGLE_APPLICATION_CREDENTIALS, "
+            "o installare Tesseract per l'esecuzione locale."
+        )
+        _OCR_NOT_CONFIGURED_WARNING_SHOWN = True
+
+
 def _ocr_page_text(page) -> str:
+    cloud_text = _extract_text_with_google_vision(page)
+    if cloud_text:
+        return cloud_text
+
     try:
         import pytesseract
         from PIL import Image
     except Exception as exc:
         logger.warning("OCR non disponibile per la pagina: %s", exc)
         return ""
+
+    tesseract_cmd = _find_tesseract_binary()
+    if not tesseract_cmd:
+        _warn_no_ocr_backend()
+        logger.warning("Tesseract binary non trovato nel PATH o in TESSERACT_PATH/TESSERACT_CMD")
+        return ""
+
+    try:
+        pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+    except Exception:
+        # Some pytesseract versions may expose the command setter differently.
+        try:
+            pytesseract.tesseract_cmd = tesseract_cmd
+        except Exception:
+            pass
 
     try:
         pix = page.get_pixmap(alpha=False, dpi=150)
