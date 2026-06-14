@@ -353,9 +353,12 @@ export default function PdfViewer() {
 
     let cancelled = false;
     const maxAttempts = 120; // ~2 seconds at 60fps
+    const explicitPageRequested = Boolean(pageParam && pageParam.trim());
+    const explicitPage = explicitPageRequested ? currentPageRef.current : null;
 
-    // If server provided full-file match pages, jump to first match page immediately
-    if (search.matchPages && search.matchPages.length > 0) {
+    // If server provided full-file match pages, jump to first match page immediately only when
+    // the user did not land on a specific page from a search result.
+    if (search.matchPages && search.matchPages.length > 0 && !explicitPageRequested) {
       const target = search.matchPages[0];
       let attempts = 0;
       page.scrollToPage(target, "auto");
@@ -377,12 +380,13 @@ export default function PdfViewer() {
       return () => { cancelled = true; };
     }
 
-    // Fallback: scan mounted pages for first highlight
+    // Fallback: if a page was explicitly requested, only scroll within that page.
     let attempts = 0;
     const tryFind = () => {
       if (cancelled) return;
       attempts += 1;
       for (let p = 1; p <= numPages; p += 1) {
+        if (explicitPage != null && p !== explicitPage) continue;
         const el = pageRefs.current[p];
         if (!el) continue;
         const match = el.querySelector("mark.hl");

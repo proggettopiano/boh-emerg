@@ -23,7 +23,7 @@ export default function ResendVerification() {
   };
 
   return (
-    <AuthShell title="Reinvia email verifica" subtitle="Ricevi un nuovo link per verificare il tuo account">
+    <AuthShell title="Verifica email" subtitle="Ricevi un link per verificare il tuo account">
       <form onSubmit={submit} className="space-y-4">
         <div>
           <label className="overline block mb-2">Email</label>
@@ -37,7 +37,7 @@ export default function ResendVerification() {
           />
         </div>
         <button type="submit" disabled={busy} className="btn-primary w-full disabled:opacity-50">
-          {busy ? "Invio…" : "Reinvia email"}
+          {busy ? "Invio…" : "Invia email"}
         </button>
       </form>
       <div className="mt-6 text-sm text-muted2">
