@@ -15,8 +15,8 @@ def set_test_env(monkeypatch):
     monkeypatch.setenv('JWT_SECRET', 'testsecret')
     monkeypatch.setenv('MONGO_URL', 'mongodb://localhost:27017')
     monkeypatch.setenv('DB_NAME', 'test')
-    monkeypatch.setenv('RESEND_API_KEY', 'test_key')
-    monkeypatch.setenv('RESEND_FROM_EMAIL', 'ScoreLib <no-reply@scorelib.app>')
+    monkeypatch.setenv('EMAIL_API_KEY', 'test_key')
+    monkeypatch.setenv('EMAIL_FROM_ADDRESS', 'ScoreLib <no-reply@scorelib.app>')
     yield
 
 def import_server_module():
@@ -32,13 +32,13 @@ def import_server_module():
         if str(backend_dir) in sys.path:
             sys.path.remove(str(backend_dir))
 
-def test_send_resend_email_function_exists():
+def test_send_email_function_exists():
     module = import_server_module()
-    assert hasattr(module, 'send_resend_email')
-    assert callable(module.send_resend_email)
-    assert module.send_resend_email.__code__.co_argcount >= 3
+    assert hasattr(module, 'send_email')
+    assert callable(module.send_email)
+    assert module.send_email.__code__.co_argcount >= 3
 
-def test_send_resend_email_uses_sdk_send(monkeypatch):
+def test_send_email_uses_sdk_send(monkeypatch):
     module = import_server_module()
     send_calls = []
 
@@ -46,9 +46,9 @@ def test_send_resend_email_uses_sdk_send(monkeypatch):
         send_calls.append(params)
         return None
 
-    monkeypatch.setattr(module.resend.Emails, 'send', fake_send)
+    monkeypatch.setattr(module.email_sdk.Emails, 'send', fake_send)
 
-    asyncio.run(module.send_resend_email('test@example.com', 'Test subject', '<p>Test</p>'))
+    asyncio.run(module.send_email('test@example.com', 'Test subject', '<p>Test</p>'))
 
     assert len(send_calls) == 1
     assert send_calls[0]['to'] == ['test@example.com']
@@ -78,9 +78,9 @@ class DummyAsyncClient:
         assert headers['Authorization'] == 'Bearer test_key'
         return DummyResponse()
 
-def test_send_resend_email_fallback_http(monkeypatch):
+def test_send_email_fallback_http(monkeypatch):
     module = import_server_module()
-    monkeypatch.setattr(module.resend, 'Emails', None)
+    monkeypatch.setattr(module.email_sdk, 'Emails', None)
     monkeypatch.setattr(module, 'httpx', type('httpx', (), {'AsyncClient': DummyAsyncClient}))
 
-    asyncio.run(module.send_resend_email('test@example.com', 'Fallback subject', '<p>Fallback</p>'))
+    asyncio.run(module.send_email('test@example.com', 'Fallback subject', '<p>Fallback</p>'))

@@ -26,7 +26,7 @@ from slowapi.util import get_remote_address
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 import httpx
-import resend
+import resend as email_sdk
 
 from auth_utils import (
     hash_password, verify_password, create_jwt, decode_jwt,
@@ -52,11 +52,13 @@ APP_NAME = os.environ.get("APP_NAME", "ScoreLib")
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@scorelib.app").lower()
 ADMIN_RESET_PASSWORD = os.environ.get("ADMIN_LOG_PASSWORD")
 WORKER_SECRET = os.environ.get("WORKER_SECRET", "")
-RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "").strip()
-RESEND_FROM_EMAIL = os.environ.get("RESEND_FROM_EMAIL", f"{APP_NAME} <no-reply@scorelib.app>")
+EMAIL_API_KEY = os.environ.get("EMAIL_API_KEY", os.environ.get("RESEND_API_KEY", "")).strip()
+EMAIL_FROM_ADDRESS = os.environ.get("EMAIL_FROM_ADDRESS", os.environ.get("RESEND_FROM_EMAIL", f"{APP_NAME} <no-reply@scorelib.app>")).strip()
+EMAIL_API_URL = os.environ.get("EMAIL_API_URL", "https://api.resend.com/emails").strip()
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://scorelib.vercel.app")
-if RESEND_API_KEY:
-    resend.api_key = RESEND_API_KEY
+FORMSUBMIT_BASE_URL = os.environ.get("FORMSUBMIT_BASE_URL", "https://formsubmit.co").strip()
+if EMAIL_API_KEY:
+    email_sdk.api_key = EMAIL_API_KEY
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -120,10 +122,10 @@ api = APIRouter(prefix="/api")
 logger = logging.getLogger("scorelib")
 logging.basicConfig(level=logging.INFO)
 
-if not RESEND_API_KEY:
-    logger.warning("RESEND_API_KEY non configurata: invio email disabilitato.")
-elif "scorelib.app" in RESEND_FROM_EMAIL:
-    logger.warning("RESEND_FROM_EMAIL usa dominio scorelib.app. Assicurati che il dominio sia verificato in Resend.")
+if not EMAIL_API_KEY:
+    logger.warning("EMAIL_API_KEY non configurata: invio email disabilitato.")
+elif "scorelib.app" in EMAIL_FROM_ADDRESS:
+    logger.warning("EMAIL_FROM_ADDRESS usa dominio scorelib.app. Assicurati che il dominio sia verificato nel provider email.")
 
 # ----------------- Helpers -----------------
 def iso_now(): return datetime.now(timezone.utc).isoformat()
@@ -147,75 +149,105 @@ async def log_event(event_type: str, description: str, user_id: Optional[str] = 
     log_func = getattr(logger, level.lower(), logger.info)
     log_func(f"[{event_type.upper()}] {description} (user={user_id})")
 
-async def send_resend_email(to_email: str, subject: str, html: str):
-    if not RESEND_API_KEY:
-        logger.warning("RESEND_API_KEY non configurata: email non inviata a %s", to_email)
+async def send_email(to_email: str, subject: str, html: str):
+    if not EMAIL_API_KEY:
+        logger.warning("EMAIL_API_KEY non configurata: email non inviata a %s", to_email)
         return
     params = {
-        "from": RESEND_FROM_EMAIL,
+        "from": EMAIL_FROM_ADDRESS,
         "to": [to_email],
         "subject": subject,
         "html": html,
     }
-    logger.info("Richiesta invio email Resend a %s subject=%s", to_email, subject)
+    logger.info("Richiesta invio email a %s subject=%s", to_email, subject)
     try:
-        if hasattr(resend, "Emails") and callable(getattr(resend.Emails, "send", None)):
-            await asyncio.to_thread(resend.Emails.send, params)
-            logger.info("Email accettata da Resend SDK per %s subject=%s", to_email, subject)
+        if hasattr(email_sdk, "Emails") and callable(getattr(email_sdk.Emails, "send", None)):
+            await asyncio.to_thread(email_sdk.Emails.send, params)
+            logger.info("Email inviata a %s subject=%s tramite SDK", to_email, subject)
             return
         headers = {
-            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Authorization": f"Bearer {EMAIL_API_KEY}",
             "Content-Type": "application/json",
         }
         async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post("https://api.resend.com/emails", headers=headers, json=params)
+            resp = await client.post(EMAIL_API_URL, headers=headers, json=params)
             body = resp.text[:1024]
-            logger.info("Resend HTTP fallback status=%s body=%s", resp.status_code, body)
+            logger.info("Email inviata a %s subject=%s tramite HTTP fallback status=%s", to_email, subject, resp.status_code)
             resp.raise_for_status()
             logger.info("Email inviata a %s subject=%s tramite HTTP fallback", to_email, subject)
     except httpx.HTTPStatusError as exc:
         response = exc.response
         body = response.text[:1024] if response is not None else "<no response>"
         status_code = response.status_code if response is not None else "?"
-        logger.error("Resend invio fallito a %s subject=%s status=%s body=%s", to_email, subject, status_code, body)
+        logger.error("Invio email fallito a %s subject=%s status=%s body=%s", to_email, subject, status_code, body)
     except Exception as exc:
         logger.error("Errore invio email a %s subject=%s error=%s", to_email, subject, str(exc))
+
+async def send_email_via_formsubmit(to_email: str, subject: str, message: str):
+    if not to_email:
+        logger.warning("send_email_via_formsubmit: to_email non specificata")
+        return
+    logger.info("Invio email via FormSubmit a %s subject=%s", to_email, subject)
+    from_email = EMAIL_FROM_ADDRESS
+    if "<" in from_email and ">" in from_email:
+        from_email = from_email.split("<")[-1].strip(" >")
+    payload = {
+        "name": APP_NAME,
+        "email": from_email,
+        "message": message,
+        "_subject": subject,
+        "_template": "table",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(f"{FORMSUBMIT_BASE_URL}/{to_email}", data=payload)
+            resp.raise_for_status()
+            logger.info("Email inviata via FormSubmit a %s subject=%s status=%s", to_email, subject, resp.status_code)
+    except Exception as exc:
+        logger.error("Errore invio email via FormSubmit a %s subject=%s error=%s", to_email, subject, str(exc))
 
 async def send_access_request_outcome_email(email: str, status: str, name: Optional[str] = None):
     safe_name = name or email
     logger.info("send_access_request_outcome_email status=%s email=%s name=%s", status, email, safe_name)
     if status == "approved":
-        subject = "Esito richiesta di accesso ScoreLib"
-        html = f"""
-            <h1>Richiesta approvata</h1>
-            <p>Ciao {safe_name},</p>
-            <p>La tua richiesta di accesso per <strong>{email}</strong> è stata approvata.</p>
-            <p>Potrai effettuare il login con il tuo indirizzo email.</p>
-            <p>Grazie,<br />ScoreLib</p>
-        """
+        subject = "ScoreLib: richiesta di accesso approvata"
+        message = (
+            f"Ciao {safe_name},\n\n"
+            f"La tua richiesta di accesso a ScoreLib per {email} è stata approvata.\n"
+            f"Ora puoi effettuare il login su {FRONTEND_URL} con questa email.\n\n"
+            "Grazie,\nTeam ScoreLib"
+        )
+    elif status == "rejected":
+        subject = "ScoreLib: richiesta di accesso rifiutata"
+        message = (
+            f"Ciao {safe_name},\n\n"
+            f"La tua richiesta di accesso a ScoreLib per {email} non è stata approvata.\n"
+            "Se desideri, puoi inviare una nuova richiesta di accesso.\n\n"
+            "Grazie,\nTeam ScoreLib"
+        )
     else:
-        subject = "Esito richiesta di accesso ScoreLib"
-        html = f"""
-            <h1>Richiesta rifiutata</h1>
-            <p>Ciao {safe_name},</p>
-            <p>La tua richiesta di accesso per <strong>{email}</strong> non è stata approvata.</p>
-            <p>Se desideri riprovare, invia nuovamente la richiesta di accesso.</p>
-            <p>Grazie,<br />ScoreLib</p>
-        """
-    await send_resend_email(email, subject, html)
+        subject = "ScoreLib: richiesta di accesso ancora in attesa"
+        message = (
+            f"Ciao {safe_name},\n\n"
+            f"La tua richiesta di accesso a ScoreLib per {email} è ancora in attesa perché l'amministratore non ha ancora risposto.\n"
+            "Se non ti rispondo, la richiesta resterà in attesa.\n"
+            "Puoi attendere o inviare una nuova richiesta.\n\n"
+            "Grazie,\nTeam ScoreLib"
+        )
+    await send_email_via_formsubmit(email, subject, message)
 
 async def send_access_request_reminder_email(email: str, name: Optional[str] = None):
     safe_name = name or email
     logger.info("send_access_request_reminder_email email=%s name=%s", email, safe_name)
-    subject = "Ricorda: completa la tua richiesta di accesso a ScoreLib"
-    html = f"""
-        <h1>Richiesta ancora in attesa</h1>
-        <p>Ciao {safe_name},</p>
-        <p>La tua richiesta di accesso per <strong>{email}</strong> è ancora in stato di attesa.</p>
-        <p>Se desideri utilizzare ScoreLib, ti preghiamo di inviare nuovamente la richiesta da <a href=\"{FRONTEND_URL}\">qui</a>.</p>
-        <p>Grazie,<br />ScoreLib</p>
-    """
-    await send_resend_email(email, subject, html)
+    subject = "ScoreLib: richiesta di accesso ancora in attesa"
+    message = (
+        f"Ciao {safe_name},\n\n"
+        f"La tua richiesta di accesso a ScoreLib per {email} è ancora in attesa perché l'amministratore non ha ancora risposto.\n"
+        "Se non ti rispondo, la richiesta resterà in attesa.\n"
+        "Puoi attendere o inviare una nuova richiesta.\n\n"
+        "Grazie,\nTeam ScoreLib"
+    )
+    await send_email_via_formsubmit(email, subject, message)
 
 async def send_pending_access_request_reminders():
     threshold = datetime.now(timezone.utc) - timedelta(days=3)
