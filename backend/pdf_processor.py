@@ -8,6 +8,8 @@ import fitz  # PyMuPDF
 logger = logging.getLogger(__name__)
 
 MUSIC_SYMBOL_RE = re.compile(r"[\u0000-\u001F\u007F]+")
+APOSTROPHE_RE = re.compile(r"[’‘`]")
+DECORATIVE_NUMBER_RE = re.compile(r"~\s*\d+\s*~")
 
 
 def clean_pdf_text(text: str) -> str:
@@ -18,6 +20,8 @@ def clean_pdf_text(text: str) -> str:
     text = text.replace("\xa0", " ")
     text = text.replace("\u00a0", " ")
     text = text.replace("\r", " ").replace("\n", " ")
+    text = APOSTROPHE_RE.sub("'", text)
+    text = DECORATIVE_NUMBER_RE.sub(" ", text)
     text = "".join(ch for ch in text if not unicodedata.category(ch).startswith("C"))
 
     # Remove music notation, note/chord tokens and OCR noise.
@@ -26,7 +30,7 @@ def clean_pdf_text(text: str) -> str:
     text = re.sub(r"\b(?:DO|RE|MI|FA|SOL|LA|SI)(?:[#b]|[-/][A-Z0-9#b]+|\d+|maj|min|m|dim|aug|sus|add|7|9|11|13)*\b", " ", text)
     text = re.sub(r"(?<![A-Za-zÀ-ÿ])(?:[A-G](?:#|b)?(?:maj|min|m|dim|aug|sus|add)?\d*(?:/[A-G](?:#|b)?\d*)?)(?![A-Za-zÀ-ÿ])", " ", text, flags=re.IGNORECASE)
     text = re.sub(r"(?<=[A-Za-zÀ-ÿ])\s*[-–—]\s*(?=[A-Za-zÀ-ÿ])", "", text)
-    text = re.sub(r"[^A-Za-z0-9À-ÿ\s]+", " ", text, flags=re.UNICODE)
+    text = re.sub(r"[^A-Za-z0-9À-ÿ\s']+", " ", text, flags=re.UNICODE)
 
     # Split likely OCR-glued words such as "GesùCristo" or words broken across lines.
     text = re.sub(r"(?<=[a-zà-ÿ])(?=[A-ZÀ-Ý][a-zà-ÿ])", " ", text)
@@ -34,10 +38,25 @@ def clean_pdf_text(text: str) -> str:
     return text.strip()
 
 
-def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool, List[str]]:
-    """Extract text from each page. OCR logic removed for stability.
-    This follows the stable-pdf-v1 structure but removes the pytesseract dependency.
+def _ocr_page_text(page) -> str:
+    try:
+        import pytesseract
+        from PIL import Image
+    except Exception as exc:
+        logger.warning("OCR non disponibile per la pagina: %s", exc)
+        return ""
 
+    try:
+        pix = page.get_pixmap(alpha=False, dpi=150)
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        return pytesseract.image_to_string(img) or ""
+    except Exception as exc:
+        logger.warning("OCR fallback pagina fallito: %s", exc)
+        return ""
+
+
+def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool, List[str]]:
+    """Extract text from each page. OCR logic remains fallback-only.
     Returns (pages_text, total_pages, used_ocr, page_labels).
     """
     pages_text: List[str] = []
@@ -59,7 +78,15 @@ def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool, List[str]]:
         try:
             page = doc[page_num]
             text = page.get_text("text") or ""
-            pages_text.append(clean_pdf_text(text))
+            cleaned = clean_pdf_text(text)
+            if len(cleaned) < 40:
+                ocr_text = _ocr_page_text(page)
+                if ocr_text:
+                    cleaned_ocr = clean_pdf_text(ocr_text)
+                    if len(cleaned_ocr) > len(cleaned):
+                        cleaned = cleaned_ocr
+                        used_ocr = True
+            pages_text.append(cleaned)
         except Exception as e:
             logger.warning(f"Failed to extract page {page_num + 1}: {e}")
             pages_text.append("")

@@ -157,11 +157,11 @@ async def send_resend_email(to_email: str, subject: str, html: str):
         "subject": subject,
         "html": html,
     }
-    logger.info("Invio email Resend a %s subject=%s", to_email, subject)
+    logger.info("Richiesta invio email Resend a %s subject=%s", to_email, subject)
     try:
         if hasattr(resend, "Emails") and callable(getattr(resend.Emails, "send", None)):
             await asyncio.to_thread(resend.Emails.send, params)
-            logger.info("Email inviata a %s subject=%s tramite SDK", to_email, subject)
+            logger.info("Email accettata da Resend SDK per %s subject=%s", to_email, subject)
             return
         headers = {
             "Authorization": f"Bearer {RESEND_API_KEY}",
@@ -169,16 +169,17 @@ async def send_resend_email(to_email: str, subject: str, html: str):
         }
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post("https://api.resend.com/emails", headers=headers, json=params)
-            logger.info("Resend API response status=%s body=%s", resp.status_code, resp.text)
+            body = resp.text[:1024]
+            logger.info("Resend HTTP fallback status=%s body=%s", resp.status_code, body)
             resp.raise_for_status()
-            logger.info("Email inviata a %s subject=%s tramite HTTP fallback response=%s", to_email, subject, resp.text)
+            logger.info("Email inviata a %s subject=%s tramite HTTP fallback", to_email, subject)
     except httpx.HTTPStatusError as exc:
         response = exc.response
-        body = response.text if response is not None else "<no response>"
+        body = response.text[:1024] if response is not None else "<no response>"
         status_code = response.status_code if response is not None else "?"
-        logger.error("Errore invio email a %s subject=%s status=%s body=%s", to_email, subject, status_code, body)
+        logger.error("Resend invio fallito a %s subject=%s status=%s body=%s", to_email, subject, status_code, body)
     except Exception as exc:
-        logger.exception("Errore invio email a %s subject=%s", to_email, subject)
+        logger.error("Errore invio email a %s subject=%s error=%s", to_email, subject, str(exc))
 
 async def send_access_request_outcome_email(email: str, status: str, name: Optional[str] = None):
     safe_name = name or email

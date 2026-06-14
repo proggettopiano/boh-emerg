@@ -13,6 +13,10 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function normalizeApostrophes(value) {
+  return value.replace(/[’‘]/g, "'");
+}
+
 export function detectVisiblePage(scrollY, getToolbarOffset, pageRefs, numPages, slotHeight) {
   if (numPages <= 0) return 1;
   const viewTop = scrollY + getToolbarOffset();
@@ -415,7 +419,10 @@ function useSearchController({
       for (let i = 0; i < matchPages.length; i += 1) {
         if (matchPages[i] < currentPage) idx = i;
       }
-      if (idx < 0) return; // no previous match page — do not move
+      if (idx < 0) {
+        if (matchPages.length === 0) return;
+        idx = matchPages.length - 1;
+      }
       const targetPage = matchPages[idx];
       if (targetPage === currentPage) return;
       pendingSearchDirectionRef.current = -1;
@@ -447,7 +454,10 @@ function useSearchController({
     for (let i = 0; i < pageGroups.length; i += 1) {
       if (pageGroups[i] < currentPage) idx2 = i;
     }
-    if (idx2 < 0) return;
+    if (idx2 < 0) {
+      if (pageGroups.length === 0) return;
+      idx2 = pageGroups.length - 1;
+    }
     pendingSearchDirectionRef.current = -1;
     currentMatchIndexRef.current = -1;
     goToPage(pageGroups[idx2]);
@@ -462,7 +472,10 @@ function useSearchController({
       for (let i = 0; i < matchPages.length; i += 1) {
         if (matchPages[i] > currentPage) { idx = i; break; }
       }
-      if (idx < 0) return; // no next match page — do not move
+      if (idx < 0) {
+        if (matchPages.length === 0) return;
+        idx = 0;
+      }
       const targetPage = matchPages[idx];
       if (targetPage === currentPage) return;
       pendingSearchDirectionRef.current = 1;
@@ -494,7 +507,10 @@ function useSearchController({
     for (let i = 0; i < pageGroups.length; i += 1) {
       if (pageGroups[i] > currentPage) { idx2 = i; break; }
     }
-    if (idx2 < 0) return;
+    if (idx2 < 0) {
+      if (pageGroups.length === 0) return;
+      idx2 = 0;
+    }
     pendingSearchDirectionRef.current = 1;
     currentMatchIndexRef.current = -1;
     goToPage(pageGroups[idx2]);
@@ -544,7 +560,9 @@ function useSearchController({
     ({ str }) => {
       if (!hasSearchQuery || !str) return str;
       try {
-        const re = new RegExp(`(${escapeRegExp(query)})`, "ig");
+        const normalizedQuery = normalizeApostrophes(query);
+        const queryPattern = escapeRegExp(normalizedQuery).replace(/'/g, "['’]");
+        const re = new RegExp(`(${queryPattern})`, "ig");
         return str.replace(re, (m) => `<mark class="hl">${m}</mark>`);
       } catch (err) {
         console.error("[PdfViewer] Regex highlight failed:", { query, error: err.message });
