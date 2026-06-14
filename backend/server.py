@@ -27,6 +27,9 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 import httpx
 import resend as email_sdk
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 from auth_utils import (
     hash_password, verify_password, create_jwt, decode_jwt,
@@ -57,6 +60,14 @@ EMAIL_FROM_ADDRESS = os.environ.get("EMAIL_FROM_ADDRESS", os.environ.get("RESEND
 EMAIL_API_URL = os.environ.get("EMAIL_API_URL", "https://api.resend.com/emails").strip()
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://scorelib.vercel.app")
 FORMSUBMIT_BASE_URL = os.environ.get("FORMSUBMIT_BASE_URL", "https://formsubmit.co").strip()
+
+# SMTP Configuration (for reliable email sending fallback)
+SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USER = os.environ.get("SMTP_USER", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+SMTP_ENABLED = bool(SMTP_USER and SMTP_PASSWORD)
+
 if EMAIL_API_KEY:
     email_sdk.api_key = EMAIL_API_KEY
 
@@ -206,6 +217,38 @@ async def send_email_via_formsubmit(to_email: str, subject: str, message: str):
     except Exception as exc:
         logger.error("Errore invio email via FormSubmit a %s subject=%s error=%s", to_email, subject, str(exc))
 
+async def send_email_via_smtp(to_email: str, subject: str, message: str):
+    """Invia email via SMTP (fallback affidabile per FormSubmit)"""
+    if not to_email or not SMTP_ENABLED:
+        if not SMTP_ENABLED:
+            logger.warning("SMTP non configurato: email non inviata")
+        return
+    
+    try:
+        from_email = EMAIL_FROM_ADDRESS
+        if "<" in from_email and ">" in from_email:
+            from_email = from_email.split("<")[-1].strip(" >")
+        
+        logger.info("Invio email via SMTP a %s subject=%s", to_email, subject)
+        
+        # Crea messaggio email
+        msg = MIMEMultipart()
+        msg["From"] = from_email
+        msg["To"] = to_email
+        msg["Subject"] = subject
+        msg.attach(MIMEText(message, "plain", "utf-8"))
+        
+        # Invia tramite SMTP
+        smtp_server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30)
+        smtp_server.starttls()
+        smtp_server.login(SMTP_USER, SMTP_PASSWORD)
+        smtp_server.send_message(msg)
+        smtp_server.quit()
+        
+        logger.info("Email inviata via SMTP a %s subject=%s", to_email, subject)
+    except Exception as exc:
+        logger.error("Errore invio email via SMTP a %s subject=%s error=%s", to_email, subject, str(exc))
+
 async def send_access_request_outcome_email(email: str, status: str, name: Optional[str] = None):
     safe_name = name or email
     logger.info("send_access_request_outcome_email status=%s email=%s name=%s", status, email, safe_name)
@@ -234,7 +277,10 @@ async def send_access_request_outcome_email(email: str, status: str, name: Optio
             "Puoi attendere o inviare una nuova richiesta.\n\n"
             "Grazie,\nTeam ScoreLib"
         )
-    await send_email_via_formsubmit(email, subject, message)
+    await send_email_via_smtp(email, subject, message)
+    # Se SMTP non configurato, fallback a FormSubmit
+    if not SMTP_ENABLED:
+        await send_email_via_formsubmit(email, subject, message)
 
 async def send_access_request_reminder_email(email: str, name: Optional[str] = None):
     safe_name = name or email
@@ -247,7 +293,10 @@ async def send_access_request_reminder_email(email: str, name: Optional[str] = N
         "Puoi attendere o inviare una nuova richiesta.\n\n"
         "Grazie,\nTeam ScoreLib"
     )
-    await send_email_via_formsubmit(email, subject, message)
+    await send_email_via_smtp(email, subject, message)
+    # Se SMTP non configurato, fallback a FormSubmit
+    if not SMTP_ENABLED:
+        await send_email_via_formsubmit(email, subject, message)
 
 async def send_pending_access_request_reminders():
     threshold = datetime.now(timezone.utc) - timedelta(days=3)
