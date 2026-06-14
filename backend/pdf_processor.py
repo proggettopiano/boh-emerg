@@ -5,6 +5,7 @@ Tesseract only if cloud OCR is not available.
 """
 import base64
 import io
+import json
 import logging
 import os
 import re
@@ -82,6 +83,19 @@ def _get_google_vision_auth() -> Tuple[str, str]:
     if api_key:
         return "key", api_key
 
+    # Support Application Default Credentials JSON via env var
+    adc_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if adc_path and os.path.isfile(adc_path):
+        try:
+            with open(adc_path, "r", encoding="utf-8") as f:
+                creds_json = json.load(f)
+            client_email = creds_json.get("client_email")
+            private_key = creds_json.get("private_key")
+            if client_email and private_key:
+                return "adc", adc_path
+        except Exception as exc:
+            logger.warning("Failed to read GOOGLE_APPLICATION_CREDENTIALS: %s", exc)
+
     try:
         import google.auth
         from google.auth.transport.requests import Request as GoogleRequest
@@ -118,6 +132,16 @@ def _extract_text_with_google_vision(page) -> str:
         headers = {"Content-Type": "application/json"}
         if auth_type == "key":
             url = f"{url}?key={auth_value}"
+        elif auth_type == "adc":
+            # Use OAuth2 access token generated from service account JSON.
+            from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+            from google.auth.transport.requests import Request as GoogleRequest
+
+            creds = ServiceAccountCredentials.from_service_account_file(auth_value, scopes=["https://www.googleapis.com/auth/cloud-platform"])
+            creds.refresh(GoogleRequest())
+            if not creds.token:
+                raise RuntimeError("Failed to obtain access token from service account credentials")
+            headers["Authorization"] = f"Bearer {creds.token}"
         else:
             headers["Authorization"] = f"Bearer {auth_value}"
 
@@ -134,6 +158,31 @@ def _extract_text_with_google_vision(page) -> str:
         return text or ""
     except Exception as exc:
         logger.warning("Google Vision OCR failed: %s", exc)
+        if auth_type == "key":
+            adc_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+            if adc_path and os.path.isfile(adc_path):
+                logger.info("Falling back to GOOGLE_APPLICATION_CREDENTIALS after Vision API key failure")
+                try:
+                    from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+                    from google.auth.transport.requests import Request as GoogleRequest
+
+                    creds = ServiceAccountCredentials.from_service_account_file(adc_path, scopes=["https://www.googleapis.com/auth/cloud-platform"])
+                    creds.refresh(GoogleRequest())
+                    if creds.token:
+                        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {creds.token}"}
+                        resp = httpx.post(url, json=params, headers=headers, timeout=60.0)
+                        resp.raise_for_status()
+                        response_data = resp.json()
+                        responses = response_data.get("responses", [])
+                        if not responses:
+                            return ""
+                        response = responses[0]
+                        text = response.get("fullTextAnnotation", {}).get("text")
+                        if not text:
+                            text = (response.get("textAnnotations", [{}])[0].get("description") or "")
+                        return text or ""
+                except Exception as exc2:
+                    logger.warning("Google Vision OCR ADC fallback failed: %s", exc2)
         return ""
 
 
