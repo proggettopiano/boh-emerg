@@ -12,7 +12,17 @@ services:
         libpoppler-cpp-dev \
         poppler-utils && \
       pip install --no-cache-dir -r requirements.txt
-    startCommand: python -m uvicorn server:app --host 0.0.0.0 --port $PORT
+    startCommand: |
+      apt-get update && \
+      apt-get install -y --no-install-recommends \
+        tesseract-ocr \
+        libtesseract-dev \
+        libpoppler-cpp-dev \
+        poppler-utils && \
+      python -m uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: TESSERACT_PATH
+        value: /usr/bin/tesseract
     envVars:
       - key: MONGO_URL
         sync: false

@@ -223,40 +223,38 @@ def _has_google_vision_auth() -> bool:
 
 
 def _ocr_page_text(page) -> str:
-    # Try Tesseract first (free, open-source, Apache 2.0)
+    # Use local Tesseract as the primary OCR backend to avoid billing-dependent cloud calls.
     try:
         import pytesseract
         from PIL import Image
     except Exception as exc:
-        logger.debug("pytesseract/PIL unavailable, trying Cloud Vision: %s", exc)
-    else:
-        tesseract_cmd = _find_tesseract_binary()
-        if tesseract_cmd:
-            try:
-                pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
-            except Exception:
-                try:
-                    pytesseract.tesseract_cmd = tesseract_cmd
-                except Exception:
-                    pass
+        logger.warning("OCR locale non disponibile: %s", exc)
+        return ""
 
-            try:
-                pix = page.get_pixmap(alpha=False, dpi=150)
-                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                text = pytesseract.image_to_string(img)
-                if text:
-                    logger.debug("Tesseract OCR successful")
-                    return text
-            except Exception as exc:
-                logger.warning("Tesseract OCR failed: %s", exc)
+    tesseract_cmd = _find_tesseract_binary()
+    if not tesseract_cmd:
+        _warn_no_ocr_backend()
+        logger.warning("Tesseract non trovato: OCR locale non disponibile")
+        return ""
 
-    # Fallback to Cloud Vision if Tesseract unavailable or failed
-    cloud_text = _extract_text_with_google_vision(page)
-    if cloud_text:
-        logger.info("Using Google Vision OCR (Tesseract unavailable)")
-        return cloud_text
+    try:
+        pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+    except Exception:
+        try:
+            pytesseract.tesseract_cmd = tesseract_cmd
+        except Exception:
+            pass
 
-    _warn_no_ocr_backend()
+    try:
+        pix = page.get_pixmap(alpha=False, dpi=150)
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        text = pytesseract.image_to_string(img)
+        if text:
+            logger.debug("Tesseract OCR successful")
+            return text
+    except Exception as exc:
+        logger.warning("Tesseract OCR failed: %s", exc)
+
     return ""
 
 
