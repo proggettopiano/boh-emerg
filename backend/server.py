@@ -73,6 +73,12 @@ if EMAIL_API_KEY:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # OCR diagnostics at startup
+    from pdf_processor import _find_tesseract_binary
+    import shutil
+    tesseract_path = _find_tesseract_binary()
+    logger.info(f"OCR diagnostic: TESSERACT_PATH={os.environ.get('TESSERACT_PATH')}, found={tesseract_path}, which='{shutil.which('tesseract')}'")
+    
     await ensure_indexes()
     await seed_admin()
     await migrate_single_owner()
