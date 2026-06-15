@@ -1,7 +1,7 @@
-"""PDF text extraction logic with safe OCR fallback.
+"""PDF text extraction logic with local OCR.
 
-Uses Google Vision OCR when configured in production, and falls back to local
-Tesseract only if cloud OCR is not available.
+Uses local Tesseract OCR as the primary path and avoids billing-dependent
+cloud OCR calls in production.
 """
 import base64
 import io

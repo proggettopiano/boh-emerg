@@ -23,7 +23,6 @@ services:
     envVars:
       - key: TESSERACT_PATH
         value: /usr/bin/tesseract
-    envVars:
       - key: MONGO_URL
         sync: false
       - key: GOOGLE_VISION_API_KEY
