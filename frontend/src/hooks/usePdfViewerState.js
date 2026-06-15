@@ -215,9 +215,10 @@ function useSearchController({
   }, [matches]);
 
   useEffect(() => {
+    const hasInitialQuery = Boolean(initialQuery && initialQuery.trim());
     setQuery(initialQuery);
-    setSearchPanelVisible(Boolean(initialQuery));
-    setHighlightsVisible(true);
+    setSearchPanelVisible(hasInitialQuery);
+    setHighlightsVisible(hasInitialQuery);
     setMatches([]);
     matchesRef.current = [];
     setCurrentMatchIndex(0);
