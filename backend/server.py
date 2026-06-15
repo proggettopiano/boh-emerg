@@ -1153,7 +1153,7 @@ async def _user_can_access_pdf(user_id: Optional[str], pdf_id: str, share_token:
 
 # ----------------- Search -----------------
 
-def format_search_result(p: dict, pg: dict, q: str, score: int, snippet: Optional[str] = None) -> dict:
+def format_search_result(p: dict, pg: dict, q: str, score: int, snippet: Optional[str] = None, source: str = "personal", match_in: str = "content") -> dict:
     return {
         "pdf_id": p["id"],
         "title": p["title"],
@@ -1167,6 +1167,8 @@ def format_search_result(p: dict, pg: dict, q: str, score: int, snippet: Optiona
         "snippet": snippet if snippet is not None else make_snippet(clean_pdf_text(pg.get("text", "")), q),
         "score": score,
         "is_protected": p.get("is_protected", False),
+        "source": source,
+        "match_in": match_in,
     }
 
 @api.get("/search")
@@ -1228,6 +1230,35 @@ async def search(
                 results.append(format_search_result(p, pg, raw_q, score=50, snippet=f"Pagina {raw_q}"))
 
     safe_q = rf"(?<!\d){re.escape(raw_q)}(?!\d)" if raw_q.isdigit() else re.escape(raw_q)
+
+    # 3. CERCA TITOLO PDF
+    title_filter = {"title": {"$regex": safe_q, "$options": "i"}}
+    if pdf_ids_list:
+        title_filter["id"] = {"$in": pdf_ids_list}
+    title_cursor = db.pdfs.find(title_filter, {"_id": 0})
+    async for p in title_cursor:
+        key = (p["id"], 1)
+        if key in seen:
+            continue
+        seen.add(key)
+        title_text = clean_pdf_text(p.get("title", ""))
+        pg = {
+            "page": 1,
+            "page_label": (p.get("page_labels") or [1])[0] if p.get("page_labels") else 1,
+            "text": p.get("title", ""),
+        }
+        results.append(
+            format_search_result(
+                p,
+                pg,
+                raw_q,
+                score=30,
+                snippet=make_snippet(title_text, q),
+                source="personal",
+                match_in="title",
+            )
+        )
+
     text_filter = {"text": {"$regex": safe_q, "$options": "i"}}
     if pdf_ids_list:
         text_filter["pdf_id"] = {"$in": pdf_ids_list}
@@ -1239,7 +1270,7 @@ async def search(
         seen.add(key)
         p = await db.pdfs.find_one({"id": pg["pdf_id"]})
         if p:
-            results.append(format_search_result(p, pg, raw_q, score=10))
+            results.append(format_search_result(p, pg, raw_q, score=10, source="personal", match_in="content"))
 
     # Sort by score desc, then by physical page number (use actual_page if present, fall back to page)
     results.sort(key=lambda x: (-x["score"], x.get("actual_page", x.get("page", 0))))
