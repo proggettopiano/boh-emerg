@@ -1,7 +1,9 @@
 """Comprehensive backend tests for Scorelib."""
 import io
 import os
+import sys
 import time
+import types
 import uuid
 import requests
 import pytest
@@ -237,6 +239,59 @@ def test_clean_pdf_text_removes_decorative_number_tokens():
     assert "~ 542 ~" not in cleaned
     assert "Canto" in cleaned
     assert "domenica" in cleaned
+
+
+def test_ocr_page_text_prefers_tesseract_when_available(monkeypatch):
+    import pdf_processor
+
+    class DummyPage:
+        def get_pixmap(self, alpha=False, dpi=150):
+            return types.SimpleNamespace(width=1, height=1, samples=b"\x00\x00\x00")
+
+    fake_pytesseract = types.SimpleNamespace(
+        pytesseract=types.SimpleNamespace(tesseract_cmd=None),
+        image_to_string=lambda img: "TESSERACT OCR TEXT",
+    )
+
+    class FakeImage:
+        @staticmethod
+        def frombytes(*args, **kwargs):
+            return object()
+
+    monkeypatch.setattr(pdf_processor, "_find_tesseract_binary", lambda: "/usr/bin/tesseract")
+    monkeypatch.setitem(sys.modules, "pytesseract", fake_pytesseract)
+    monkeypatch.setitem(sys.modules, "PIL", types.SimpleNamespace(Image=FakeImage))
+
+    text = pdf_processor._ocr_page_text(DummyPage())
+
+    assert text == "TESSERACT OCR TEXT"
+
+
+def test_ocr_page_text_does_not_call_google_vision_when_tesseract_is_missing(monkeypatch):
+    import pdf_processor
+
+    class DummyPage:
+        pass
+
+    called = {"vision": False}
+
+    def fake_extract(page):
+        called["vision"] = True
+        return ""
+
+    monkeypatch.setattr(pdf_processor, "_find_tesseract_binary", lambda: "")
+    monkeypatch.setattr(pdf_processor, "_extract_text_with_google_vision", fake_extract)
+    monkeypatch.setattr(pdf_processor, "_warn_no_ocr_backend", lambda: None)
+
+    try:
+        import pytesseract  # noqa: F401
+    except Exception:
+        pass
+
+    text = pdf_processor._ocr_page_text(DummyPage())
+
+    assert text == ""
+    assert called["vision"] is False
 
 
 # ---------------- SEARCH ----------------
