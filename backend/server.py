@@ -60,7 +60,7 @@ WORKER_SECRET = os.environ.get("WORKER_SECRET", "")
 EMAIL_API_KEY = os.environ.get("EMAIL_API_KEY", os.environ.get("RESEND_API_KEY", "")).strip()
 EMAIL_FROM_ADDRESS = os.environ.get("EMAIL_FROM_ADDRESS", os.environ.get("RESEND_FROM_EMAIL", f"{APP_NAME} <no-reply@scorelib.app>")).strip()
 EMAIL_API_URL = os.environ.get("EMAIL_API_URL", "https://api.resend.com/emails").strip()
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://scorelib.vercel.app")
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://scorelib.vercel.app").rstrip("/")
 FORMSUBMIT_BASE_URL = os.environ.get("FORMSUBMIT_BASE_URL", "https://formsubmit.co").strip()
 
 # SMTP Configuration (for reliable email sending fallback)
@@ -136,7 +136,8 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Configurazione CORS robusta
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://scorelib.vercel.app"],
+    allow_origins=[FRONTEND_URL, "http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origin_regex=r"^https://.*\.(vercel\.app|vercel\.live|preview\.emergentagent\.com)$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -148,7 +149,7 @@ SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
-    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://api.fontshare.com; connect-src 'self' https://scorelib-backend.onrender.com https://fonts.googleapis.com https://api.fontshare.com; img-src 'self' data: blob:; object-src 'none'; frame-ancestors 'none'; worker-src 'self' blob:; base-uri 'self'"
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://api.fontshare.com; connect-src 'self' https://scorelib-backend.onrender.com https://scorelib-backend-docker.onrender.com https://fonts.googleapis.com https://api.fontshare.com https://vercel.live https://*.vercel.app; img-src 'self' data: blob:; object-src 'none'; frame-ancestors 'none'; worker-src 'self' blob:; base-uri 'self'"
 }
 
 @app.middleware("http")

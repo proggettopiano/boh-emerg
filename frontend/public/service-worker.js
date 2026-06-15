@@ -1,4 +1,4 @@
-const APP_CACHE = "scorelib-app-v2";
+const APP_CACHE = "scorelib-app-v3";
 const APP_SHELL = ["/", "/manifest.json", "/scorelib-icon.svg"];
 
 self.addEventListener("install", (event) => {
