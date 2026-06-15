@@ -1,25 +1,8 @@
 services:
   - type: web
     name: scorelib-backend
-    root: backend
-    runtime: python
-    pythonVersion: 3.12
-    buildCommand: |
-      apt-get update && \
-      apt-get install -y --no-install-recommends \
-        tesseract-ocr \
-        libtesseract-dev \
-        libpoppler-cpp-dev \
-        poppler-utils && \
-      pip install --no-cache-dir -r requirements.txt
-    startCommand: |
-      apt-get update && \
-      apt-get install -y --no-install-recommends \
-        tesseract-ocr \
-        libtesseract-dev \
-        libpoppler-cpp-dev \
-        poppler-utils && \
-      python -m uvicorn server:app --host 0.0.0.0 --port $PORT
+    env: docker
+    dockerfilePath: Dockerfile
     envVars:
       - key: TESSERACT_PATH
         value: /usr/bin/tesseract
