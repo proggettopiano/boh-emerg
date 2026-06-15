@@ -29,7 +29,7 @@ function getAuthToken() {
 
 const api = axios.create({
   baseURL: API,
-  timeout: Number(process.env.REACT_APP_API_TIMEOUT_MS || 30000),
+  timeout: Number(process.env.REACT_APP_API_TIMEOUT_MS || 15000), // Reduced from 30s to 15s for responsiveness
 });
 
 api.interceptors.request.use((config) => {
