@@ -81,12 +81,15 @@ def _get_google_vision_auth() -> Tuple[str, str]:
     """
     api_key = os.environ.get("GOOGLE_VISION_API_KEY") or os.environ.get("GOOGLE_CLOUD_VISION_API_KEY")
     if api_key:
+        source = "GOOGLE_VISION_API_KEY" if os.environ.get("GOOGLE_VISION_API_KEY") else "GOOGLE_CLOUD_VISION_API_KEY"
+        logger.info("Google Vision auth: using API key from %s", source)
         return "key", api_key
 
     # Support GOOGLE_APPLICATION_CREDENTIALS as either a service account JSON path or an API key.
     adc_value = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     if adc_value:
         if adc_value.startswith("AIza"):
+            logger.info("Google Vision auth: using API key from GOOGLE_APPLICATION_CREDENTIALS")
             return "key", adc_value
         if os.path.isfile(adc_value):
             try:
@@ -95,6 +98,7 @@ def _get_google_vision_auth() -> Tuple[str, str]:
                 client_email = creds_json.get("client_email")
                 private_key = creds_json.get("private_key")
                 if client_email and private_key:
+                    logger.info("Google Vision auth: using ADC service account from GOOGLE_APPLICATION_CREDENTIALS path=%s", adc_value)
                     return "adc", adc_value
             except Exception as exc:
                 logger.warning("Failed to read GOOGLE_APPLICATION_CREDENTIALS: %s", exc)
@@ -134,7 +138,9 @@ def _extract_text_with_google_vision(page) -> str:
         }]}
         headers = {"Content-Type": "application/json"}
         if auth_type == "key":
+            safe_key = f"***{auth_value[-6:]}" if len(auth_value) > 6 else "***"
             url = f"{url}?key={auth_value}"
+            logger.info("Google Vision request: sending API key auth (key suffix=%s)", safe_key)
         elif auth_type == "adc":
             # Use OAuth2 access token generated from service account JSON.
             from google.oauth2.service_account import Credentials as ServiceAccountCredentials
@@ -145,11 +151,19 @@ def _extract_text_with_google_vision(page) -> str:
             if not creds.token:
                 raise RuntimeError("Failed to obtain access token from service account credentials")
             headers["Authorization"] = f"Bearer {creds.token}"
+            logger.info("Google Vision request: sending ADC bearer auth from %s", auth_value)
         else:
             headers["Authorization"] = f"Bearer {auth_value}"
+            logger.info("Google Vision request: sending bearer token auth")
 
+        request_url = url if auth_type != "key" else f"https://vision.googleapis.com/v1/images:annotate?key={safe_key}"
+        logger.info("Google Vision request URL: %s", request_url)
         resp = httpx.post(url, json=params, headers=headers, timeout=60.0)
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as http_exc:
+            logger.warning("Google Vision HTTP error %s: %s", resp.status_code, resp.text[:1000])
+            raise
         response_data = resp.json()
         responses = response_data.get("responses", [])
         if not responses:
@@ -186,6 +200,8 @@ def _extract_text_with_google_vision(page) -> str:
                         return text or ""
                 except Exception as exc2:
                     logger.warning("Google Vision OCR ADC fallback failed: %s", exc2)
+        if auth_type == "key" and not _has_google_vision_auth():
+            logger.warning("Google Vision key fallita e GOOGLE_APPLICATION_CREDENTIALS non valida o non presente.")
         return ""
 
 
@@ -193,10 +209,17 @@ def _warn_no_ocr_backend():
     global _OCR_NOT_CONFIGURED_WARNING_SHOWN
     if not _OCR_NOT_CONFIGURED_WARNING_SHOWN:
         logger.warning(
-            "Nessuna backend OCR configurata: impostare GOOGLE_VISION_API_KEY, GOOGLE_APPLICATION_CREDENTIALS, "
-            "o installare Tesseract per l'esecuzione locale."
+            "Nessun backend OCR locale disponibile: installare Tesseract o impostare TESSERACT_PATH/TESSERACT_CMD."
         )
         _OCR_NOT_CONFIGURED_WARNING_SHOWN = True
+
+
+def _has_google_vision_auth() -> bool:
+    return bool(
+        os.environ.get("GOOGLE_VISION_API_KEY")
+        or os.environ.get("GOOGLE_CLOUD_VISION_API_KEY")
+        or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    )
 
 
 def _ocr_page_text(page) -> str:
@@ -213,8 +236,14 @@ def _ocr_page_text(page) -> str:
 
     tesseract_cmd = _find_tesseract_binary()
     if not tesseract_cmd:
-        _warn_no_ocr_backend()
-        logger.warning("Tesseract binary non trovato nel PATH o in TESSERACT_PATH/TESSERACT_CMD")
+        if _has_google_vision_auth():
+            logger.warning(
+                "Cloud OCR configurata ma non disponibile (Google Vision fallito); "
+                "Tesseract non trovato nel PATH o in TESSERACT_PATH/TESSERACT_CMD."
+            )
+        else:
+            _warn_no_ocr_backend()
+            logger.warning("Tesseract binary non trovato nel PATH o in TESSERACT_PATH/TESSERACT_CMD")
         return ""
 
     try:
