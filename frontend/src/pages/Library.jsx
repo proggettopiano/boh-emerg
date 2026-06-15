@@ -23,31 +23,89 @@ export default function Library() {
   const { user } = useAuth();
   const isAdmin = user?.is_admin;
 
+  // Load library with retry and cache fallback for resilience during indexing
   const load = useCallback(async () => {
     const seq = loadSeq.current + 1;
     loadSeq.current = seq;
     setLoading(true);
+    let successfullyLoaded = false;
+    
     try {
       const params = { sort };
       if (favOnly) params.favorite = true;
       if (tagFilter) params.tag = tagFilter;
-      const r = await api.get("/pdfs", { params });
-      if (mountedRef.current && seq === loadSeq.current) {
-        setItems(r.data.items || []);
-        // Backend doesn't return tags in list_pdfs currently, but we can extract them
-        const allTags = new Set();
-        (r.data.items || []).forEach(p => (p.tags || []).forEach(t => allTags.add(t)));
-        setTags(Array.from(allTags).sort());
-        setLoadError("");
+      
+      // Create a shorter timeout for the first request to avoid blocking UI during indexing
+      const ctrl = new AbortController();
+      const timeoutId = setTimeout(() => ctrl.abort(), 8000); // 8s timeout instead of 30s default
+      
+      try {
+        const r = await api.get("/pdfs", { params, signal: ctrl.signal });
+        clearTimeout(timeoutId);
+        
+        if (mountedRef.current && seq === loadSeq.current) {
+          setItems(r.data.items || []);
+          // Cache to localStorage for offline resilience
+          try {
+            localStorage.setItem("lib_cache", JSON.stringify({
+              items: r.data.items || [],
+              timestamp: Date.now(),
+            }));
+          } catch (e) {}
+          
+          const allTags = new Set();
+          (r.data.items || []).forEach(p => (p.tags || []).forEach(t => allTags.add(t)));
+          setTags(Array.from(allTags).sort());
+          setLoadError("");
+          successfullyLoaded = true;
+        }
+      } catch (fetchErr) {
+        clearTimeout(timeoutId);
+        if (fetchErr?.code !== "ECONNABORTED") throw fetchErr;
+        
+        // If timeout, try fallback from cache
+        const cached = localStorage.getItem("lib_cache");
+        if (cached) {
+          try {
+            const data = JSON.parse(cached);
+            if (mountedRef.current && seq === loadSeq.current) {
+              setItems(data.items || []);
+              const allTags = new Set();
+              (data.items || []).forEach(p => (p.tags || []).forEach(t => allTags.add(t)));
+              setTags(Array.from(allTags).sort());
+              setLoadError("Libreria in aggiornamento. Mostrando ultima versione...");
+              successfullyLoaded = true;
+            }
+          } catch (e) {}
+        }
       }
     } catch (e) {
       if (mountedRef.current && seq === loadSeq.current) {
         const msg = e.response?.data?.detail || "Libreria non caricata";
         setLoadError(msg);
-        toast.error(msg);
+        
+        // Try show cached version on error
+        const cached = localStorage.getItem("lib_cache");
+        if (cached) {
+          try {
+            const data = JSON.parse(cached);
+            setItems(data.items || []);
+            const allTags = new Set();
+            (data.items || []).forEach(p => (p.tags || []).forEach(t => allTags.add(t)));
+            setTags(Array.from(allTags).sort());
+            setLoadError(`Errore: ${msg}. Mostrando versione cached.`);
+            successfullyLoaded = true;
+          } catch (e) {
+            toast.error(msg);
+          }
+        } else {
+          toast.error(msg);
+        }
       }
     } finally {
-      if (mountedRef.current && seq === loadSeq.current) setLoading(false);
+      if (mountedRef.current && seq === loadSeq.current) {
+        setLoading(false);
+      }
     }
   }, [sort, favOnly, tagFilter]);
 
