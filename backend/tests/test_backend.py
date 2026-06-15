@@ -267,6 +267,17 @@ def test_ocr_page_text_prefers_tesseract_when_available(monkeypatch):
     assert text == "TESSERACT OCR TEXT"
 
 
+def test_find_tesseract_binary_falls_back_when_explicit_path_is_invalid(monkeypatch):
+    import pdf_processor
+
+    monkeypatch.setenv("TESSERACT_PATH", "/nonexistent/tesseract")
+    monkeypatch.setattr(pdf_processor.shutil, "which", lambda name: "/usr/bin/tesseract")
+
+    found = pdf_processor._find_tesseract_binary()
+
+    assert found == "/usr/bin/tesseract"
+
+
 def test_ocr_page_text_does_not_call_google_vision_when_tesseract_is_missing(monkeypatch):
     import pdf_processor
 
