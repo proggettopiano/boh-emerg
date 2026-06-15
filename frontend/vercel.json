@@ -14,7 +14,7 @@
         { "key": "x-content-type-options", "value": "nosniff" },
         { "key": "referrer-policy", "value": "strict-origin-when-cross-origin" },
         { "key": "permissions-policy", "value": "interest-cohort=()" },
-        { "key": "content-security-policy", "value": "default-src 'self'; script-src 'self' https://vercel.live; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://api.fontshare.com; font-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://api.fontshare.com https://cdn.fontshare.com; connect-src 'self' https://scorelib-backend.onrender.com https://fonts.googleapis.com https://api.fontshare.com https://vercel.live; img-src 'self' data: blob:; object-src 'none'; frame-ancestors 'none'; frame-src 'self' https://vercel.live; worker-src 'self' blob:; base-uri 'self'" }
+        { "key": "content-security-policy", "value": "default-src 'self'; script-src 'self' https://vercel.live; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://api.fontshare.com; font-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://api.fontshare.com https://cdn.fontshare.com; connect-src 'self' https://scorelib-backend.onrender.com https://scorelib-backend-docker.onrender.com https://fonts.googleapis.com https://api.fontshare.com https://vercel.live; img-src 'self' data: blob:; object-src 'none'; frame-ancestors 'none'; frame-src 'self' https://vercel.live; worker-src 'self' blob:; base-uri 'self'" }
       ]
     }
   ]
