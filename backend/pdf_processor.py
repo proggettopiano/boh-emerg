@@ -53,8 +53,14 @@ def clean_pdf_text(text: str) -> str:
 def _find_tesseract_binary() -> str:
     """Resolve the Tesseract binary, validating explicit overrides before using them."""
     explicit = os.environ.get("TESSERACT_PATH") or os.environ.get("TESSERACT_CMD")
-    logger.debug(f"Searching Tesseract: TESSERACT_PATH={os.environ.get('TESSERACT_PATH')}, TESSERACT_CMD={os.environ.get('TESSERACT_CMD')}")
-    
+    path_dirs = os.environ.get("PATH", "").split(os.pathsep)
+    logger.debug(
+        "Searching Tesseract: TESSERACT_PATH=%s, TESSERACT_CMD=%s, PATH=%s",
+        os.environ.get("TESSERACT_PATH"),
+        os.environ.get("TESSERACT_CMD"),
+        path_dirs,
+    )
+
     candidates = []
 
     if explicit:
@@ -77,11 +83,7 @@ def _find_tesseract_binary() -> str:
     if binary_path:
         logger.info(f"Found Tesseract via which('tesseract'): {binary_path}")
         return binary_path
-    
-    logger.warning(f"Tesseract not found. Checked: explicit={explicit}, which('tesseract')=None")
-    return ""
 
-    # Windows common install locations (user may have installed without PATH).
     possible_paths = [
         r"C:\Program Files\Tesseract-OCR\tesseract.exe",
         r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
@@ -91,10 +93,17 @@ def _find_tesseract_binary() -> str:
         "/usr/share/bin/tesseract",
     ]
     for path in possible_paths:
+        logger.debug(f"Checking common Tesseract path: {path}")
         if os.path.isfile(path):
+            logger.info(f"Found Tesseract at common path: {path}")
             return path
-    return ""
 
+    logger.warning(
+        "Tesseract not found. Checked: explicit=%s, which('tesseract')=None, PATH dirs=%s",
+        explicit,
+        path_dirs,
+    )
+    return ""
 
 def _get_google_vision_auth() -> Tuple[str, str]:
     """Return a tuple (mode, value) for Google Vision HTTP auth.

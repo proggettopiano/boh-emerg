@@ -8,6 +8,8 @@ import logging
 import secrets
 import asyncio
 import psutil
+import shutil
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
@@ -76,9 +78,32 @@ async def lifespan(app: FastAPI):
     # OCR diagnostics at startup
     from pdf_processor import _find_tesseract_binary
     import shutil
+
+    def try_install_tesseract():
+        if shutil.which("tesseract"):
+            return
+        logger.info("Attempting fallback Tesseract install at startup")
+        try:
+            subprocess.run(
+                ["apt-get", "update"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+            subprocess.run(
+                ["apt-get", "install", "-y", "--no-install-recommends", "tesseract-ocr"],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            logger.info("Fallback Tesseract install succeeded")
+        except Exception as exc:
+            logger.warning("Fallback Tesseract install failed: %s", exc)
+
+    try_install_tesseract()
     tesseract_path = _find_tesseract_binary()
-    logger.info(f"OCR diagnostic: TESSERACT_PATH={os.environ.get('TESSERACT_PATH')}, found={tesseract_path}, which='{shutil.which('tesseract')}'")
-    
+    logger.info(
+        f"OCR diagnostic: TESSERACT_PATH={os.environ.get('TESSERACT_PATH')}, found={tesseract_path}, which='{shutil.which('tesseract')}'"
+    )
+
     await ensure_indexes()
     await seed_admin()
     await migrate_single_owner()
