@@ -53,6 +53,8 @@ def clean_pdf_text(text: str) -> str:
 def _find_tesseract_binary() -> str:
     """Resolve the Tesseract binary, validating explicit overrides before using them."""
     explicit = os.environ.get("TESSERACT_PATH") or os.environ.get("TESSERACT_CMD")
+    logger.debug(f"Searching Tesseract: TESSERACT_PATH={os.environ.get('TESSERACT_PATH')}, TESSERACT_CMD={os.environ.get('TESSERACT_CMD')}")
+    
     candidates = []
 
     if explicit:
@@ -62,15 +64,22 @@ def _find_tesseract_binary() -> str:
             candidates.append(expanded)
 
     for candidate in candidates:
+        logger.debug(f"Checking explicit candidate: {candidate}")
         if os.path.isfile(candidate):
+            logger.info(f"Found Tesseract at explicit path: {candidate}")
             return candidate
         resolved = shutil.which(candidate)
         if resolved:
+            logger.info(f"Found Tesseract via which() for explicit path: {resolved}")
             return resolved
 
     binary_path = shutil.which("tesseract")
     if binary_path:
+        logger.info(f"Found Tesseract via which('tesseract'): {binary_path}")
         return binary_path
+    
+    logger.warning(f"Tesseract not found. Checked: explicit={explicit}, which('tesseract')=None")
+    return ""
 
     # Windows common install locations (user may have installed without PATH).
     possible_paths = [
