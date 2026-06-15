@@ -223,45 +223,41 @@ def _has_google_vision_auth() -> bool:
 
 
 def _ocr_page_text(page) -> str:
-    cloud_text = _extract_text_with_google_vision(page)
-    if cloud_text:
-        return cloud_text
-
+    # Try Tesseract first (free, open-source, Apache 2.0)
     try:
         import pytesseract
         from PIL import Image
     except Exception as exc:
-        logger.warning("OCR non disponibile per la pagina: %s", exc)
-        return ""
+        logger.debug("pytesseract/PIL unavailable, trying Cloud Vision: %s", exc)
+    else:
+        tesseract_cmd = _find_tesseract_binary()
+        if tesseract_cmd:
+            try:
+                pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+            except Exception:
+                try:
+                    pytesseract.tesseract_cmd = tesseract_cmd
+                except Exception:
+                    pass
 
-    tesseract_cmd = _find_tesseract_binary()
-    if not tesseract_cmd:
-        if _has_google_vision_auth():
-            logger.warning(
-                "Cloud OCR configurata ma non disponibile (Google Vision fallito); "
-                "Tesseract non trovato nel PATH o in TESSERACT_PATH/TESSERACT_CMD."
-            )
-        else:
-            _warn_no_ocr_backend()
-            logger.warning("Tesseract binary non trovato nel PATH o in TESSERACT_PATH/TESSERACT_CMD")
-        return ""
+            try:
+                pix = page.get_pixmap(alpha=False, dpi=150)
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                text = pytesseract.image_to_string(img)
+                if text:
+                    logger.debug("Tesseract OCR successful")
+                    return text
+            except Exception as exc:
+                logger.warning("Tesseract OCR failed: %s", exc)
 
-    try:
-        pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
-    except Exception:
-        # Some pytesseract versions may expose the command setter differently.
-        try:
-            pytesseract.tesseract_cmd = tesseract_cmd
-        except Exception:
-            pass
+    # Fallback to Cloud Vision if Tesseract unavailable or failed
+    cloud_text = _extract_text_with_google_vision(page)
+    if cloud_text:
+        logger.info("Using Google Vision OCR (Tesseract unavailable)")
+        return cloud_text
 
-    try:
-        pix = page.get_pixmap(alpha=False, dpi=150)
-        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        return pytesseract.image_to_string(img) or ""
-    except Exception as exc:
-        logger.warning("OCR fallback pagina fallito: %s", exc)
-        return ""
+    _warn_no_ocr_backend()
+    return ""
 
 
 def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool, List[str]]:
