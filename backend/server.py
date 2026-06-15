@@ -1414,6 +1414,10 @@ async def health():
 app.include_router(api)
 
 # ----------------- Worker -----------------
+def _extract_pages_sync(fpath_bytes: bytes) -> tuple:
+    """Synchronous wrapper for extract_pages to run in thread pool."""
+    return extract_pages(fpath_bytes)
+
 async def process_pdf_job(job_id):
     job = await db.upload_jobs.find_one({"id": job_id})
     if not job: return
@@ -1422,34 +1426,50 @@ async def process_pdf_job(job_id):
         pdf = await db.pdfs.find_one({"id": job["pdf_id"]})
         fpath = Path(pdf["file_path"])
         if fpath.exists():
-            pages_text, total, used_ocr, page_labels = extract_pages(fpath.read_bytes())
+            # Run OCR in thread pool to avoid blocking event loop
+            pdf_bytes = fpath.read_bytes()
+            pages_text, total, used_ocr, page_labels = await asyncio.to_thread(_extract_pages_sync, pdf_bytes)
             logger.info(f"PDF extraction for {pdf['id']}: {total} pages, OCR used: {used_ocr}")
+            
+            # Batch update pages in parallel for faster indexing
+            tasks = []
             for i, txt in enumerate(pages_text):
                 logger.info(f"  Page {i+1}: {len(txt)} chars, preview: {txt[:80] if txt else '(empty)'}")
-                await db.pdf_pages.update_one(
-                    {"pdf_id": pdf["id"], "page": i+1},
-                    {"$set": {"text": txt, "page_label": page_labels[i]}},
-                    upsert=True,
+                tasks.append(
+                    db.pdf_pages.update_one(
+                        {"pdf_id": pdf["id"], "page": i+1},
+                        {"$set": {"text": txt, "page_label": page_labels[i]}},
+                        upsert=True,
+                    )
                 )
+            # Execute all page updates concurrently
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            
             logger.info(f"PDF {pdf['id']} indexing complete")
             await db.pdfs.update_one({"id": pdf["id"]}, {"$set": {"status": "ready", "pages": total, "page_labels": page_labels}})
-            # Backup to master Drive if configured and not already synced
-            master = await get_master_drive()
-            if master and master.get("refresh_token") and not pdf.get("drive_file_id"):
+            
+            # Background Drive backup (fire-and-forget) to not block completion
+            async def backup_drive():
                 try:
-                    folder_id = await asyncio.to_thread(gi.ensure_master_root, master["refresh_token"])
-                    drive_id = await asyncio.to_thread(gi.upload_to_drive, master["refresh_token"], folder_id, pdf["filename"], fpath.read_bytes())
-                    synced_at = iso_now()
-                    await db.pdfs.update_one({"id": pdf["id"]}, {"$set": {
-                        "drive_file_id": drive_id,
-                        "drive_owner": "master",
-                        "storage_type": "drive",
-                        "synced_at": synced_at,
-                    }})
-                    await log_event("pdf.drive_backup", f"PDF caricato su Drive master: {pdf['id']}", user_id=pdf.get("owner_id"), meta={"pdf_id": pdf["id"], "drive_file_id": drive_id, "folder_id": folder_id})
+                    master = await get_master_drive()
+                    if master and master.get("refresh_token") and not pdf.get("drive_file_id"):
+                        folder_id = await asyncio.to_thread(gi.ensure_master_root, master["refresh_token"])
+                        drive_id = await asyncio.to_thread(gi.upload_to_drive, master["refresh_token"], folder_id, pdf["filename"], pdf_bytes)
+                        synced_at = iso_now()
+                        await db.pdfs.update_one({"id": pdf["id"]}, {"$set": {
+                            "drive_file_id": drive_id,
+                            "drive_owner": "master",
+                            "storage_type": "drive",
+                            "synced_at": synced_at,
+                        }})
+                        await log_event("pdf.drive_backup", f"PDF caricato su Drive master: {pdf['id']}", user_id=pdf.get("owner_id"), meta={"pdf_id": pdf["id"], "drive_file_id": drive_id, "folder_id": folder_id})
                 except Exception as e:
                     await db.pdfs.update_one({"id": pdf["id"]}, {"$set": {"drive_backup_error": str(e)}})
                     await log_event("pdf.drive_error", f"Drive backup fallito: {e}", user_id=pdf.get("owner_id"), level="error", meta={"pdf_id": pdf["id"], "stage": "drive_backup"})
+            
+            # Start background backup and mark job complete immediately
+            asyncio.create_task(backup_drive())
             await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "completed"}})
     except Exception as e:
         await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "failed", "error": str(e)}})
