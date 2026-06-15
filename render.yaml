@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: scorelib-backend
+    root: backend
+    runtime: python
+    startCommand: |
+      apt-get update && apt-get install -y tesseract-ocr libtesseract-dev && \
+      pip install -r requirements.txt && \
+      python -m uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: MONGO_URL
+        sync: false
+      - key: GOOGLE_VISION_API_KEY
+        sync: false
+      - key: GOOGLE_CLOUD_VISION_API_KEY
+        sync: false
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        sync: false
+      - key: ADMIN_EMAIL
+        value: admin@scorelib.com
+    buildCommand: |
+      apt-get update && \
+      apt-get install -y --no-install-recommends \
+        tesseract-ocr \
+        libtesseract-dev && \
+      pip install -r requirements.txt
