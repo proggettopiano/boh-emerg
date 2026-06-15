@@ -51,10 +51,22 @@ def clean_pdf_text(text: str) -> str:
 
 
 def _find_tesseract_binary() -> str:
-    # Prefer explicit environment override, otherwise fall back to discovery.
+    """Resolve the Tesseract binary, validating explicit overrides before using them."""
     explicit = os.environ.get("TESSERACT_PATH") or os.environ.get("TESSERACT_CMD")
+    candidates = []
+
     if explicit:
-        return explicit
+        candidates.append(explicit)
+        expanded = os.path.expanduser(explicit)
+        if expanded != explicit:
+            candidates.append(expanded)
+
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
 
     binary_path = shutil.which("tesseract")
     if binary_path:
