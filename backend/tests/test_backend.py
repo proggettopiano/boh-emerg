@@ -8,6 +8,9 @@ import uuid
 import requests
 import pytest
 
+# Allow direct imports from the backend directory for local unit tests.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://sheet-music-hub-4.preview.emergentagent.com").rstrip("/")
 
 
@@ -257,6 +260,23 @@ def test_has_boilerplate_text_detects_watermark():
     assert pdf_processor._has_boilerplate_text("Questa pagina contiene testo reale e contenuto utile") is False
 
 
+def test_normalize_pdf_text_removes_diacritics_and_replaces_typos():
+    import pdf_processor
+
+    normalized = pdf_processor.normalize_pdf_text("Gesù Cristo è qui. Gest Diò!")
+    assert "Gesù" in normalized
+    assert "Dio" in normalized
+    assert "Cristo" in normalized
+    assert "è" not in normalized
+
+
+def test_extract_page_metadata_detects_cantico_number():
+    import pdf_processor
+
+    metadata = pdf_processor.extract_page_metadata("Canto 542 della domenica")
+    assert metadata.get("cantico") == 542
+
+
 def test_boilerplate_text_alone_does_not_trigger_ocr():
     """Regression test: boilerplate should NOT trigger OCR on its own.
     This was the bug that caused 54-page PDFs to take 90+ seconds."""
@@ -280,9 +300,10 @@ def test_boilerplate_text_alone_does_not_trigger_ocr():
     # - BUT page has no images
     # - AND page has text > 40 chars
     # - AND page has word_count >= 3
-    pages_text, total_pages, used_ocr, page_labels = pdf_processor.extract_pages(pdf_bytes)
+    pages_text, raw_texts, total_pages, used_ocr, page_labels = pdf_processor.extract_pages(pdf_bytes)
     
     assert total_pages == 1
+    assert raw_texts[0].startswith("Creato in un convertitore")
     # boilerplate text alone should NOT trigger OCR or improve text
     assert used_ocr is False, "Boilerplate alone should not trigger OCR"
 
