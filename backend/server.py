@@ -70,7 +70,9 @@ SMTP_HOST = os.environ.get("SMTP_HOST", "").strip()
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER = os.environ.get("SMTP_USER", "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
-SMTP_ENABLED = bool(SMTP_USER and SMTP_PASSWORD)
+BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "").strip()
+# Enable the email-sending path when a Brevo API key is configured
+SMTP_ENABLED = bool(BREVO_API_KEY)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -265,46 +267,38 @@ async def send_email_via_smtp(to_email: str, subject: str, message: str) -> bool
     """Invia email via SMTP (fallback affidabile per FormSubmit)"""
     if not to_email or not SMTP_ENABLED:
         if not SMTP_ENABLED:
-            logger.warning("SMTP non configurato: email non inviata")
+            logger.warning("Brevo API key non configurata: email non inviata")
         return False
 
     from_email = EMAIL_FROM_ADDRESS
     if "<" in from_email and ">" in from_email:
         from_email = from_email.split("<")[-1].strip(" >")
 
-    logger.info("Invio email via SMTP a %s subject=%s", to_email, subject)
+    logger.info("Invio email via Brevo API a %s subject=%s", to_email, subject)
 
-    msg = MIMEMultipart()
-    msg["From"] = from_email
-    msg["To"] = to_email
-    msg["Subject"] = subject
-    msg.attach(MIMEText(message, "plain", "utf-8"))
+    payload = {
+        "sender": {"name": APP_NAME, "email": from_email},
+        "to": [{"email": to_email}],
+        "subject": subject,
+        "htmlContent": message,
+        "textContent": message,
+    }
+
+    headers = {
+        "api-key": BREVO_API_KEY,
+        "Content-Type": "application/json",
+    }
 
     try:
-        smtp_server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30)
-        smtp_server.starttls()
-        smtp_server.login(SMTP_USER, SMTP_PASSWORD)
-        smtp_server.send_message(msg)
-        smtp_server.quit()
-        logger.info("SMTP inviato a %s subject=%s via %s:%s", to_email, subject, SMTP_HOST, SMTP_PORT)
-        return True
-    except smtplib.SMTPAuthenticationError as auth_exc:
-        logger.error("SMTP autenticazione fallita per %s: %s", SMTP_USER, auth_exc)
-    except (smtplib.SMTPException, OSError) as exc_inner:
-        logger.warning("SMTP %s:%s fallito, provo SMTP SSL 465: %s", SMTP_HOST, SMTP_PORT, exc_inner)
-        try:
-            smtp_server = smtplib.SMTP_SSL(SMTP_HOST, 465, timeout=30)
-            smtp_server.login(SMTP_USER, SMTP_PASSWORD)
-            smtp_server.send_message(msg)
-            smtp_server.quit()
-            logger.info("SMTP SSL inviato a %s subject=%s via %s:465", to_email, subject, SMTP_HOST)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post("https://api.brevo.com/v3/smtp/email", json=payload, headers=headers)
+            resp.raise_for_status()
+            logger.info("Brevo API inviata a %s status=%s", to_email, resp.status_code)
             return True
-        except smtplib.SMTPAuthenticationError as auth_exc2:
-            logger.error("SMTP SSL autenticazione fallita per %s: %s", SMTP_USER, auth_exc2)
-        except (smtplib.SMTPException, OSError) as exc_ssl:
-            logger.error("SMTP SSL fallito per %s: %s", SMTP_HOST, exc_ssl)
+    except httpx.HTTPStatusError as http_exc:
+        logger.error("Brevo API HTTP %s per %s: %s", http_exc.response.status_code, to_email, http_exc)
     except Exception as exc:
-        logger.error("Errore SMTP inatteso per %s: %s", to_email, exc)
+        logger.error("Errore Brevo API per %s: %s", to_email, exc)
     return False
 
 async def send_access_request_outcome_email(email: str, status: str, name: Optional[str] = None):
