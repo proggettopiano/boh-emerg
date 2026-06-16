@@ -369,43 +369,55 @@ def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool, List[str]]:
             page = doc[page_num]
             text = page.get_text("text") or ""
             cleaned = clean_pdf_text(text)
-            useful_text = _has_useful_page_text(cleaned)
             page_images = _page_has_images(page)
-
-            boilerplate_text = _has_boilerplate_text(cleaned)
-            if not useful_text or boilerplate_text:
+            word_count = _count_text_words(cleaned)
+            
+            # Decide: attempt OCR only for specific cases
+            # NOT for boilerplate text alone (causes 43s waste on 54-page PDFs)
+            needs_ocr = (
+                page_images                    # Has images that need OCR
+                or len(cleaned) < 40           # Almost empty page
+                or word_count < 3              # No meaningful text
+            )
+            
+            if needs_ocr:
                 reason = []
-                if boilerplate_text:
-                    reason.append("boilerplate")
                 if page_images:
                     reason.append("images")
                 if len(cleaned) < 40:
                     reason.append("short_text")
-
+                if word_count < 3:
+                    reason.append("no_words")
+                
                 logger.info(
-                    "Page %s: chars=%s words=%s images=%s boilerplate=%s useful=%s reason=%s",
+                    "Page %s: OCR attempt - chars=%s words=%s images=%s reason=%s",
                     page_num + 1,
                     len(cleaned),
-                    _count_text_words(cleaned),
+                    word_count,
                     page_images,
-                    boilerplate_text,
-                    useful_text,
-                    "+".join(reason) or "fallback",
+                    "+".join(reason) or "unknown",
                 )
-
-                if page_images or len(cleaned) < 40 or boilerplate_text:
-                    ocr_text = _ocr_page_text(page)
-                    if ocr_text:
-                        cleaned_ocr = clean_pdf_text(ocr_text)
-                        if len(cleaned_ocr) > len(cleaned):
-                            cleaned = cleaned_ocr
-                            used_ocr = True
+                
+                ocr_text = _ocr_page_text(page)
+                if ocr_text:
+                    cleaned_ocr = clean_pdf_text(ocr_text)
+                    if len(cleaned_ocr) > len(cleaned):
+                        cleaned = cleaned_ocr
+                        used_ocr = True
+                        logger.info(
+                            "Page %s: OCR improved text (%d chars -> %d chars, %d -> %d words)",
+                            page_num + 1,
+                            len(text),
+                            len(cleaned_ocr),
+                            word_count,
+                            _count_text_words(cleaned_ocr),
+                        )
             else:
                 logger.debug(
-                    "Page %s: native text used chars=%s words=%s images=%s",
+                    "Page %s: native text sufficient chars=%s words=%s images=%s",
                     page_num + 1,
                     len(cleaned),
-                    _count_text_words(cleaned),
+                    word_count,
                     page_images,
                 )
             pages_text.append(cleaned)
