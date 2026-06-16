@@ -31,6 +31,7 @@ import httpx
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from urllib.parse import quote
 
 from auth_utils import (
     hash_password, verify_password, create_jwt, decode_jwt,
@@ -60,6 +61,9 @@ EMAIL_FROM_ADDRESS = os.environ.get("EMAIL_FROM_ADDRESS", f"{APP_NAME} <no-reply
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://scorelib.vercel.app").rstrip("/")
 BACKEND_CORS_ORIGINS = [origin.strip() for origin in os.environ.get("BACKEND_CORS_ORIGINS", "").split(",") if origin.strip()]
 FORMSUBMIT_BASE_URL = os.environ.get("FORMSUBMIT_BASE_URL", "https://formsubmit.co").strip()
+FORM_SUBMIT_DEST_EMAIL = os.environ.get("FORM_SUBMIT_DEST_EMAIL", EMAIL_FROM_ADDRESS).strip()
+if "<" in FORM_SUBMIT_DEST_EMAIL and ">" in FORM_SUBMIT_DEST_EMAIL:
+    FORM_SUBMIT_DEST_EMAIL = FORM_SUBMIT_DEST_EMAIL.split("<")[-1].strip(" >")
 
 # SMTP Configuration (for reliable email sending fallback)
 SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
@@ -157,6 +161,12 @@ async def add_security_headers(request: Request, call_next):
         response = await call_next(request)
         if response is None:
             response = Response("Internal server error", status_code=500)
+    except RuntimeError as exc:
+        if "No response returned" in str(exc):
+            logger.warning("Request pipeline ended without response for %s %s", request.method, request.url)
+        else:
+            logger.exception("Unhandled runtime error in request pipeline")
+        response = Response("Internal server error", status_code=500)
     except Exception as exc:
         logger.exception("Unhandled exception in request pipeline")
         response = Response("Internal server error", status_code=500)
@@ -206,7 +216,14 @@ async def log_event(event_type: str, description: str, user_id: Optional[str] = 
     log_func(f"[{event_type.upper()}] {description} (user={user_id})")
 
 async def send_email(to_email: str, subject: str, html: str):
-    logger.info("Richiesta invio email via FormSubmit a %s subject=%s", to_email, subject)
+    if SMTP_ENABLED:
+        logger.info("Tentativo invio email via SMTP a %s subject=%s", to_email, subject)
+        sent = await send_email_via_smtp(to_email, subject, html)
+        if sent:
+            return True
+        logger.info("SMTP fallito, fallback a FormSubmit per %s", to_email)
+    else:
+        logger.info("SMTP non configurato, invio diretto via FormSubmit a %s subject=%s", to_email, subject)
     return await send_email_via_formsubmit(to_email, subject, html)
 
 async def send_email_via_formsubmit(to_email: str, subject: str, message: str) -> bool:
@@ -223,16 +240,26 @@ async def send_email_via_formsubmit(to_email: str, subject: str, message: str) -
         "message": message,
         "_subject": subject,
         "_template": "table",
+        "_captcha": "false",
     }
     try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        target_url = f"{FORMSUBMIT_BASE_URL}/ajax/{quote(FORM_SUBMIT_DEST_EMAIL, safe='')}"
+        logger.info("Tentativo FormSubmit verso %s subject=%s", FORM_SUBMIT_DEST_EMAIL, subject)
         async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(f"{FORMSUBMIT_BASE_URL}/{to_email}", data=payload)
+            resp = await client.post(target_url, json=payload, headers=headers)
             resp.raise_for_status()
-            logger.info("Email inviata via FormSubmit a %s subject=%s status=%s", to_email, subject, resp.status_code)
+            logger.info("FormSubmit inviato a %s status=%s", FORM_SUBMIT_DEST_EMAIL, resp.status_code)
             return True
+    except httpx.HTTPStatusError as http_exc:
+        logger.error("FormSubmit HTTP %s per %s: %s", http_exc.response.status_code, FORM_SUBMIT_DEST_EMAIL, http_exc)
     except Exception as exc:
-        logger.error("Errore invio email via FormSubmit a %s subject=%s error=%s", to_email, subject, str(exc))
-        return False
+        logger.error("Errore FormSubmit per %s: %s", FORM_SUBMIT_DEST_EMAIL, exc)
+    return False
 
 async def send_email_via_smtp(to_email: str, subject: str, message: str) -> bool:
     """Invia email via SMTP (fallback affidabile per FormSubmit)"""
@@ -240,33 +267,45 @@ async def send_email_via_smtp(to_email: str, subject: str, message: str) -> bool
         if not SMTP_ENABLED:
             logger.warning("SMTP non configurato: email non inviata")
         return False
-    
+
+    from_email = EMAIL_FROM_ADDRESS
+    if "<" in from_email and ">" in from_email:
+        from_email = from_email.split("<")[-1].strip(" >")
+
+    logger.info("Invio email via SMTP a %s subject=%s", to_email, subject)
+
+    msg = MIMEMultipart()
+    msg["From"] = from_email
+    msg["To"] = to_email
+    msg["Subject"] = subject
+    msg.attach(MIMEText(message, "plain", "utf-8"))
+
     try:
-        from_email = EMAIL_FROM_ADDRESS
-        if "<" in from_email and ">" in from_email:
-            from_email = from_email.split("<")[-1].strip(" >")
-        
-        logger.info("Invio email via SMTP a %s subject=%s", to_email, subject)
-        
-        # Crea messaggio email
-        msg = MIMEMultipart()
-        msg["From"] = from_email
-        msg["To"] = to_email
-        msg["Subject"] = subject
-        msg.attach(MIMEText(message, "plain", "utf-8"))
-        
-        # Invia tramite SMTP
         smtp_server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30)
         smtp_server.starttls()
         smtp_server.login(SMTP_USER, SMTP_PASSWORD)
         smtp_server.send_message(msg)
         smtp_server.quit()
-        
-        logger.info("Email inviata via SMTP a %s subject=%s", to_email, subject)
+        logger.info("SMTP inviato a %s subject=%s via %s:%s", to_email, subject, SMTP_HOST, SMTP_PORT)
         return True
+    except smtplib.SMTPAuthenticationError as auth_exc:
+        logger.error("SMTP autenticazione fallita per %s: %s", SMTP_USER, auth_exc)
+    except (smtplib.SMTPException, OSError) as exc_inner:
+        logger.warning("SMTP %s:%s fallito, provo SMTP SSL 465: %s", SMTP_HOST, SMTP_PORT, exc_inner)
+        try:
+            smtp_server = smtplib.SMTP_SSL(SMTP_HOST, 465, timeout=30)
+            smtp_server.login(SMTP_USER, SMTP_PASSWORD)
+            smtp_server.send_message(msg)
+            smtp_server.quit()
+            logger.info("SMTP SSL inviato a %s subject=%s via %s:465", to_email, subject, SMTP_HOST)
+            return True
+        except smtplib.SMTPAuthenticationError as auth_exc2:
+            logger.error("SMTP SSL autenticazione fallita per %s: %s", SMTP_USER, auth_exc2)
+        except (smtplib.SMTPException, OSError) as exc_ssl:
+            logger.error("SMTP SSL fallito per %s: %s", SMTP_HOST, exc_ssl)
     except Exception as exc:
-        logger.error("Errore invio email via SMTP a %s subject=%s error=%s", to_email, subject, str(exc))
-        return False
+        logger.error("Errore SMTP inatteso per %s: %s", to_email, exc)
+    return False
 
 async def send_access_request_outcome_email(email: str, status: str, name: Optional[str] = None):
     try:
