@@ -314,6 +314,7 @@ def _ocr_page_text(page) -> str:
     try:
         import pytesseract
         from PIL import Image
+        from PIL import ImageFilter, ImageOps, ImageEnhance
     except Exception as exc:
         logger.warning("OCR locale non disponibile: %s", exc)
         return ""
@@ -332,17 +333,83 @@ def _ocr_page_text(page) -> str:
         except Exception:
             pass
 
+    # Multi-pass OCR with simple preprocessing and varying PSM/DPI to increase recall.
+    results = []
     try:
-        pix = page.get_pixmap(alpha=False, dpi=150)
-        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        text = pytesseract.image_to_string(img)
-        if text:
-            logger.debug("Tesseract OCR successful")
-            return text
+        # Try a small set of DPI and PSM values; order matters (cheapest first)
+        dpis = [150, 300]
+        psm_values = [3, 6, 11]
+
+        for dpi in dpis:
+            try:
+                pix = page.get_pixmap(alpha=False, dpi=dpi)
+            except Exception:
+                # Fallback to default dpi if rendering fails
+                try:
+                    pix = page.get_pixmap(alpha=False)
+                except Exception as exc:
+                    logger.warning("Failed to rasterize page for OCR: %s", exc)
+                    continue
+
+            try:
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            except Exception:
+                # some pixmap samples might be directly convertible via frombuffer
+                try:
+                    img = Image.frombuffer("RGB", (pix.width, pix.height), pix.samples, "raw", "RGB", 0, 1)
+                except Exception as exc:
+                    logger.warning("Failed to convert pixmap to Image: %s", exc)
+                    continue
+
+            # Basic preprocessing pipeline: grayscale, autocontrast, sharpen, enhance
+            try:
+                gray = ImageOps.grayscale(img)
+                gray = ImageOps.autocontrast(gray)
+                gray = gray.filter(ImageFilter.MedianFilter(size=3))
+                gray = gray.filter(ImageFilter.SHARPEN)
+                enhancer = ImageEnhance.Contrast(gray)
+                gray = enhancer.enhance(1.3)
+            except Exception as exc:
+                logger.debug("Image preprocessing failed: %s", exc)
+                gray = img
+
+            for psm in psm_values:
+                try:
+                    lang = os.environ.get("TESSERACT_LANG", "ita+eng")
+                    config = f"--psm {psm} --oem 3"
+                    text = pytesseract.image_to_string(gray, lang=lang, config=config)
+                    if text:
+                        results.append(text)
+                except Exception as exc:
+                    logger.debug("Tesseract pass failed (dpi=%s psm=%s): %s", dpi, psm, exc)
+
+        if not results:
+            return ""
+
+        # Merge results: prefer longest unique lines across passes to maximize recall
+        lines = []
+        for r in results:
+            for ln in [l.strip() for l in r.splitlines() if l.strip()]:
+                # keep line if not a duplicate substring of existing
+                found = False
+                for i, exist in enumerate(lines):
+                    if ln in exist:
+                        found = True
+                        break
+                    if exist in ln:
+                        # replace shorter with longer
+                        lines[i] = ln
+                        found = True
+                        break
+                if not found:
+                    lines.append(ln)
+
+        merged = "\n".join(lines)
+        logger.debug("Tesseract OCR passes produced %d results, merged %d lines", len(results), len(lines))
+        return merged
     except Exception as exc:
         logger.warning("Tesseract OCR failed: %s", exc)
-
-    return ""
+        return ""
 
 
 def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool, List[str]]:
@@ -401,17 +468,19 @@ def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool, List[str]]:
                 ocr_text = _ocr_page_text(page)
                 if ocr_text:
                     cleaned_ocr = clean_pdf_text(ocr_text)
-                    if len(cleaned_ocr) > len(cleaned):
-                        cleaned = cleaned_ocr
-                        used_ocr = True
-                        logger.info(
-                            "Page %s: OCR improved text (%d chars -> %d chars, %d -> %d words)",
-                            page_num + 1,
-                            len(text),
-                            len(cleaned_ocr),
-                            word_count,
-                            _count_text_words(cleaned_ocr),
-                        )
+                    # Append OCR-cleaned text to native cleaned text to maximize recall,
+                    # avoid losing native text and preserve fragments for partial search.
+                    if cleaned_ocr:
+                        if cleaned_ocr not in cleaned:
+                            cleaned = (cleaned + " " + cleaned_ocr).strip() if cleaned else cleaned_ocr
+                            used_ocr = True
+                            logger.info(
+                                "Page %s: OCR yielded %d chars, appended to native text (now %d chars, %d words)",
+                                page_num + 1,
+                                len(cleaned_ocr),
+                                len(cleaned),
+                                _count_text_words(cleaned),
+                            )
             else:
                 logger.debug(
                     "Page %s: native text sufficient chars=%s words=%s images=%s",
