@@ -55,15 +55,21 @@ class DummyAsyncClient:
     async def __aexit__(self, exc_type, exc, tb):
         return False
 
-    async def post(self, url, data=None):
-        assert url == 'https://formsubmit.co/test@example.com'
-        assert data['_subject'] == 'Fallback subject'
-        assert data['message'] == '<p>Fallback</p>'
-        assert data['email'] == 'no-reply@scorelib.app'
+    async def post(self, url, json=None, headers=None):
+        assert url == 'https://formsubmit.co/ajax/no-reply%40scorelib.app'
+        assert json['_subject'] == 'Fallback subject'
+        assert json['message'] == '<p>Fallback</p>'
+        assert json['email'] == 'no-reply@scorelib.app'
+        assert headers['Content-Type'] == 'application/json'
         return DummyResponse()
+
+class DummyHTTPX:
+    AsyncClient = DummyAsyncClient
+    HTTPStatusError = Exception
+
 
 def test_send_email_via_formsubmit(monkeypatch):
     module = import_server_module()
-    monkeypatch.setattr(module, 'httpx', type('httpx', (), {'AsyncClient': DummyAsyncClient}))
+    monkeypatch.setattr(module, 'httpx', DummyHTTPX)
 
     asyncio.run(module.send_email('test@example.com', 'Fallback subject', '<p>Fallback</p>'))
