@@ -66,7 +66,7 @@ if "<" in FORM_SUBMIT_DEST_EMAIL and ">" in FORM_SUBMIT_DEST_EMAIL:
     FORM_SUBMIT_DEST_EMAIL = FORM_SUBMIT_DEST_EMAIL.split("<")[-1].strip(" >")
 
 # SMTP Configuration (for reliable email sending fallback)
-SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+SMTP_HOST = os.environ.get("SMTP_HOST", "").strip()
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER = os.environ.get("SMTP_USER", "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
