@@ -241,6 +241,24 @@ def test_clean_pdf_text_removes_decorative_number_tokens():
     assert "domenica" in cleaned
 
 
+def test_has_useful_page_text_threshold():
+    import pdf_processor
+
+    assert pdf_processor._has_useful_page_text("Questo è un testo valido con parole sufficienti.") is True
+    assert pdf_processor._has_useful_page_text("Solo poche parole") is False
+    assert pdf_processor._has_useful_page_text("   ") is False
+
+
+def test_page_has_images_detects_image_page():
+    import pdf_processor
+
+    class DummyPage:
+        def get_images(self, full=True):
+            return [(1, 2, 3)]
+
+    assert pdf_processor._page_has_images(DummyPage()) is True
+
+
 def test_ocr_page_text_prefers_tesseract_when_available(monkeypatch):
     import pdf_processor
 

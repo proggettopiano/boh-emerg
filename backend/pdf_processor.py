@@ -50,6 +50,25 @@ def clean_pdf_text(text: str) -> str:
     return text.strip()
 
 
+def _count_text_words(text: str) -> int:
+    return len(re.findall(r"\b[A-Za-zÀ-ÿ0-9]{2,}\b", text))
+
+
+def _has_useful_page_text(cleaned_text: str) -> bool:
+    if not cleaned_text:
+        return False
+    if len(cleaned_text) < 40:
+        return False
+    return _count_text_words(cleaned_text) >= 6
+
+
+def _page_has_images(page) -> bool:
+    try:
+        return bool(page.get_images(full=True))
+    except Exception:
+        return False
+
+
 def _find_tesseract_binary() -> str:
     """Resolve the Tesseract binary, validating explicit overrides before using them."""
     explicit = os.environ.get("TESSERACT_PATH") or os.environ.get("TESSERACT_CMD")
@@ -312,13 +331,24 @@ def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool, List[str]]:
             page = doc[page_num]
             text = page.get_text("text") or ""
             cleaned = clean_pdf_text(text)
-            if len(cleaned) < 40:
-                ocr_text = _ocr_page_text(page)
-                if ocr_text:
-                    cleaned_ocr = clean_pdf_text(ocr_text)
-                    if len(cleaned_ocr) > len(cleaned):
-                        cleaned = cleaned_ocr
-                        used_ocr = True
+            useful_text = _has_useful_page_text(cleaned)
+            page_images = _page_has_images(page)
+
+            if not useful_text:
+                logger.debug(
+                    "Page %s: chars=%s words=%s images=%s",
+                    page_num + 1,
+                    len(cleaned),
+                    _count_text_words(cleaned),
+                    page_images,
+                )
+                if page_images or len(cleaned) < 40:
+                    ocr_text = _ocr_page_text(page)
+                    if ocr_text:
+                        cleaned_ocr = clean_pdf_text(ocr_text)
+                        if len(cleaned_ocr) > len(cleaned):
+                            cleaned = cleaned_ocr
+                            used_ocr = True
             pages_text.append(cleaned)
         except Exception as e:
             logger.warning(f"Failed to extract page {page_num + 1}: {e}")
