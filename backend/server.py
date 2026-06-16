@@ -28,7 +28,6 @@ from slowapi.util import get_remote_address
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 import httpx
-import resend as email_sdk
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -57,10 +56,9 @@ APP_NAME = os.environ.get("APP_NAME", "ScoreLib")
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@scorelib.app").lower()
 ADMIN_RESET_PASSWORD = os.environ.get("ADMIN_LOG_PASSWORD")
 WORKER_SECRET = os.environ.get("WORKER_SECRET", "")
-EMAIL_API_KEY = os.environ.get("EMAIL_API_KEY", os.environ.get("RESEND_API_KEY", "")).strip()
-EMAIL_FROM_ADDRESS = os.environ.get("EMAIL_FROM_ADDRESS", os.environ.get("RESEND_FROM_EMAIL", f"{APP_NAME} <no-reply@scorelib.app>")).strip()
-EMAIL_API_URL = os.environ.get("EMAIL_API_URL", "https://api.resend.com/emails").strip()
+EMAIL_FROM_ADDRESS = os.environ.get("EMAIL_FROM_ADDRESS", f"{APP_NAME} <no-reply@scorelib.app>").strip()
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://scorelib.vercel.app").rstrip("/")
+BACKEND_CORS_ORIGINS = [origin.strip() for origin in os.environ.get("BACKEND_CORS_ORIGINS", "").split(",") if origin.strip()]
 FORMSUBMIT_BASE_URL = os.environ.get("FORMSUBMIT_BASE_URL", "https://formsubmit.co").strip()
 
 # SMTP Configuration (for reliable email sending fallback)
@@ -69,9 +67,6 @@ SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER = os.environ.get("SMTP_USER", "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 SMTP_ENABLED = bool(SMTP_USER and SMTP_PASSWORD)
-
-if EMAIL_API_KEY:
-    email_sdk.api_key = EMAIL_API_KEY
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -107,7 +102,7 @@ async def lifespan(app: FastAPI):
     await ensure_indexes()
     await seed_admin()
     await migrate_single_owner()
-    asyncio.create_task(access_request_reminder_loop())
+    safe_create_task(access_request_reminder_loop())
     
     # Startup job recovery
     stuck_jobs = await db.upload_jobs.find({"status": {"$in": ["processing", "queued"]}}).to_list(1000)
@@ -116,7 +111,7 @@ async def lifespan(app: FastAPI):
         {"$set": {"status": "queued", "error": "requeued_at_startup", "updated_at": iso_now()}}
     )
     for _j in stuck_jobs:
-        asyncio.create_task(process_pdf_job(_j["id"]))
+        safe_create_task(process_pdf_job(_j["id"]))
     yield
 
 ENABLE_DOCS = os.environ.get("ENABLE_DOCS", "0") == "1"
@@ -134,9 +129,13 @@ app.add_middleware(SlowAPIMiddleware)
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Configurazione CORS robusta
+cors_origins = [FRONTEND_URL, "http://localhost:3000", "http://127.0.0.1:3000"]
+if BACKEND_CORS_ORIGINS:
+    cors_origins.extend([origin for origin in BACKEND_CORS_ORIGINS if origin not in cors_origins])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_URL, "http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=cors_origins,
     allow_origin_regex=r"^https://.*\.(vercel\.app|vercel\.live|preview\.emergentagent\.com)$",
     allow_credentials=True,
     allow_methods=["*"],
@@ -154,7 +153,13 @@ SECURITY_HEADERS = {
 
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+        if response is None:
+            response = Response("Internal server error", status_code=500)
+    except Exception as exc:
+        logger.exception("Unhandled exception in request pipeline")
+        response = Response("Internal server error", status_code=500)
     for name, value in SECURITY_HEADERS.items():
         if name not in response.headers:
             response.headers[name] = value
@@ -165,9 +170,17 @@ api = APIRouter(prefix="/api")
 logger = logging.getLogger("scorelib")
 logging.basicConfig(level=logging.INFO)
 
-if not EMAIL_API_KEY:
-    logger.warning("EMAIL_API_KEY non configurata: invio email disabilitato.")
-elif "scorelib.app" in EMAIL_FROM_ADDRESS:
+
+def safe_create_task(coro):
+    async def wrapper():
+        try:
+            await coro
+        except Exception:
+            logger.exception("Unhandled background task error")
+
+    return asyncio.create_task(wrapper())
+
+if "scorelib.app" in EMAIL_FROM_ADDRESS:
     logger.warning("EMAIL_FROM_ADDRESS usa dominio scorelib.app. Assicurati che il dominio sia verificato nel provider email.")
 
 # ----------------- Helpers -----------------
@@ -193,43 +206,13 @@ async def log_event(event_type: str, description: str, user_id: Optional[str] = 
     log_func(f"[{event_type.upper()}] {description} (user={user_id})")
 
 async def send_email(to_email: str, subject: str, html: str):
-    if not EMAIL_API_KEY:
-        logger.warning("EMAIL_API_KEY non configurata: email non inviata a %s", to_email)
-        return
-    params = {
-        "from": EMAIL_FROM_ADDRESS,
-        "to": [to_email],
-        "subject": subject,
-        "html": html,
-    }
-    logger.info("Richiesta invio email a %s subject=%s", to_email, subject)
-    try:
-        if hasattr(email_sdk, "Emails") and callable(getattr(email_sdk.Emails, "send", None)):
-            await asyncio.to_thread(email_sdk.Emails.send, params)
-            logger.info("Email inviata a %s subject=%s tramite SDK", to_email, subject)
-            return
-        headers = {
-            "Authorization": f"Bearer {EMAIL_API_KEY}",
-            "Content-Type": "application/json",
-        }
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(EMAIL_API_URL, headers=headers, json=params)
-            body = resp.text[:1024]
-            logger.info("Email inviata a %s subject=%s tramite HTTP fallback status=%s", to_email, subject, resp.status_code)
-            resp.raise_for_status()
-            logger.info("Email inviata a %s subject=%s tramite HTTP fallback", to_email, subject)
-    except httpx.HTTPStatusError as exc:
-        response = exc.response
-        body = response.text[:1024] if response is not None else "<no response>"
-        status_code = response.status_code if response is not None else "?"
-        logger.error("Invio email fallito a %s subject=%s status=%s body=%s", to_email, subject, status_code, body)
-    except Exception as exc:
-        logger.error("Errore invio email a %s subject=%s error=%s", to_email, subject, str(exc))
+    logger.info("Richiesta invio email via FormSubmit a %s subject=%s", to_email, subject)
+    return await send_email_via_formsubmit(to_email, subject, html)
 
-async def send_email_via_formsubmit(to_email: str, subject: str, message: str):
+async def send_email_via_formsubmit(to_email: str, subject: str, message: str) -> bool:
     if not to_email:
         logger.warning("send_email_via_formsubmit: to_email non specificata")
-        return
+        return False
     logger.info("Invio email via FormSubmit a %s subject=%s", to_email, subject)
     from_email = EMAIL_FROM_ADDRESS
     if "<" in from_email and ">" in from_email:
@@ -246,15 +229,17 @@ async def send_email_via_formsubmit(to_email: str, subject: str, message: str):
             resp = await client.post(f"{FORMSUBMIT_BASE_URL}/{to_email}", data=payload)
             resp.raise_for_status()
             logger.info("Email inviata via FormSubmit a %s subject=%s status=%s", to_email, subject, resp.status_code)
+            return True
     except Exception as exc:
         logger.error("Errore invio email via FormSubmit a %s subject=%s error=%s", to_email, subject, str(exc))
+        return False
 
-async def send_email_via_smtp(to_email: str, subject: str, message: str):
+async def send_email_via_smtp(to_email: str, subject: str, message: str) -> bool:
     """Invia email via SMTP (fallback affidabile per FormSubmit)"""
     if not to_email or not SMTP_ENABLED:
         if not SMTP_ENABLED:
             logger.warning("SMTP non configurato: email non inviata")
-        return
+        return False
     
     try:
         from_email = EMAIL_FROM_ADDRESS
@@ -278,29 +263,55 @@ async def send_email_via_smtp(to_email: str, subject: str, message: str):
         smtp_server.quit()
         
         logger.info("Email inviata via SMTP a %s subject=%s", to_email, subject)
+        return True
     except Exception as exc:
         logger.error("Errore invio email via SMTP a %s subject=%s error=%s", to_email, subject, str(exc))
+        return False
 
 async def send_access_request_outcome_email(email: str, status: str, name: Optional[str] = None):
-    safe_name = name or email
-    logger.info("send_access_request_outcome_email status=%s email=%s name=%s", status, email, safe_name)
-    if status == "approved":
-        subject = "ScoreLib: richiesta di accesso approvata"
-        message = (
-            f"Ciao {safe_name},\n\n"
-            f"La tua richiesta di accesso a ScoreLib per {email} è stata approvata.\n"
-            f"Ora puoi effettuare il login su {FRONTEND_URL} con questa email.\n\n"
-            "Grazie,\nTeam ScoreLib"
-        )
-    elif status == "rejected":
-        subject = "ScoreLib: richiesta di accesso rifiutata"
-        message = (
-            f"Ciao {safe_name},\n\n"
-            f"La tua richiesta di accesso a ScoreLib per {email} non è stata approvata.\n"
-            "Se desideri, puoi inviare una nuova richiesta di accesso.\n\n"
-            "Grazie,\nTeam ScoreLib"
-        )
-    else:
+    try:
+        safe_name = name or email
+        logger.info("send_access_request_outcome_email status=%s email=%s name=%s", status, email, safe_name)
+        if status == "approved":
+            subject = "ScoreLib: richiesta di accesso approvata"
+            message = (
+                f"Ciao {safe_name},\n\n"
+                f"La tua richiesta di accesso a ScoreLib per {email} è stata approvata.\n"
+                f"Ora puoi effettuare il login su {FRONTEND_URL} con questa email.\n\n"
+                "Grazie,\nTeam ScoreLib"
+            )
+        elif status == "rejected":
+            subject = "ScoreLib: richiesta di accesso rifiutata"
+            message = (
+                f"Ciao {safe_name},\n\n"
+                f"La tua richiesta di accesso a ScoreLib per {email} non è stata approvata.\n"
+                "Se desideri, puoi inviare una nuova richiesta di accesso.\n\n"
+                "Grazie,\nTeam ScoreLib"
+            )
+        else:
+            subject = "ScoreLib: richiesta di accesso ancora in attesa"
+            message = (
+                f"Ciao {safe_name},\n\n"
+                f"La tua richiesta di accesso a ScoreLib per {email} è ancora in attesa perché l'amministratore non ha ancora risposto.\n"
+                "Se non ti rispondo, la richiesta resterà in attesa.\n"
+                "Puoi attendere o inviare una nuova richiesta.\n\n"
+                "Grazie,\nTeam ScoreLib"
+            )
+        sent = False
+        if SMTP_ENABLED:
+            sent = await send_email_via_smtp(email, subject, message)
+        if not sent:
+            logger.info("FormSubmit fallback per esito richiesta accesso a %s", email)
+            sent = await send_email_via_formsubmit(email, subject, message)
+            if not sent:
+                logger.error("Tutti i metodi di invio email sono falliti per %s", email)
+    except Exception:
+        logger.exception("Errore inatteso durante l'invio dell'email di esito richiesta accesso a %s", email)
+
+async def send_access_request_reminder_email(email: str, name: Optional[str] = None):
+    try:
+        safe_name = name or email
+        logger.info("send_access_request_reminder_email email=%s name=%s", email, safe_name)
         subject = "ScoreLib: richiesta di accesso ancora in attesa"
         message = (
             f"Ciao {safe_name},\n\n"
@@ -309,26 +320,13 @@ async def send_access_request_outcome_email(email: str, status: str, name: Optio
             "Puoi attendere o inviare una nuova richiesta.\n\n"
             "Grazie,\nTeam ScoreLib"
         )
-    await send_email_via_smtp(email, subject, message)
-    # Se SMTP non configurato, fallback a FormSubmit
-    if not SMTP_ENABLED:
-        await send_email_via_formsubmit(email, subject, message)
-
-async def send_access_request_reminder_email(email: str, name: Optional[str] = None):
-    safe_name = name or email
-    logger.info("send_access_request_reminder_email email=%s name=%s", email, safe_name)
-    subject = "ScoreLib: richiesta di accesso ancora in attesa"
-    message = (
-        f"Ciao {safe_name},\n\n"
-        f"La tua richiesta di accesso a ScoreLib per {email} è ancora in attesa perché l'amministratore non ha ancora risposto.\n"
-        "Se non ti rispondo, la richiesta resterà in attesa.\n"
-        "Puoi attendere o inviare una nuova richiesta.\n\n"
-        "Grazie,\nTeam ScoreLib"
-    )
-    await send_email_via_smtp(email, subject, message)
-    # Se SMTP non configurato, fallback a FormSubmit
-    if not SMTP_ENABLED:
-        await send_email_via_formsubmit(email, subject, message)
+        sent = False
+        if SMTP_ENABLED:
+            sent = await send_email_via_smtp(email, subject, message)
+        if not sent:
+            await send_email_via_formsubmit(email, subject, message)
+    except Exception:
+        logger.exception("Errore inatteso durante l'invio del promemoria di richiesta accesso a %s", email)
 
 async def send_pending_access_request_reminders():
     threshold = datetime.now(timezone.utc) - timedelta(days=3)
@@ -1319,21 +1317,21 @@ async def list_access_requests(_: str = Depends(require_admin)):
     return [clean_doc(r) for r in reqs]
 
 @api.post("/admin/access-requests/approve")
-async def approve_access(payload: dict, user_id: str = Depends(require_admin)):
+async def approve_access(payload: dict, background_tasks: BackgroundTasks, user_id: str = Depends(require_admin)):
     email = payload["email"].lower().strip()
     req = await db.access_requests.find_one({"email": email})
     await db.access_requests.update_one({"email": email}, {"$set": {"status": "approved", "email": email}})
     await log_event("access.approved", f"Richiesta accesso approvata: {email}", user_id=user_id, meta={"email": email})
-    asyncio.create_task(send_access_request_outcome_email(email, "approved", req.get("name") if req else None))
+    background_tasks.add_task(send_access_request_outcome_email, email, "approved", req.get("name") if req else None)
     return {"ok": True}
 
 @api.post("/admin/access-requests/reject")
-async def reject_access(payload: dict, user_id: str = Depends(require_admin)):
+async def reject_access(payload: dict, background_tasks: BackgroundTasks, user_id: str = Depends(require_admin)):
     email = payload["email"].lower().strip()
     req = await db.access_requests.find_one({"email": email})
     await db.access_requests.update_one({"email": email}, {"$set": {"status": "rejected", "email": email}})
     await log_event("access.rejected", f"Richiesta accesso rifiutata: {email}", user_id=user_id, meta={"email": email})
-    asyncio.create_task(send_access_request_outcome_email(email, "rejected", req.get("name") if req else None))
+    background_tasks.add_task(send_access_request_outcome_email, email, "rejected", req.get("name") if req else None)
     return {"ok": True}
 
 @api.get("/admin/master-drive/status")
@@ -1470,7 +1468,7 @@ async def process_pdf_job(job_id):
                     await log_event("pdf.drive_error", f"Drive backup fallito: {e}", user_id=pdf.get("owner_id"), level="error", meta={"pdf_id": pdf["id"], "stage": "drive_backup"})
             
             # Start background backup and mark job complete immediately
-            asyncio.create_task(backup_drive())
+            safe_create_task(backup_drive())
             await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "completed"}})
     except Exception as e:
         await db.upload_jobs.update_one({"id": job_id}, {"$set": {"status": "failed", "error": str(e)}})

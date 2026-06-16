@@ -15,7 +15,6 @@ def set_test_env(monkeypatch):
     monkeypatch.setenv('JWT_SECRET', 'testsecret')
     monkeypatch.setenv('MONGO_URL', 'mongodb://localhost:27017')
     monkeypatch.setenv('DB_NAME', 'test')
-    monkeypatch.setenv('EMAIL_API_KEY', 'test_key')
     monkeypatch.setenv('EMAIL_FROM_ADDRESS', 'ScoreLib <no-reply@scorelib.app>')
     yield
 
@@ -38,23 +37,6 @@ def test_send_email_function_exists():
     assert callable(module.send_email)
     assert module.send_email.__code__.co_argcount >= 3
 
-def test_send_email_uses_sdk_send(monkeypatch):
-    module = import_server_module()
-    send_calls = []
-
-    def fake_send(params):
-        send_calls.append(params)
-        return None
-
-    monkeypatch.setattr(module.email_sdk.Emails, 'send', fake_send)
-
-    asyncio.run(module.send_email('test@example.com', 'Test subject', '<p>Test</p>'))
-
-    assert len(send_calls) == 1
-    assert send_calls[0]['to'] == ['test@example.com']
-    assert send_calls[0]['subject'] == 'Test subject'
-    assert 'html' in send_calls[0]
-
 class DummyResponse:
     def __init__(self, status_code=200, text='ok'):
         self.status_code = status_code
@@ -73,14 +55,15 @@ class DummyAsyncClient:
     async def __aexit__(self, exc_type, exc, tb):
         return False
 
-    async def post(self, url, headers, json):
-        assert url == 'https://api.resend.com/emails'
-        assert headers['Authorization'] == 'Bearer test_key'
+    async def post(self, url, data=None):
+        assert url == 'https://formsubmit.co/test@example.com'
+        assert data['_subject'] == 'Fallback subject'
+        assert data['message'] == '<p>Fallback</p>'
+        assert data['email'] == 'no-reply@scorelib.app'
         return DummyResponse()
 
-def test_send_email_fallback_http(monkeypatch):
+def test_send_email_via_formsubmit(monkeypatch):
     module = import_server_module()
-    monkeypatch.setattr(module.email_sdk, 'Emails', None)
     monkeypatch.setattr(module, 'httpx', type('httpx', (), {'AsyncClient': DummyAsyncClient}))
 
     asyncio.run(module.send_email('test@example.com', 'Fallback subject', '<p>Fallback</p>'))
