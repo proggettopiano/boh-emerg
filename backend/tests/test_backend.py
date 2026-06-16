@@ -257,6 +257,36 @@ def test_has_boilerplate_text_detects_watermark():
     assert pdf_processor._has_boilerplate_text("Questa pagina contiene testo reale e contenuto utile") is False
 
 
+def test_boilerplate_text_alone_does_not_trigger_ocr():
+    """Regression test: boilerplate should NOT trigger OCR on its own.
+    This was the bug that caused 54-page PDFs to take 90+ seconds."""
+    import io
+    import fitz
+    from reportlab.pdfgen import canvas as reportlab_canvas
+    import pdf_processor
+    
+    # Create a PDF page with only boilerplate text (no real content, no images)
+    buf = io.BytesIO()
+    c = reportlab_canvas.Canvas(buf, pagesize=(612, 792))
+    c.setFont("Helvetica", 10)
+    c.drawString(100, 700, "Creato in un convertitore da foto PDF con un clic")
+    c.drawString(100, 680, "Scarica qui www.example.com")
+    c.showPage()
+    c.save()
+    pdf_bytes = buf.getvalue()
+    
+    # Extract pages - should NOT attempt OCR since:
+    # - page has boilerplate (detected)
+    # - BUT page has no images
+    # - AND page has text > 40 chars
+    # - AND page has word_count >= 3
+    pages_text, total_pages, used_ocr, page_labels = pdf_processor.extract_pages(pdf_bytes)
+    
+    assert total_pages == 1
+    # boilerplate text alone should NOT trigger OCR or improve text
+    assert used_ocr is False, "Boilerplate alone should not trigger OCR"
+
+
 def test_page_has_images_detects_image_page():
     import pdf_processor
 
