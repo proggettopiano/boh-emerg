@@ -37,7 +37,7 @@ from auth_utils import (
     hash_password, verify_password, create_jwt, decode_jwt,
     get_client_ip, get_current_user_id, get_optional_user_id,
 )
-from pdf_processor import extract_pages, compress_pdf, make_snippet, clean_pdf_text
+from pdf_processor import extract_pages, compress_pdf, make_snippet, clean_pdf_text, normalize_pdf_text, extract_page_metadata
 import google_integration as gi
 
 ROOT_DIR = Path(__file__).parent
@@ -431,6 +431,7 @@ async def ensure_indexes():
     await safe_create_index(db.pdfs, "id", unique=True)
     await safe_create_index(db.pdf_pages, [("pdf_id", 1), ("page", 1)], unique=True)
     await safe_create_index(db.pdf_pages, "text")
+    await safe_create_index(db.pdf_pages, "text_normalized")
     await safe_create_index(db.upload_jobs, "id", unique=True)
     await safe_create_index(db.app_logs, "created_at")
     await safe_create_index(db.access_requests, "email")
@@ -1229,6 +1230,7 @@ async def search(
     user_id: Optional[str] = Depends(get_optional_user_id),
 ):
     raw_q = clean_pdf_text(q).strip()
+    normalized_q = normalize_pdf_text(raw_q).strip()
     if not raw_q:
         return {"results": []}
 
@@ -1250,9 +1252,13 @@ async def search(
     seen = set()  # Per evitare duplicati (stessa pagina trovata con logiche diverse)
 
     if raw_q.isdigit():
-        # 1. CERCA INIZIO INNO (PIÙ FORTE)
         hymn_regex = rf"(?m)^\s*{re.escape(raw_q)}[.\s]"
-        hymn_filter = {"text": {"$regex": hymn_regex, "$options": "m"}}
+        hymn_filter = {
+            "$or": [
+                {"text_normalized": {"$regex": hymn_regex, "$options": "im"}},
+                {"text": {"$regex": hymn_regex, "$options": "im"}},
+            ]
+        }
         if pdf_ids_list:
             hymn_filter["pdf_id"] = {"$in": pdf_ids_list}
         cursor = db.pdf_pages.find(hymn_filter)
@@ -1265,7 +1271,20 @@ async def search(
             if p:
                 results.append(format_search_result(p, pg, raw_q, score=100))
 
-        # 2. CERCA ETICHETTA PAGINA (DEBOLE)
+        if raw_q.isdigit():
+            cantico_filter = {"cantico": int(raw_q)}
+            if pdf_ids_list:
+                cantico_filter["pdf_id"] = {"$in": pdf_ids_list}
+            cantico_cursor = db.pdf_pages.find(cantico_filter)
+            async for pg in cantico_cursor:
+                key = (pg["pdf_id"], pg["page"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                p = await db.pdfs.find_one({"id": pg["pdf_id"]})
+                if p:
+                    results.append(format_search_result(p, pg, raw_q, score=120, snippet=make_snippet(pg.get("text_normalized", pg.get("text", "")), q), match_in="cantico"))
+
         label_filter = {"page_label": raw_q}
         if pdf_ids_list:
             label_filter["pdf_id"] = {"$in": pdf_ids_list}
@@ -1279,10 +1298,11 @@ async def search(
             if p:
                 results.append(format_search_result(p, pg, raw_q, score=50, snippet=f"Pagina {raw_q}"))
 
-    safe_q = rf"(?<!\d){re.escape(raw_q)}(?!\d)" if raw_q.isdigit() else re.escape(raw_q)
+    safe_raw_q = rf"(?<!\d){re.escape(raw_q)}(?!\d)" if raw_q.isdigit() else re.escape(raw_q)
+    safe_normalized_q = re.escape(normalized_q) if normalized_q else safe_raw_q
 
     # 3. CERCA TITOLO PDF
-    title_filter = {"title": {"$regex": safe_q, "$options": "i"}}
+    title_filter = {"title": {"$regex": safe_raw_q, "$options": "i"}}
     if pdf_ids_list:
         title_filter["id"] = {"$in": pdf_ids_list}
     title_cursor = db.pdfs.find(title_filter, {"_id": 0})
@@ -1309,7 +1329,12 @@ async def search(
             )
         )
 
-    text_filter = {"text": {"$regex": safe_q, "$options": "i"}}
+    text_filter = {
+        "$or": [
+            {"text_normalized": {"$regex": safe_normalized_q, "$options": "i"}},
+            {"text": {"$regex": safe_raw_q, "$options": "i"}},
+        ]
+    }
     if pdf_ids_list:
         text_filter["pdf_id"] = {"$in": pdf_ids_list}
     text_cursor = db.pdf_pages.find(text_filter).limit(50)
@@ -1478,17 +1503,28 @@ async def process_pdf_job(job_id):
         if fpath.exists():
             # Run OCR in thread pool to avoid blocking event loop
             pdf_bytes = fpath.read_bytes()
-            pages_text, total, used_ocr, page_labels = await asyncio.to_thread(_extract_pages_sync, pdf_bytes)
+            pages_text, raw_texts, total, used_ocr, page_labels = await asyncio.to_thread(_extract_pages_sync, pdf_bytes)
             logger.info(f"PDF extraction for {pdf['id']}: {total} pages, OCR used: {used_ocr}")
             
             # Batch update pages in parallel for faster indexing
             tasks = []
             for i, txt in enumerate(pages_text):
+                raw = raw_texts[i] if i < len(raw_texts) else ""
+                normalized = normalize_pdf_text(txt)
+                metadata = extract_page_metadata(normalized)
                 logger.info(f"  Page {i+1}: {len(txt)} chars, preview: {txt[:80] if txt else '(empty)'}")
+                update_doc = {
+                    "text": txt,
+                    "text_raw": raw,
+                    "text_clean": txt,
+                    "text_normalized": normalized,
+                    "page_label": page_labels[i],
+                    **metadata,
+                }
                 tasks.append(
                     db.pdf_pages.update_one(
                         {"pdf_id": pdf["id"], "page": i+1},
-                        {"$set": {"text": txt, "page_label": page_labels[i]}},
+                        {"$set": update_doc},
                         upsert=True,
                     )
                 )

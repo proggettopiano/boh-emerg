@@ -50,8 +50,88 @@ def clean_pdf_text(text: str) -> str:
     return text.strip()
 
 
+def normalize_pdf_text(text: str) -> str:
+    if not text:
+        return ""
+
+    text = text.replace("\r", " ").replace("\n", " ")
+    text = unicodedata.normalize("NFKD", text)
+    text = re.sub(r"[\u0300-\u036f]", "", text)
+    text = APOSTROPHE_RE.sub("'", text)
+    text = re.sub(r"[^A-Za-z0-9\s']+", " ", text, flags=re.UNICODE)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    replacements = {
+        r"\bGesu\b": "Gesù",
+        r"\bGest\b": "Gesù",
+        r"\bDio\b": "Dio",
+    }
+    for pattern, replacement in replacements.items():
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+
+    return text
+
+
+def extract_page_metadata(text: str) -> dict:
+    normalized = normalize_pdf_text(text)
+    meter = {}
+    match = re.search(r"\b(?:cantico|canto|inno|hymn)\s*#?\s*(\d{1,4})\b", normalized, flags=re.IGNORECASE)
+    if not match:
+        match = re.match(r"^\s*(\d{1,4})\b", normalized)
+    if match:
+        try:
+            meter["cantico"] = int(match.group(1))
+        except ValueError:
+            pass
+    return meter
+
+
 def _count_text_words(text: str) -> int:
     return len(re.findall(r"\b[A-Za-zÀ-ÿ0-9]{2,}\b", text))
+
+
+def _is_noisy_page_text(cleaned_text: str) -> bool:
+    if not cleaned_text:
+        return True
+    tokens = [t for t in cleaned_text.split() if t]
+    if len(tokens) < 6:
+        return True
+
+    short_tokens = sum(1 for t in tokens if len(re.sub(r"[^A-Za-zÀ-ÿ0-9]", "", t)) <= 2)
+    if short_tokens / len(tokens) > 0.35:
+        return True
+
+    uppercase_tokens = sum(1 for t in tokens if len(t) >= 3 and t.isupper())
+    if uppercase_tokens >= 3:
+        return True
+
+    nonletter_ratio = sum(1 for t in tokens if re.fullmatch(r"[^A-Za-zÀ-ÿ0-9]+", t))
+    if nonletter_ratio / len(tokens) > 0.15:
+        return True
+
+    return False
+
+
+def _choose_page_text(native_text: str, ocr_text: str) -> str:
+    cleaned_native = clean_pdf_text(native_text)
+    cleaned_ocr = clean_pdf_text(ocr_text)
+    if not cleaned_native:
+        return cleaned_ocr
+    if not cleaned_ocr:
+        return cleaned_native
+
+    native_words = _count_text_words(cleaned_native)
+    ocr_words = _count_text_words(cleaned_ocr)
+
+    if _is_noisy_page_text(cleaned_native) and not _is_noisy_page_text(cleaned_ocr):
+        return cleaned_ocr
+
+    if ocr_words > native_words + 4:
+        return cleaned_ocr
+
+    if cleaned_ocr not in cleaned_native:
+        return f"{cleaned_native} {cleaned_ocr}".strip()
+    return cleaned_native
 
 
 def _has_boilerplate_text(cleaned_text: str) -> bool:
@@ -314,7 +394,12 @@ def _ocr_page_text(page) -> str:
     try:
         import pytesseract
         from PIL import Image
-        from PIL import ImageFilter, ImageOps, ImageEnhance
+        try:
+            from PIL import ImageFilter, ImageOps, ImageEnhance
+        except Exception:
+            ImageFilter = None
+            ImageOps = None
+            ImageEnhance = None
     except Exception as exc:
         logger.warning("OCR locale non disponibile: %s", exc)
         return ""
@@ -363,12 +448,15 @@ def _ocr_page_text(page) -> str:
 
             # Basic preprocessing pipeline: grayscale, autocontrast, sharpen, enhance
             try:
-                gray = ImageOps.grayscale(img)
-                gray = ImageOps.autocontrast(gray)
-                gray = gray.filter(ImageFilter.MedianFilter(size=3))
-                gray = gray.filter(ImageFilter.SHARPEN)
-                enhancer = ImageEnhance.Contrast(gray)
-                gray = enhancer.enhance(1.3)
+                if ImageOps is not None and ImageFilter is not None and ImageEnhance is not None:
+                    gray = ImageOps.grayscale(img)
+                    gray = ImageOps.autocontrast(gray)
+                    gray = gray.filter(ImageFilter.MedianFilter(size=3))
+                    gray = gray.filter(ImageFilter.SHARPEN)
+                    enhancer = ImageEnhance.Contrast(gray)
+                    gray = enhancer.enhance(1.3)
+                else:
+                    gray = img
             except Exception as exc:
                 logger.debug("Image preprocessing failed: %s", exc)
                 gray = img
@@ -377,7 +465,10 @@ def _ocr_page_text(page) -> str:
                 try:
                     lang = os.environ.get("TESSERACT_LANG", "ita+eng")
                     config = f"--psm {psm} --oem 3"
-                    text = pytesseract.image_to_string(gray, lang=lang, config=config)
+                    try:
+                        text = pytesseract.image_to_string(gray, lang=lang, config=config)
+                    except TypeError:
+                        text = pytesseract.image_to_string(gray)
                     if text:
                         results.append(text)
                 except Exception as exc:
@@ -412,9 +503,9 @@ def _ocr_page_text(page) -> str:
         return ""
 
 
-def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool, List[str]]:
+def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], List[str], int, bool, List[str]]:
     """Extract text from each page. OCR logic remains fallback-only.
-    Returns (pages_text, total_pages, used_ocr, page_labels).
+    Returns (pages_text, raw_texts, total_pages, used_ocr, page_labels).
     """
     pages_text: List[str] = []
     page_labels: List[str] = []
@@ -431,20 +522,22 @@ def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool, List[str]]:
     except Exception:
         labels = None
 
+    raw_texts: List[str] = []
     for page_num in range(len(doc)):
         try:
             page = doc[page_num]
-            text = page.get_text("text") or ""
-            cleaned = clean_pdf_text(text)
+            raw_text = page.get_text("text") or ""
+            cleaned = clean_pdf_text(raw_text)
             page_images = _page_has_images(page)
             word_count = _count_text_words(cleaned)
             
-            # Decide: attempt OCR only for specific cases
-            # NOT for boilerplate text alone (causes 43s waste on 54-page PDFs)
+            # Decide: attempt OCR only for specific cases.
+            # Avoid OCR on pages with enough clean native text.
             needs_ocr = (
                 page_images                    # Has images that need OCR
                 or len(cleaned) < 40           # Almost empty page
                 or word_count < 3              # No meaningful text
+                or _is_noisy_page_text(cleaned) # Noisy native extraction may be improved by OCR
             )
             
             if needs_ocr:
@@ -455,7 +548,9 @@ def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool, List[str]]:
                     reason.append("short_text")
                 if word_count < 3:
                     reason.append("no_words")
-                
+                if _is_noisy_page_text(cleaned):
+                    reason.append("noisy_text")
+
                 logger.info(
                     "Page %s: OCR attempt - chars=%s words=%s images=%s reason=%s",
                     page_num + 1,
@@ -464,23 +559,20 @@ def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool, List[str]]:
                     page_images,
                     "+".join(reason) or "unknown",
                 )
-                
+
                 ocr_text = _ocr_page_text(page)
                 if ocr_text:
-                    cleaned_ocr = clean_pdf_text(ocr_text)
-                    # Append OCR-cleaned text to native cleaned text to maximize recall,
-                    # avoid losing native text and preserve fragments for partial search.
-                    if cleaned_ocr:
-                        if cleaned_ocr not in cleaned:
-                            cleaned = (cleaned + " " + cleaned_ocr).strip() if cleaned else cleaned_ocr
-                            used_ocr = True
-                            logger.info(
-                                "Page %s: OCR yielded %d chars, appended to native text (now %d chars, %d words)",
-                                page_num + 1,
-                                len(cleaned_ocr),
-                                len(cleaned),
-                                _count_text_words(cleaned),
-                            )
+                    chosen = _choose_page_text(cleaned, ocr_text)
+                    if chosen != cleaned:
+                        used_ocr = True
+                        logger.info(
+                            "Page %s: OCR yielded better text (native %d words, ocr %d words, final %d words)",
+                            page_num + 1,
+                            _count_text_words(cleaned),
+                            _count_text_words(clean_pdf_text(ocr_text)),
+                            _count_text_words(chosen),
+                        )
+                    cleaned = chosen
             else:
                 logger.debug(
                     "Page %s: native text sufficient chars=%s words=%s images=%s",
@@ -490,9 +582,11 @@ def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool, List[str]]:
                     page_images,
                 )
             pages_text.append(cleaned)
+            raw_texts.append(raw_text)
         except Exception as e:
             logger.warning(f"Failed to extract page {page_num + 1}: {e}")
             pages_text.append("")
+            raw_texts.append("")
 
         if labels and page_num < len(labels) and labels[page_num] is not None:
             page_labels.append(labels[page_num])
@@ -501,7 +595,7 @@ def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], int, bool, List[str]]:
             
     total = len(doc)
     doc.close()
-    return pages_text, total, used_ocr, page_labels
+    return pages_text, raw_texts, total, used_ocr, page_labels
 
 
 def compress_pdf(pdf_bytes: bytes) -> Tuple[bytes, bool]:
