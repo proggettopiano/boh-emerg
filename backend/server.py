@@ -284,6 +284,7 @@ async def send_email_via_smtp(to_email: str, subject: str, message: str, text_me
         "subject": subject,
         "htmlContent": message,
         "textContent": text_body,
+        "replyTo": {"email": from_email, "name": APP_NAME},
     }
 
     headers = {
@@ -309,43 +310,43 @@ async def send_access_request_outcome_email(email: str, status: str, name: Optio
         logger.info("send_access_request_outcome_email status=%s email=%s name=%s", status, email, safe_name)
 
         if status == "approved":
-            subject = "ScoreLib — Access approved"
-            badge = "✅ Approved"
-            headline = "Your request has been approved."
-            body = "You can sign in to ScoreLib with this email address now."
+            subject = "ScoreLib — Accesso approvato"
+            badge = "✅ Approvato"
+            headline = "La tua richiesta è stata approvata."
+            body = "Ora puoi accedere a ScoreLib con questa email."
         elif status == "rejected":
-            subject = "ScoreLib — Access not approved"
-            badge = "❌ Not approved"
-            headline = "Your request was not approved."
-            body = "If you’d like, you can send a new request at any time."
+            subject = "ScoreLib — Accesso non approvato"
+            badge = "❌ Non approvato"
+            headline = "La tua richiesta non è stata approvata."
+            body = "Se vuoi, puoi inviare una nuova richiesta in qualsiasi momento."
         else:
-            subject = "ScoreLib — Request still pending"
-            badge = "⏳ Pending review"
-            headline = "Your request is still being reviewed."
-            body = "We’ll update you as soon as the administrator responds."
+            subject = "ScoreLib — Richiesta in attesa"
+            badge = "⏳ In attesa"
+            headline = "La tua richiesta è ancora in attesa di revisione."
+            body = "Controlla anche la cartella spam se non ricevi subito l'email."
 
         html_message = f"""
         <html>
           <body style="margin:0;padding:24px;background-color:#f3f4f6;font-family:Arial,Helvetica,sans-serif;">
-            <div style="max-width:600px;margin:0 auto;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">
-              <div style="background:linear-gradient(135deg,#2563eb,#7c3aed);padding:18px 24px;color:#ffffff;">
-                <p style="margin:0 0 4px 0;font-size:12px;text-transform:uppercase;letter-spacing:1.6px;opacity:0.9;">ScoreLib</p>
+            <div style="max-width:600px;margin:0 auto;background-color:#ffffff;border:1px solid #d1d5db;border-radius:16px;overflow:hidden;">
+              <div style="background-color:#111111;padding:18px 24px;color:#ffffff;">
+                <p style="margin:0 0 4px 0;font-size:12px;text-transform:uppercase;letter-spacing:1.6px;opacity:0.75;">ScoreLib</p>
                 <h2 style="margin:0;font-size:24px;line-height:1.2;">{badge}</h2>
               </div>
-              <div style="padding:24px;color:#111827;">
-                <p style="margin:0 0 8px 0;font-size:16px;line-height:1.6;">Hi <strong>{safe_name}</strong>,</p>
+              <div style="padding:24px;color:#111111;">
+                <p style="margin:0 0 8px 0;font-size:16px;line-height:1.6;">Ciao <strong>{safe_name}</strong>,</p>
                 <p style="margin:0 0 12px 0;font-size:16px;line-height:1.6;">{headline}</p>
                 <p style="margin:0 0 16px 0;font-size:16px;line-height:1.6;">{body}</p>
                 <p style="margin:0 0 18px 0;">
-                  <a href="{FRONTEND_URL}" style="display:inline-block;background-color:#2563eb;color:#ffffff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600;">Open ScoreLib</a>
+                  <a href="https://scorelib.vercel.app/login" style="display:inline-block;background-color:#000000;color:#ffffff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600;">Apri ScoreLib</a>
                 </p>
-                <p style="margin:0;font-size:12px;line-height:1.5;color:#6b7280;">Thank you,<br>Team ScoreLib</p>
+                <p style="margin:0;font-size:12px;line-height:1.5;color:#6b7280;">Grazie,<br>Team ScoreLib</p>
               </div>
             </div>
           </body>
         </html>
         """
-        text_message = f"Hi {safe_name},\n\n{headline}\n{body}\n\nOpen ScoreLib: {FRONTEND_URL}\n\nThank you,\nTeam ScoreLib"
+        text_message = f"Ciao {safe_name},\n\n{headline}\n{body}\n\nApri ScoreLib: https://scorelib.vercel.app/login\n\nGrazie,\nTeam ScoreLib"
 
         sent = False
         if SMTP_ENABLED:
