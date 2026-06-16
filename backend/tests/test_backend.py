@@ -249,6 +249,14 @@ def test_has_useful_page_text_threshold():
     assert pdf_processor._has_useful_page_text("   ") is False
 
 
+def test_has_boilerplate_text_detects_watermark():
+    import pdf_processor
+
+    assert pdf_processor._has_boilerplate_text("Creato in un convertitore da foto PDF con un clic Scarica qui") is True
+    assert pdf_processor._has_boilerplate_text("Questo è un documento di esempio creato da un convertitore PDF online") is True
+    assert pdf_processor._has_boilerplate_text("Questa pagina contiene testo reale e contenuto utile") is False
+
+
 def test_page_has_images_detects_image_page():
     import pdf_processor
 
