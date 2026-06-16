@@ -228,7 +228,7 @@ async def send_email(to_email: str, subject: str, html: str):
         logger.info("SMTP non configurato, invio diretto via FormSubmit a %s subject=%s", to_email, subject)
     return await send_email_via_formsubmit(to_email, subject, html)
 
-async def send_email_via_formsubmit(to_email: str, subject: str, message: str) -> bool:
+async def send_email_via_formsubmit(to_email: str, subject: str, message: str, text_message: Optional[str] = None) -> bool:
     if not to_email:
         logger.warning("send_email_via_formsubmit: to_email non specificata")
         return False
@@ -239,7 +239,7 @@ async def send_email_via_formsubmit(to_email: str, subject: str, message: str) -
     payload = {
         "name": APP_NAME,
         "email": from_email,
-        "message": message,
+        "message": message if message else (text_message or ""),
         "_subject": subject,
         "_template": "table",
         "_captcha": "false",
@@ -263,8 +263,8 @@ async def send_email_via_formsubmit(to_email: str, subject: str, message: str) -
         logger.error("Errore FormSubmit per %s: %s", FORM_SUBMIT_DEST_EMAIL, exc)
     return False
 
-async def send_email_via_smtp(to_email: str, subject: str, message: str) -> bool:
-    """Invia email via SMTP (fallback affidabile per FormSubmit)"""
+async def send_email_via_smtp(to_email: str, subject: str, message: str, text_message: Optional[str] = None) -> bool:
+    """Invia email via Brevo API con versione HTML e testo semplice."""
     if not to_email or not SMTP_ENABLED:
         if not SMTP_ENABLED:
             logger.warning("Brevo API key non configurata: email non inviata")
@@ -276,12 +276,14 @@ async def send_email_via_smtp(to_email: str, subject: str, message: str) -> bool
 
     logger.info("Invio email via Brevo API a %s subject=%s", to_email, subject)
 
+    text_body = text_message or re.sub(r"<[^>]+>", "", message)
+
     payload = {
         "sender": {"name": APP_NAME, "email": from_email},
         "to": [{"email": to_email}],
         "subject": subject,
         "htmlContent": message,
-        "textContent": message,
+        "textContent": text_body,
     }
 
     headers = {
@@ -305,37 +307,52 @@ async def send_access_request_outcome_email(email: str, status: str, name: Optio
     try:
         safe_name = name or email
         logger.info("send_access_request_outcome_email status=%s email=%s name=%s", status, email, safe_name)
+
         if status == "approved":
-            subject = "ScoreLib: richiesta di accesso approvata"
-            message = (
-                f"Ciao {safe_name},\n\n"
-                f"La tua richiesta di accesso a ScoreLib per {email} è stata approvata.\n"
-                f"Ora puoi effettuare il login su {FRONTEND_URL} con questa email.\n\n"
-                "Grazie,\nTeam ScoreLib"
-            )
+            subject = "ScoreLib — Access approved"
+            badge = "✅ Approved"
+            headline = "Your request has been approved."
+            body = "You can sign in to ScoreLib with this email address now."
         elif status == "rejected":
-            subject = "ScoreLib: richiesta di accesso rifiutata"
-            message = (
-                f"Ciao {safe_name},\n\n"
-                f"La tua richiesta di accesso a ScoreLib per {email} non è stata approvata.\n"
-                "Se desideri, puoi inviare una nuova richiesta di accesso.\n\n"
-                "Grazie,\nTeam ScoreLib"
-            )
+            subject = "ScoreLib — Access not approved"
+            badge = "❌ Not approved"
+            headline = "Your request was not approved."
+            body = "If you’d like, you can send a new request at any time."
         else:
-            subject = "ScoreLib: richiesta di accesso ancora in attesa"
-            message = (
-                f"Ciao {safe_name},\n\n"
-                f"La tua richiesta di accesso a ScoreLib per {email} è ancora in attesa perché l'amministratore non ha ancora risposto.\n"
-                "Se non ti rispondo, la richiesta resterà in attesa.\n"
-                "Puoi attendere o inviare una nuova richiesta.\n\n"
-                "Grazie,\nTeam ScoreLib"
-            )
+            subject = "ScoreLib — Request still pending"
+            badge = "⏳ Pending review"
+            headline = "Your request is still being reviewed."
+            body = "We’ll update you as soon as the administrator responds."
+
+        html_message = f"""
+        <html>
+          <body style="margin:0;padding:24px;background-color:#f3f4f6;font-family:Arial,Helvetica,sans-serif;">
+            <div style="max-width:600px;margin:0 auto;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">
+              <div style="background:linear-gradient(135deg,#2563eb,#7c3aed);padding:18px 24px;color:#ffffff;">
+                <p style="margin:0 0 4px 0;font-size:12px;text-transform:uppercase;letter-spacing:1.6px;opacity:0.9;">ScoreLib</p>
+                <h2 style="margin:0;font-size:24px;line-height:1.2;">{badge}</h2>
+              </div>
+              <div style="padding:24px;color:#111827;">
+                <p style="margin:0 0 8px 0;font-size:16px;line-height:1.6;">Hi <strong>{safe_name}</strong>,</p>
+                <p style="margin:0 0 12px 0;font-size:16px;line-height:1.6;">{headline}</p>
+                <p style="margin:0 0 16px 0;font-size:16px;line-height:1.6;">{body}</p>
+                <p style="margin:0 0 18px 0;">
+                  <a href="{FRONTEND_URL}" style="display:inline-block;background-color:#2563eb;color:#ffffff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600;">Open ScoreLib</a>
+                </p>
+                <p style="margin:0;font-size:12px;line-height:1.5;color:#6b7280;">Thank you,<br>Team ScoreLib</p>
+              </div>
+            </div>
+          </body>
+        </html>
+        """
+        text_message = f"Hi {safe_name},\n\n{headline}\n{body}\n\nOpen ScoreLib: {FRONTEND_URL}\n\nThank you,\nTeam ScoreLib"
+
         sent = False
         if SMTP_ENABLED:
-            sent = await send_email_via_smtp(email, subject, message)
+            sent = await send_email_via_smtp(email, subject, html_message, text_message)
         if not sent:
             logger.info("FormSubmit fallback per esito richiesta accesso a %s", email)
-            sent = await send_email_via_formsubmit(email, subject, message)
+            sent = await send_email_via_formsubmit(email, subject, html_message, text_message)
             if not sent:
                 logger.error("Tutti i metodi di invio email sono falliti per %s", email)
     except Exception:
