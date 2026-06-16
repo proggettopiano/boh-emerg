@@ -79,7 +79,7 @@ export default function Login() {
             La tua richiesta di accesso per <strong>{email}</strong> è stata inoltrata.
           </p>
           <p className="text-muted3 text-sm">
-            Riceverai un'email quando la richiesta sarà approvata o rifiutata. Se non ricevi risposta, la richiesta resterà in attesa.
+            Riceverai un'email quando la richiesta sarà approvata o rifiutata. Controlla anche la cartella spam se non vedi subito il messaggio.
           </p>
           <button onClick={() => { setSuccess(false); setMode("login"); }} className="btn-secondary w-full">
             Torna al login
