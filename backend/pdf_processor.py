@@ -631,6 +631,7 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = No
                 logger.debug("Image preprocessing failed: %s", exc)
                 gray = img
 
+            logger.info("OCR_RUNTIME dpi=%s width=%s height=%s", dpi, pix.width, pix.height)
             try:
                 lang = os.environ.get("TESSERACT_LANG", "ita+eng")
                 config = f"--psm {psm} --oem 3"
@@ -721,9 +722,11 @@ def _ocr_page_text(page, timings: Dict[str, Any] = None, page_num: int = None) -
 
     if rapid_text:
         _record_timing(timings, "rapidocr_pages", 1)
+        logger.info("OCR_PATH=rapidocr")
         logger.info("RapidOCR OCR produced %d chars", len(rapid_text))
         return rapid_text
 
+    logger.info("OCR_PATH=tesseract")
     try:
         text = _tesseract_ocr_text(page, timings=timings, page_num=page_num)
     except Exception as exc:
@@ -899,6 +902,7 @@ def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None) -> Tuple[Lis
 
     if ocr_candidates:
         max_workers = _choose_ocr_worker_count(ocr_candidates, page_details)
+        logger.info("OCR_POOL workers=%s candidates=%d", max_workers, len(ocr_candidates))
         logger.info("Starting OCR pool: max_workers=%s candidates=%d", max_workers, len(ocr_candidates))
 
         # If there is only one candidate, avoid ThreadPool overhead and run synchronously.
