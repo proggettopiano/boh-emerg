@@ -353,6 +353,36 @@ def test_ocr_page_text_prefers_rapidocr_when_available(monkeypatch):
     assert rapid_engine.calls == 1
 
 
+def test_ocr_page_text_prefers_direct_embedded_image_ocr(monkeypatch):
+    import pdf_processor
+
+    class DummyPage:
+        def get_images(self, full=True):
+            return [(1,)]
+
+        def extract_image(self, xref):
+            return {"image": b"embedded-image-bytes", "ext": "png"}
+
+    calls = {"direct": 0, "fallback": 0}
+
+    def fake_direct(page, timings=None, page_num=None):
+        calls["direct"] += 1
+        return "DIRECT IMAGE OCR"
+
+    def fake_tesseract(page, timings=None, page_num=None):
+        calls["fallback"] += 1
+        return "FALLBACK OCR"
+
+    monkeypatch.setattr(pdf_processor, "_ocr_direct_image", fake_direct)
+    monkeypatch.setattr(pdf_processor, "_tesseract_ocr_text", fake_tesseract)
+    monkeypatch.setattr(pdf_processor, "_extract_text_with_rapidocr", lambda page, timings=None: "")
+
+    text = pdf_processor._ocr_page_text(DummyPage())
+
+    assert text == "DIRECT IMAGE OCR"
+    assert calls == {"direct": 1, "fallback": 0}
+
+
 def test_ocr_page_text_falls_back_to_tesseract_when_rapidocr_fails(monkeypatch):
     import pdf_processor
 
@@ -370,7 +400,8 @@ def test_ocr_page_text_falls_back_to_tesseract_when_rapidocr_fails(monkeypatch):
 
     monkeypatch.setattr(pdf_processor, "_rapidocr_engine", None)
     monkeypatch.setattr(pdf_processor, "_create_rapidocr_engine", fail_engine)
-    monkeypatch.setattr(pdf_processor, "_tesseract_ocr_text", lambda page: "TESSERACT OCR TEXT")
+    monkeypatch.setattr(pdf_processor, "_tesseract_ocr_text", lambda page, timings=None, page_num=None: "TESSERACT OCR TEXT")
+    monkeypatch.setattr(pdf_processor, "_extract_text_with_rapidocr", lambda page, timings=None: "")
     monkeypatch.setitem(sys.modules, "PIL", types.SimpleNamespace(Image=FakeImage))
     monkeypatch.setitem(sys.modules, "numpy", types.SimpleNamespace(asarray=lambda img: img))
 

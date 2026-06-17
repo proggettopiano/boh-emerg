@@ -282,6 +282,80 @@ def _page_has_images(page) -> bool:
         return False
 
 
+def _extract_embedded_image(page):
+    """Return a single large embedded image from the page, if available."""
+    try:
+        image_refs = page.get_images(full=True) or []
+    except Exception:
+        return None
+
+    if not image_refs or len(image_refs) != 1:
+        return None
+
+    xref = image_refs[0][0]
+    doc = getattr(page, "parent", None)
+    if doc is None:
+        return None
+
+    try:
+        image_info = doc.extract_image(xref)
+    except Exception:
+        return None
+
+    if not isinstance(image_info, dict):
+        return None
+
+    image_bytes = image_info.get("image")
+    width = int(image_info.get("width", 0) or 0)
+    height = int(image_info.get("height", 0) or 0)
+    if not image_bytes or width < 800 or height < 800:
+        return None
+
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            if img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+            return img, xref, width, height
+    except Exception:
+        return None
+
+
+def _ocr_direct_image(page, timings: Dict[str, Any] = None, page_num: int = None) -> str:
+    """Try OCR on a single embedded page image before falling back to page rasterization."""
+    payload = _extract_embedded_image(page)
+    if not payload:
+        return ""
+
+    img, xref, width, height = payload
+    start = time.perf_counter()
+    if not _init_tesseract_once():
+        return ""
+
+    try:
+        if max(img.size) > MAX_OCR_IMAGE_SIZE:
+            img = _resize_image_for_ocr(img, max_long_side=MAX_OCR_IMAGE_SIZE)
+
+        logger.info("OCR_DIRECT_IMAGE page=%s xref=%s size=%sx%s", page_num + 1 if page_num is not None else "?", xref, width, height)
+        lang = os.environ.get("TESSERACT_LANG", "ita+eng")
+        config = "--psm 6 --oem 3"
+        try:
+            text = _pytesseract_module.image_to_string(img, lang=lang, config=config)
+        except TypeError:
+            text = _pytesseract_module.image_to_string(img)
+
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        logger.info("OCR_PAGE_ELAPSED page=%s elapsed_ms=%.0f", page_num + 1 if page_num is not None else "?", elapsed_ms)
+        if text:
+            _record_timing(timings, "direct_image_pages", 1)
+            _record_timing(timings, "direct_image_ms", elapsed_ms)
+        return text or ""
+    except Exception as exc:
+        logger.warning("Direct embedded-image OCR failed: %s", exc)
+        return ""
+
+
 def _find_tesseract_binary() -> str:
     """Resolve the Tesseract binary, validating explicit overrides before using them."""
     explicit = os.environ.get("TESSERACT_PATH") or os.environ.get("TESSERACT_CMD")
@@ -713,22 +787,22 @@ def _ocr_page_sync(page, timings: Dict[str, Any] = None) -> str:
 def _ocr_page_text(page, timings: Dict[str, Any] = None, page_num: int = None) -> str:
     """Module-level OCR wrapper used by workers.
 
-    Calls RapidOCR first, falls back to Tesseract. Keeps timing and logging
-    centralized so thread workers can call a stable module-level function.
+    Tries direct OCR on a single embedded page image first, then falls back to
+    Tesseract raster OCR, and only then to RapidOCR as a last resort.
     """
     try:
-        rapid_text = _extract_text_with_rapidocr(page, timings=timings)
+        direct_text = _ocr_direct_image(page, timings=timings, page_num=page_num)
     except Exception as exc:
-        logger.warning("RapidOCR invocation failed: %s", exc)
-        rapid_text = ""
+        logger.warning("Direct embedded-image OCR failed: %s", exc)
+        direct_text = ""
 
-    if rapid_text:
-        _record_timing(timings, "rapidocr_pages", 1)
-        logger.info("OCR_PATH=rapidocr")
-        logger.info("RapidOCR OCR produced %d chars", len(rapid_text))
-        return rapid_text
+    if direct_text:
+        _record_timing(timings, "direct_image_pages", 1)
+        logger.info("OCR_PATH=direct-image")
+        logger.info("Direct image OCR produced %d chars", len(direct_text))
+        return direct_text
 
-    logger.info("OCR_PATH=tesseract")
+    logger.info("OCR_PATH=fallback-raster")
     try:
         text = _tesseract_ocr_text(page, timings=timings, page_num=page_num)
     except Exception as exc:
@@ -737,6 +811,20 @@ def _ocr_page_text(page, timings: Dict[str, Any] = None, page_num: int = None) -
 
     if text:
         _record_timing(timings, "tesseract_pages", 1)
+        return text
+
+    try:
+        rapid_text = _extract_text_with_rapidocr(page, timings=timings)
+    except Exception as exc:
+        logger.warning("RapidOCR invocation failed: %s", exc)
+        rapid_text = ""
+
+    if rapid_text:
+        _record_timing(timings, "rapidocr_pages", 1)
+        logger.info("OCR_PATH=rapidocr-fallback")
+        logger.info("RapidOCR OCR produced %d chars", len(rapid_text))
+        return rapid_text
+
     return text
 
 
