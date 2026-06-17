@@ -627,8 +627,7 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = No
             except Exception as exc:
                 logger.debug("Image preprocessing failed: %s", exc)
                 gray = img
-
-                for psm in psm_values:
+            for psm in psm_values:
                 try:
                     lang = os.environ.get("TESSERACT_LANG", "ita+eng")
                     config = f"--psm {psm} --oem 3"
