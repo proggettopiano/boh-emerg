@@ -1,7 +1,7 @@
 """PDF text extraction logic with local OCR.
 
-Uses local Tesseract OCR as the primary path and avoids billing-dependent
-cloud OCR calls in production.
+Uses RapidOCR as the primary local OCR path and falls back to Tesseract
+when the ONNX runtime engine is unavailable or fails.
 """
 import base64
 import io
@@ -10,14 +10,16 @@ import logging
 import os
 import re
 import shutil
+import time
 import unicodedata
-from typing import List, Tuple
+from typing import Any, Dict, List, Tuple
 import fitz  # PyMuPDF
 import httpx
 
 logger = logging.getLogger(__name__)
 
 _OCR_NOT_CONFIGURED_WARNING_SHOWN = False
+_rapidocr_engine = None
 
 MUSIC_SYMBOL_RE = re.compile(r"[\u0000-\u001F\u007F]+")
 APOSTROPHE_RE = re.compile(r"[’‘`]")
@@ -88,6 +90,11 @@ def extract_page_metadata(text: str) -> dict:
 
 def _count_text_words(text: str) -> int:
     return len(re.findall(r"\b[A-Za-zÀ-ÿ0-9]{2,}\b", text))
+
+
+def _record_timing(timings: Dict[str, Any], key: str, value: float) -> None:
+    if timings is not None:
+        timings[key] = timings.get(key, 0.0) + value
 
 
 def _is_noisy_page_text(cleaned_text: str) -> bool:
@@ -242,6 +249,70 @@ def _find_tesseract_binary() -> str:
     )
     return ""
 
+def _create_rapidocr_engine():
+    global _rapidocr_engine
+    if _rapidocr_engine is not None:
+        return _rapidocr_engine
+
+    try:
+        from rapidocr import RapidOCR
+
+        _rapidocr_engine = RapidOCR()
+        logger.info("RapidOCR engine initialized successfully")
+        return _rapidocr_engine
+    except Exception as exc:
+        logger.warning("RapidOCR unavailable: %s", exc)
+        return None
+
+
+def _extract_text_with_rapidocr(page, timings: Dict[str, Any] = None) -> str:
+    start_total = time.perf_counter()
+    render_time = 0.0
+    infer_time = 0.0
+    try:
+        import numpy as np
+        from PIL import Image
+
+        start = time.perf_counter()
+        pix = page.get_pixmap(alpha=False, dpi=300)
+        render_time += time.perf_counter() - start
+
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        arr = np.asarray(img)
+        engine = _create_rapidocr_engine()
+        if engine is None:
+            return ""
+
+        start = time.perf_counter()
+        result = engine(arr)
+        infer_time += time.perf_counter() - start
+        txts = getattr(result, "txts", None)
+        if txts is None and isinstance(result, (list, tuple)):
+            txts = result
+
+        if isinstance(txts, (list, tuple)):
+            text_parts = []
+            for item in txts:
+                if isinstance(item, str) and item.strip():
+                    text_parts.append(item.strip())
+                elif isinstance(item, dict):
+                    text = item.get("text") or item.get("txt") or ""
+                    if text.strip():
+                        text_parts.append(text.strip())
+            if text_parts:
+                return "\n".join(text_parts).strip()
+
+        return ""
+    except Exception as exc:
+        logger.warning("RapidOCR OCR failed: %s", exc)
+        return ""
+    finally:
+        _record_timing(timings, "rapidocr_render_ms", render_time * 1000.0)
+        _record_timing(timings, "rapidocr_infer_ms", infer_time * 1000.0)
+        _record_timing(timings, "rapidocr_ms", (time.perf_counter() - start_total) * 1000.0)
+        _record_timing(timings, "rapidocr_calls", 1)
+
+
 def _get_google_vision_auth() -> Tuple[str, str]:
     """Return a tuple (mode, value) for Google Vision HTTP auth.
     mode is either 'key' or 'bearer'.
@@ -389,8 +460,11 @@ def _has_google_vision_auth() -> bool:
     )
 
 
-def _ocr_page_text(page) -> str:
-    # Use local Tesseract as the primary OCR backend to avoid billing-dependent cloud calls.
+def _tesseract_ocr_text(page, timings: Dict[str, Any] = None) -> str:
+    start_total = time.perf_counter()
+    render_time = 0.0
+    infer_time = 0.0
+    pass_count = 0
     try:
         import pytesseract
         from PIL import Image
@@ -418,20 +492,21 @@ def _ocr_page_text(page) -> str:
         except Exception:
             pass
 
-    # Multi-pass OCR with simple preprocessing and varying PSM/DPI to increase recall.
     results = []
     try:
-        # Try a small set of DPI and PSM values; order matters (cheapest first)
         dpis = [150, 300]
         psm_values = [3, 6, 11]
 
         for dpi in dpis:
             try:
+                start = time.perf_counter()
                 pix = page.get_pixmap(alpha=False, dpi=dpi)
+                render_time += time.perf_counter() - start
             except Exception:
-                # Fallback to default dpi if rendering fails
                 try:
+                    start = time.perf_counter()
                     pix = page.get_pixmap(alpha=False)
+                    render_time += time.perf_counter() - start
                 except Exception as exc:
                     logger.warning("Failed to rasterize page for OCR: %s", exc)
                     continue
@@ -439,14 +514,12 @@ def _ocr_page_text(page) -> str:
             try:
                 img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             except Exception:
-                # some pixmap samples might be directly convertible via frombuffer
                 try:
                     img = Image.frombuffer("RGB", (pix.width, pix.height), pix.samples, "raw", "RGB", 0, 1)
                 except Exception as exc:
                     logger.warning("Failed to convert pixmap to Image: %s", exc)
                     continue
 
-            # Basic preprocessing pipeline: grayscale, autocontrast, sharpen, enhance
             try:
                 if ImageOps is not None and ImageFilter is not None and ImageEnhance is not None:
                     gray = ImageOps.grayscale(img)
@@ -465,10 +538,13 @@ def _ocr_page_text(page) -> str:
                 try:
                     lang = os.environ.get("TESSERACT_LANG", "ita+eng")
                     config = f"--psm {psm} --oem 3"
+                    start = time.perf_counter()
                     try:
                         text = pytesseract.image_to_string(gray, lang=lang, config=config)
                     except TypeError:
                         text = pytesseract.image_to_string(gray)
+                    infer_time += time.perf_counter() - start
+                    pass_count += 1
                     if text:
                         results.append(text)
                 except Exception as exc:
@@ -477,18 +553,15 @@ def _ocr_page_text(page) -> str:
         if not results:
             return ""
 
-        # Merge results: prefer longest unique lines across passes to maximize recall
         lines = []
         for r in results:
             for ln in [l.strip() for l in r.splitlines() if l.strip()]:
-                # keep line if not a duplicate substring of existing
                 found = False
                 for i, exist in enumerate(lines):
                     if ln in exist:
                         found = True
                         break
                     if exist in ln:
-                        # replace shorter with longer
                         lines[i] = ln
                         found = True
                         break
@@ -501,15 +574,38 @@ def _ocr_page_text(page) -> str:
     except Exception as exc:
         logger.warning("Tesseract OCR failed: %s", exc)
         return ""
+    finally:
+        _record_timing(timings, "tesseract_render_ms", render_time * 1000.0)
+        _record_timing(timings, "tesseract_infer_ms", infer_time * 1000.0)
+        _record_timing(timings, "tesseract_ms", (time.perf_counter() - start_total) * 1000.0)
+        _record_timing(timings, "tesseract_passes", pass_count)
+        _record_timing(timings, "tesseract_calls", 1)
 
 
-def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], List[str], int, bool, List[str]]:
+def _ocr_page_text(page, timings: Dict[str, Any] = None) -> str:
+    rapid_text = _extract_text_with_rapidocr(page, timings=timings)
+    if rapid_text:
+        _record_timing(timings, "rapidocr_pages", 1)
+        logger.info("RapidOCR OCR produced %d chars", len(rapid_text))
+        return rapid_text
+
+    text = _tesseract_ocr_text(page, timings=timings)
+    if text:
+        _record_timing(timings, "tesseract_pages", 1)
+    return text
+
+
+def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None) -> Tuple[List[str], List[str], int, bool, List[str]]:
     """Extract text from each page. OCR logic remains fallback-only.
     Returns (pages_text, raw_texts, total_pages, used_ocr, page_labels).
     """
+    if timings is not None:
+        timings.setdefault("page_details", [])
+
     pages_text: List[str] = []
     page_labels: List[str] = []
     used_ocr = False
+    start_total = time.perf_counter()
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     except Exception as e:
@@ -524,15 +620,82 @@ def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], List[str], int, bool, Li
 
     raw_texts: List[str] = []
     for page_num in range(len(doc)):
+        page_info: Dict[str, Any] = {
+            "page": page_num + 1,
+            "ocr_attempted": False,
+            "ocr_used": False,
+            "reason": [],
+        }
         try:
             page = doc[page_num]
+            start = time.perf_counter()
             raw_text = page.get_text("text") or ""
+            _record_timing(timings, "page_text_ms", (time.perf_counter() - start) * 1000.0)
+
+            # Also inspect the structured dict output to detect text vs image blocks.
+            start = time.perf_counter()
+            try:
+                text_dict = page.get_text("dict") or {}
+            except Exception:
+                text_dict = {}
+            blocks = text_dict.get("blocks", []) if isinstance(text_dict, dict) else []
+            text_blocks = sum(1 for b in blocks if b.get("type") == 0)
+            image_blocks = sum(1 for b in blocks if b.get("type") == 1)
+
+            # Reconstruct text from dict spans (more reliable for block-level detection)
+            dict_text_parts = []
+            for b in blocks:
+                if b.get("type") != 0:
+                    continue
+                for line in b.get("lines", []):
+                    for span in line.get("spans", []):
+                        txt = span.get("text") or ""
+                        if txt:
+                            dict_text_parts.append(txt)
+            dict_text = "\n".join(dict_text_parts).strip()
+            dict_cleaned = clean_pdf_text(dict_text)
+
+            # Also check low-level images() as a fallback (may miss inline-painted images)
+            try:
+                image_xobjs = bool(page.get_images(full=True))
+            except Exception:
+                image_xobjs = False
+            _record_timing(timings, "page_images_ms", (time.perf_counter() - start) * 1000.0)
+
+            # Decide whether page is image-like using both dict blocks and get_images
+            # Rules (in order):
+            # 1) If dict has significant text blocks, prefer native text and skip OCR.
+            # 2) If no text blocks and image blocks exist, treat as image -> OCR.
+            # 3) If both exist, consider mixed: use native if native text quality passes threshold, otherwise OCR.
             cleaned = clean_pdf_text(raw_text)
-            page_images = _page_has_images(page)
+            # Use dict_cleaned when available to evaluate native text quality.
+            native_text_for_quality = dict_cleaned if dict_cleaned else cleaned
+            has_significant_text_blocks = text_blocks > 0 and _has_useful_page_text(native_text_for_quality)
+            has_any_text_blocks = text_blocks > 0
+            has_any_image_blocks = image_blocks > 0 or image_xobjs
+            # page_images indicates whether OCR should be considered because page is image-like
+            if has_significant_text_blocks:
+                page_images = False
+            elif not has_any_text_blocks and has_any_image_blocks:
+                page_images = True
+            elif has_any_text_blocks and has_any_image_blocks:
+                # Mixed page: choose native if quality sufficient
+                page_images = not _has_useful_page_text(native_text_for_quality)
+            else:
+                # Fallback to previous heuristic using raw cleaned text
+                page_images = _page_has_images(page)
+
             word_count = _count_text_words(cleaned)
+            page_info.update({
+                "raw_length": len(raw_text),
+                "clean_length": len(cleaned),
+                "word_count": word_count,
+                "page_images": page_images,
+                "is_noisy": _is_noisy_page_text(cleaned),
+                "dict_text_blocks": text_blocks,
+                "dict_image_blocks": image_blocks,
+            })
             
-            # Decide: attempt OCR only for specific cases.
-            # Avoid OCR on pages with enough clean native text.
             needs_ocr = (
                 page_images                    # Has images that need OCR
                 or len(cleaned) < 40           # Almost empty page
@@ -541,15 +704,15 @@ def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], List[str], int, bool, Li
             )
             
             if needs_ocr:
-                reason = []
+                page_info["ocr_attempted"] = True
                 if page_images:
-                    reason.append("images")
+                    page_info["reason"].append("images")
                 if len(cleaned) < 40:
-                    reason.append("short_text")
+                    page_info["reason"].append("short_text")
                 if word_count < 3:
-                    reason.append("no_words")
-                if _is_noisy_page_text(cleaned):
-                    reason.append("noisy_text")
+                    page_info["reason"].append("no_words")
+                if page_info["is_noisy"]:
+                    page_info["reason"].append("noisy_text")
 
                 logger.info(
                     "Page %s: OCR attempt - chars=%s words=%s images=%s reason=%s",
@@ -557,14 +720,15 @@ def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], List[str], int, bool, Li
                     len(cleaned),
                     word_count,
                     page_images,
-                    "+".join(reason) or "unknown",
+                    "+".join(page_info["reason"]) or "unknown",
                 )
 
-                ocr_text = _ocr_page_text(page)
+                ocr_text = _ocr_page_text(page, timings=timings)
                 if ocr_text:
                     chosen = _choose_page_text(cleaned, ocr_text)
                     if chosen != cleaned:
                         used_ocr = True
+                        page_info["ocr_used"] = True
                         logger.info(
                             "Page %s: OCR yielded better text (native %d words, ocr %d words, final %d words)",
                             page_num + 1,
@@ -592,9 +756,25 @@ def extract_pages(pdf_bytes: bytes) -> Tuple[List[str], List[str], int, bool, Li
             page_labels.append(labels[page_num])
         else:
             page_labels.append(str(page_num + 1))
-            
+
+        if timings is not None:
+            timings["page_details"].append(page_info)
+            _record_timing(timings, "pages_with_ocr", 1 if page_info["ocr_attempted"] else 0)
+            _record_timing(timings, "pages_with_ocr_used", 1 if page_info["ocr_used"] else 0)
+            if not page_info["ocr_attempted"] and page_info["page_images"]:
+                _record_timing(timings, "image_pages_skipped_ocr", 1)
+            if page_info["ocr_attempted"] and not page_info["page_images"] and not page_info["is_noisy"] and page_info["clean_length"] >= 40 and page_info["word_count"] >= 3:
+                _record_timing(timings, "unnecessary_ocr_pages", 1)
+            _record_timing(timings, "page_count", 1)
+            if page_info["reason"]:
+                for reason in page_info["reason"]:
+                    key = f"reason_{reason}"
+                    _record_timing(timings, key, 1)
+
     total = len(doc)
     doc.close()
+    if timings is not None:
+        _record_timing(timings, "extract_pages_ms", (time.perf_counter() - start_total) * 1000.0)
     return pages_text, raw_texts, total, used_ocr, page_labels
 
 

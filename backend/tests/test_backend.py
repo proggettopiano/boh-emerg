@@ -318,26 +318,61 @@ def test_page_has_images_detects_image_page():
     assert pdf_processor._page_has_images(DummyPage()) is True
 
 
-def test_ocr_page_text_prefers_tesseract_when_available(monkeypatch):
+def test_ocr_page_text_prefers_rapidocr_when_available(monkeypatch):
     import pdf_processor
 
     class DummyPage:
         def get_pixmap(self, alpha=False, dpi=150):
             return types.SimpleNamespace(width=1, height=1, samples=b"\x00\x00\x00")
 
-    fake_pytesseract = types.SimpleNamespace(
-        pytesseract=types.SimpleNamespace(tesseract_cmd=None),
-        image_to_string=lambda img: "TESSERACT OCR TEXT",
-    )
+    class FakeRapidOCR:
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self, img):
+            self.calls += 1
+            return types.SimpleNamespace(txts=("RAPID OCR TEXT",))
+
+    rapid_engine = FakeRapidOCR()
 
     class FakeImage:
         @staticmethod
         def frombytes(*args, **kwargs):
             return object()
 
-    monkeypatch.setattr(pdf_processor, "_find_tesseract_binary", lambda: "/usr/bin/tesseract")
-    monkeypatch.setitem(sys.modules, "pytesseract", fake_pytesseract)
+    monkeypatch.setattr(pdf_processor, "_rapidocr_engine", None)
+    monkeypatch.setattr(pdf_processor, "_create_rapidocr_engine", lambda: rapid_engine)
+    monkeypatch.setattr(pdf_processor, "_tesseract_ocr_text", lambda page: "TESSERACT OCR TEXT")
+
     monkeypatch.setitem(sys.modules, "PIL", types.SimpleNamespace(Image=FakeImage))
+    monkeypatch.setitem(sys.modules, "numpy", types.SimpleNamespace(asarray=lambda img: img))
+
+    text = pdf_processor._ocr_page_text(DummyPage())
+
+    assert text == "RAPID OCR TEXT"
+    assert rapid_engine.calls == 1
+
+
+def test_ocr_page_text_falls_back_to_tesseract_when_rapidocr_fails(monkeypatch):
+    import pdf_processor
+
+    class DummyPage:
+        def get_pixmap(self, alpha=False, dpi=150):
+            return types.SimpleNamespace(width=1, height=1, samples=b"\x00\x00\x00")
+
+    class FakeImage:
+        @staticmethod
+        def frombytes(*args, **kwargs):
+            return object()
+
+    def fail_engine():
+        raise RuntimeError("rapidocr failed")
+
+    monkeypatch.setattr(pdf_processor, "_rapidocr_engine", None)
+    monkeypatch.setattr(pdf_processor, "_create_rapidocr_engine", fail_engine)
+    monkeypatch.setattr(pdf_processor, "_tesseract_ocr_text", lambda page: "TESSERACT OCR TEXT")
+    monkeypatch.setitem(sys.modules, "PIL", types.SimpleNamespace(Image=FakeImage))
+    monkeypatch.setitem(sys.modules, "numpy", types.SimpleNamespace(asarray=lambda img: img))
 
     text = pdf_processor._ocr_page_text(DummyPage())
 
