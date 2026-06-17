@@ -351,8 +351,8 @@ def _ocr_direct_image(page, timings: Dict[str, Any] = None, page_num: int = None
             _record_timing(timings, "direct_image_pages", 1)
             _record_timing(timings, "direct_image_ms", elapsed_ms)
         return text or ""
-    except Exception as exc:
-        logger.warning("Direct embedded-image OCR failed: %s", exc)
+    except Exception:
+        logger.exception("Direct embedded-image OCR failed")
         return ""
 
 
