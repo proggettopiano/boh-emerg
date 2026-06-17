@@ -22,9 +22,57 @@ logger = logging.getLogger(__name__)
 
 _OCR_NOT_CONFIGURED_WARNING_SHOWN = False
 _rapidocr_engine = None
+_rapidocr_available = False
+_tesseract_ready = False
+_pytesseract_module = None
 MAX_OCR_IMAGE_SIZE = 1400
 MAX_PARALLEL_OCR_WORKERS = 3
 _timing_lock = threading.Lock()
+
+# Probe RapidOCR availability once to avoid expensive per-page attempts.
+try:
+    import importlib
+
+    _rapidocr_spec = importlib.util.find_spec("rapidocr")
+    if _rapidocr_spec is not None:
+        _rapidocr_available = True
+    else:
+        _rapidocr_available = False
+except Exception:
+    _rapidocr_available = False
+
+
+def _init_tesseract_once() -> bool:
+    """Initialize pytesseract and configure tesseract binary once.
+
+    Returns True if tesseract is available and configured, False otherwise.
+    """
+    global _tesseract_ready, _pytesseract_module
+    if _tesseract_ready:
+        return True
+    try:
+        import pytesseract
+
+        _pytesseract_module = pytesseract
+    except Exception as exc:
+        logger.warning("pytesseract import failed: %s", exc)
+        return False
+
+    tesseract_cmd = _find_tesseract_binary()
+    if not tesseract_cmd:
+        _warn_no_ocr_backend()
+        return False
+
+    try:
+        try:
+            _pytesseract_module.pytesseract.tesseract_cmd = tesseract_cmd
+        except Exception:
+            _pytesseract_module.tesseract_cmd = tesseract_cmd
+    except Exception:
+        # Not fatal; continue but mark not ready
+        logger.debug("Failed to set tesseract_cmd on pytesseract module")
+    _tesseract_ready = True
+    return True
 
 MUSIC_SYMBOL_RE = re.compile(r"[\u0000-\u001F\u007F]+")
 APOSTROPHE_RE = re.compile(r"[’‘`]")
@@ -113,6 +161,8 @@ def _resize_image_for_ocr(img, max_long_side: int = MAX_OCR_IMAGE_SIZE):
     scale = max_long_side / max(img.width, img.height)
     new_size = (max(1, int(img.width * scale)), max(1, int(img.height * scale)))
     try:
+        from PIL import Image
+
         return img.resize(new_size, resample=Image.LANCZOS)
     except Exception as exc:
         logger.debug("Image resize for OCR failed: %s", exc)
@@ -289,8 +339,12 @@ def _find_tesseract_binary() -> str:
 
 def _create_rapidocr_engine():
     global _rapidocr_engine
+    global _rapidocr_available
     if _rapidocr_engine is not None:
         return _rapidocr_engine
+
+    if not _rapidocr_available:
+        return None
 
     try:
         from rapidocr import RapidOCR
@@ -299,11 +353,16 @@ def _create_rapidocr_engine():
         logger.info("RapidOCR engine initialized successfully")
         return _rapidocr_engine
     except Exception as exc:
-        logger.warning("RapidOCR unavailable: %s", exc)
+        logger.warning("RapidOCR initialization failed despite availability flag: %s", exc)
+        _rapidocr_available = False
         return None
 
 
 def _extract_text_with_rapidocr(page, timings: Dict[str, Any] = None) -> str:
+    # Skip expensive RapidOCR rendering if RapidOCR is not installed.
+    if not _rapidocr_available:
+        return ""
+
     start_total = time.perf_counter()
     render_time = 0.0
     infer_time = 0.0
@@ -504,8 +563,11 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None) -> str:
     render_time = 0.0
     infer_time = 0.0
     pass_count = 0
+    # Initialize pytesseract once to avoid repeated overhead.
+    if not _init_tesseract_once():
+        return ""
+
     try:
-        import pytesseract
         from PIL import Image
         try:
             from PIL import ImageFilter, ImageOps, ImageEnhance
@@ -514,22 +576,8 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None) -> str:
             ImageOps = None
             ImageEnhance = None
     except Exception as exc:
-        logger.warning("OCR locale non disponibile: %s", exc)
+        logger.warning("Pillow import failed for Tesseract OCR: %s", exc)
         return ""
-
-    tesseract_cmd = _find_tesseract_binary()
-    if not tesseract_cmd:
-        _warn_no_ocr_backend()
-        logger.warning("Tesseract non trovato: OCR locale non disponibile")
-        return ""
-
-    try:
-        pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
-    except Exception:
-        try:
-            pytesseract.tesseract_cmd = tesseract_cmd
-        except Exception:
-            pass
 
     results = []
     try:
@@ -653,9 +701,12 @@ def _ocr_page_text(page, timings: Dict[str, Any] = None) -> str:
     return text
 
 
-def _ocr_page_worker(page_num: int, page, timings: Dict[str, Any] = None) -> str:
+def _ocr_page_worker(page_num: int, page, timings: Dict[str, Any] = None):
     logger.info("OCR worker started for page %s", page_num + 1)
-    return _ocr_page_text(page, timings=timings)
+    start = time.perf_counter()
+    text = _ocr_page_text(page, timings=timings)
+    ms = (time.perf_counter() - start) * 1000.0
+    return text, ms
 
 
 def _ocr_needs_page(page_info: Dict[str, Any]) -> bool:
@@ -814,40 +865,68 @@ def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None) -> Tuple[Lis
 
     if ocr_candidates:
         max_workers = _choose_ocr_worker_count(ocr_candidates, page_details)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_page = {
-                executor.submit(_ocr_page_worker, page_num, page, timings): (page_num, cleaned, page_info)
-                for page_num, page, cleaned, page_info in ocr_candidates
-            }
-            for future in as_completed(future_to_page):
-                page_num, cleaned, page_info = future_to_page[future]
-                ocr_text = ""
-                ocr_ms = 0.0
-                try:
-                    ocr_start = time.perf_counter()
-                    ocr_text = future.result()
-                    ocr_ms = (time.perf_counter() - ocr_start) * 1000.0
-                except Exception as exc:
-                    logger.warning("Page %s OCR failed in thread: %s", page_num + 1, exc)
+        logger.info("Starting OCR pool: max_workers=%s candidates=%d", max_workers, len(ocr_candidates))
 
-                logger.info("Page %s OCR time: %.0f ms", page_num + 1, ocr_ms)
-                if timings is not None:
-                    _record_timing(timings, "page_ocr_ms", ocr_ms)
+        # If there is only one candidate, avoid ThreadPool overhead and run synchronously.
+        if len(ocr_candidates) == 1:
+            page_num, page, cleaned, page_info = ocr_candidates[0]
+            try:
+                ocr_text, ocr_ms = _ocr_page_worker(page_num, page, timings)
+            except Exception as exc:
+                logger.warning("Page %s OCR failed: %s", page_num + 1, exc)
+                ocr_text, ocr_ms = "", 0.0
 
-                if ocr_text:
-                    chosen = _choose_page_text(cleaned, ocr_text)
-                    if chosen != cleaned:
-                        used_ocr = True
-                        page_info["ocr_used"] = True
-                        logger.info(
-                            "Page %s: OCR yielded better text (native %d words, ocr %d words, final %d words)",
-                            page_num + 1,
-                            _count_text_words(cleaned),
-                            _count_text_words(clean_pdf_text(ocr_text)),
-                            _count_text_words(chosen),
-                        )
-                    pages_text[page_num] = chosen
-                page_info["ocr_ms"] = ocr_ms
+            logger.info("Page %s OCR time: %.0f ms", page_num + 1, ocr_ms)
+            if timings is not None:
+                _record_timing(timings, "page_ocr_ms", ocr_ms)
+
+            if ocr_text:
+                chosen = _choose_page_text(cleaned, ocr_text)
+                if chosen != cleaned:
+                    used_ocr = True
+                    page_info["ocr_used"] = True
+                    logger.info(
+                        "Page %s: OCR yielded better text (native %d words, ocr %d words, final %d words)",
+                        page_num + 1,
+                        _count_text_words(cleaned),
+                        _count_text_words(clean_pdf_text(ocr_text)),
+                        _count_text_words(chosen),
+                    )
+                pages_text[page_num] = chosen
+            page_info["ocr_ms"] = ocr_ms
+        else:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_page = {
+                    executor.submit(_ocr_page_worker, page_num, page, timings): (page_num, cleaned, page_info)
+                    for page_num, page, cleaned, page_info in ocr_candidates
+                }
+                for future in as_completed(future_to_page):
+                    page_num, cleaned, page_info = future_to_page[future]
+                    ocr_text = ""
+                    ocr_ms = 0.0
+                    try:
+                        ocr_text, ocr_ms = future.result()
+                    except Exception as exc:
+                        logger.warning("Page %s OCR failed in thread: %s", page_num + 1, exc)
+
+                    logger.info("Page %s OCR time: %.0f ms", page_num + 1, ocr_ms)
+                    if timings is not None:
+                        _record_timing(timings, "page_ocr_ms", ocr_ms)
+
+                    if ocr_text:
+                        chosen = _choose_page_text(cleaned, ocr_text)
+                        if chosen != cleaned:
+                            used_ocr = True
+                            page_info["ocr_used"] = True
+                            logger.info(
+                                "Page %s: OCR yielded better text (native %d words, ocr %d words, final %d words)",
+                                page_num + 1,
+                                _count_text_words(cleaned),
+                                _count_text_words(clean_pdf_text(ocr_text)),
+                                _count_text_words(chosen),
+                            )
+                        pages_text[page_num] = chosen
+                    page_info["ocr_ms"] = ocr_ms
 
     if timings is not None:
         for page_info in page_details:
