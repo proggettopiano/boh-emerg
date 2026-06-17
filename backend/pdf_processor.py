@@ -581,7 +581,7 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = No
 
     results = []
     try:
-        primary_dpi = int(os.environ.get("OCR_PRIMARY_DPI", "150"))
+        primary_dpi = int(os.environ.get("OCR_PRIMARY_DPI", "200"))
         secondary_dpi = int(os.environ.get("OCR_SECONDARY_DPI", "120"))
         primary_psm = int(os.environ.get("OCR_PRIMARY_PSM", "6"))
         sufficiency_words = int(os.environ.get("OCR_WORD_THRESHOLD", "12"))
@@ -595,7 +595,7 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = No
             except Exception:
                 try:
                     start = time.perf_counter()
-                    pix = page.get_pixmap(alpha=False)
+                    pix = page.get_pixmap(alpha=False, dpi=dpi)
                     render_time += time.perf_counter() - start
                 except Exception as exc:
                     logger.warning("Failed to rasterize page for OCR: %s", exc)
@@ -655,7 +655,7 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = No
                 logger.debug("Tesseract pass failed (dpi=%s psm=%s): %s", dpi, psm, exc)
             return gray
 
-        # Primary OCR pass with low DPI and fixed PSM.
+        # Primary OCR pass with lower DPI and fixed PSM.
         do_pass(primary_dpi, primary_psm)
         merged_candidate = "\n".join([ln for r in results for ln in [l.strip() for l in r.splitlines() if l.strip()]])
         cleaned_candidate = clean_pdf_text(merged_candidate)
@@ -663,7 +663,7 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = No
         if words_found >= sufficiency_words:
             return cleaned_candidate
 
-        # Fallback pass at even lower DPI, same psm.
+        # Fallback pass at secondary DPI only if needed.
         do_pass(secondary_dpi, primary_psm)
         merged_candidate = "\n".join([ln for r in results for ln in [l.strip() for l in r.splitlines() if l.strip()]])
         cleaned_candidate = clean_pdf_text(merged_candidate)
