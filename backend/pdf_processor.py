@@ -10,8 +10,10 @@ import logging
 import os
 import re
 import shutil
+import threading
 import time
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Tuple
 import fitz  # PyMuPDF
 import httpx
@@ -20,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 _OCR_NOT_CONFIGURED_WARNING_SHOWN = False
 _rapidocr_engine = None
+MAX_OCR_IMAGE_SIZE = 1400
+MAX_PARALLEL_OCR_WORKERS = 3
+_timing_lock = threading.Lock()
 
 MUSIC_SYMBOL_RE = re.compile(r"[\u0000-\u001F\u007F]+")
 APOSTROPHE_RE = re.compile(r"[’‘`]")
@@ -94,10 +99,11 @@ def _count_text_words(text: str) -> int:
 
 def _record_timing(timings: Dict[str, Any], key: str, value: float) -> None:
     if timings is not None:
-        timings[key] = timings.get(key, 0.0) + value
+        with _timing_lock:
+            timings[key] = timings.get(key, 0.0) + value
 
 
-def _resize_image_for_ocr(img, max_long_side: int = 2000):
+def _resize_image_for_ocr(img, max_long_side: int = MAX_OCR_IMAGE_SIZE):
     """Resize large OCR images to a bounded long side before inference."""
     if img is None:
         return img
@@ -111,6 +117,22 @@ def _resize_image_for_ocr(img, max_long_side: int = 2000):
     except Exception as exc:
         logger.debug("Image resize for OCR failed: %s", exc)
         return img
+
+
+def _choose_ocr_worker_count(ocr_candidates: List[tuple], page_details: List[Dict[str, Any]]) -> int:
+    if not ocr_candidates:
+        return 0
+
+    image_pages = sum(1 for p in page_details if p.get("page_images"))
+    mixed_pages = sum(1 for p in page_details if p.get("dict_text_blocks", 0) > 0 and p.get("dict_image_blocks", 0) > 0)
+    total_pages = len(page_details) if page_details else len(ocr_candidates)
+
+    is_scanned_pdf = image_pages >= max(1, int(total_pages * 0.75))
+    if is_scanned_pdf:
+        return min(2, len(ocr_candidates), MAX_PARALLEL_OCR_WORKERS)
+    if mixed_pages > 0:
+        return min(3, len(ocr_candidates), MAX_PARALLEL_OCR_WORKERS)
+    return min(1, len(ocr_candidates), MAX_PARALLEL_OCR_WORKERS)
 
 
 def _is_noisy_page_text(cleaned_text: str) -> bool:
@@ -599,17 +621,12 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None) -> str:
         _record_timing(timings, "tesseract_calls", 1)
 
 
-def _ocr_page_text(page, timings: Dict[str, Any] = None) -> str:
-    rapid_text = _extract_text_with_rapidocr(page, timings=timings)
-    if rapid_text:
-        _record_timing(timings, "rapidocr_pages", 1)
-        logger.info("RapidOCR OCR produced %d chars", len(rapid_text))
-        return rapid_text
+def _ocr_page_sync(page, timings: Dict[str, Any] = None) -> str:
+    return _ocr_page_text(page, timings=timings)
 
-    text = _tesseract_ocr_text(page, timings=timings)
-    if text:
-        _record_timing(timings, "tesseract_pages", 1)
-    return text
+
+def _ocr_needs_page(page_info: Dict[str, Any]) -> bool:
+    return page_info.get("ocr_attempted", False)
 
 
 def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None) -> Tuple[List[str], List[str], int, bool, List[str]]:
@@ -635,7 +652,11 @@ def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None) -> Tuple[Lis
     except Exception:
         labels = None
 
-    raw_texts: List[str] = []
+    raw_texts: List[str] = [""] * len(doc)
+    ocr_candidates = []
+    pages_text: List[str] = [""] * len(doc)
+    page_details: List[Dict[str, Any]] = []
+
     for page_num in range(len(doc)):
         page_info: Dict[str, Any] = {
             "page": page_num + 1,
@@ -739,8 +760,47 @@ def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None) -> Tuple[Lis
                     page_images,
                     "+".join(page_info["reason"]) or "unknown",
                 )
+                ocr_candidates.append((page_num, page, cleaned, page_info))
 
-                ocr_text = _ocr_page_text(page, timings=timings)
+            pages_text[page_num] = cleaned
+            raw_texts[page_num] = raw_text
+            page_details.append(page_info)
+            if labels and page_num < len(labels) and labels[page_num] is not None:
+                page_labels.append(labels[page_num])
+            else:
+                page_labels.append(str(page_num + 1))
+        except Exception as e:
+            logger.warning(f"Failed to extract page {page_num + 1}: {e}")
+            pages_text[page_num] = ""
+            raw_texts[page_num] = ""
+            page_details.append(page_info)
+            if labels and page_num < len(labels) and labels[page_num] is not None:
+                page_labels.append(labels[page_num])
+            else:
+                page_labels.append(str(page_num + 1))
+
+    if ocr_candidates:
+        max_workers = _choose_ocr_worker_count(ocr_candidates, page_details)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_page = {
+                executor.submit(_ocr_page_sync, page, timings): (page_num, cleaned, page_info)
+                for page_num, page, cleaned, page_info in ocr_candidates
+            }
+            for future in as_completed(future_to_page):
+                page_num, cleaned, page_info = future_to_page[future]
+                ocr_text = ""
+                ocr_ms = 0.0
+                try:
+                    ocr_start = time.perf_counter()
+                    ocr_text = future.result()
+                    ocr_ms = (time.perf_counter() - ocr_start) * 1000.0
+                except Exception as exc:
+                    logger.warning("Page %s OCR failed in thread: %s", page_num + 1, exc)
+
+                logger.info("Page %s OCR time: %.0f ms", page_num + 1, ocr_ms)
+                if timings is not None:
+                    _record_timing(timings, "page_ocr_ms", ocr_ms)
+
                 if ocr_text:
                     chosen = _choose_page_text(cleaned, ocr_text)
                     if chosen != cleaned:
@@ -753,34 +813,23 @@ def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None) -> Tuple[Lis
                             _count_text_words(clean_pdf_text(ocr_text)),
                             _count_text_words(chosen),
                         )
-                    cleaned = chosen
-            else:
-                logger.debug(
-                    "Page %s: native text sufficient chars=%s words=%s images=%s",
-                    page_num + 1,
-                    len(cleaned),
-                    word_count,
-                    page_images,
-                )
-            pages_text.append(cleaned)
-            raw_texts.append(raw_text)
-        except Exception as e:
-            logger.warning(f"Failed to extract page {page_num + 1}: {e}")
-            pages_text.append("")
-            raw_texts.append("")
+                    pages_text[page_num] = chosen
+                page_info["ocr_ms"] = ocr_ms
 
-        if labels and page_num < len(labels) and labels[page_num] is not None:
-            page_labels.append(labels[page_num])
-        else:
-            page_labels.append(str(page_num + 1))
-
-        if timings is not None:
+    if timings is not None:
+        for page_info in page_details:
             timings["page_details"].append(page_info)
             _record_timing(timings, "pages_with_ocr", 1 if page_info["ocr_attempted"] else 0)
             _record_timing(timings, "pages_with_ocr_used", 1 if page_info["ocr_used"] else 0)
-            if not page_info["ocr_attempted"] and page_info["page_images"]:
+            if not page_info["ocr_attempted"] and page_info.get("page_images"):
                 _record_timing(timings, "image_pages_skipped_ocr", 1)
-            if page_info["ocr_attempted"] and not page_info["page_images"] and not page_info["is_noisy"] and page_info["clean_length"] >= 40 and page_info["word_count"] >= 3:
+            if (
+                page_info["ocr_attempted"]
+                and not page_info.get("page_images")
+                and not page_info.get("is_noisy")
+                and page_info.get("clean_length", 0) >= 40
+                and page_info.get("word_count", 0) >= 3
+            ):
                 _record_timing(timings, "unnecessary_ocr_pages", 1)
             _record_timing(timings, "page_count", 1)
             if page_info["reason"]:
