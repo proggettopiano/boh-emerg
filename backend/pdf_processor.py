@@ -581,7 +581,7 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = No
 
     results = []
     try:
-        primary_dpi = int(os.environ.get("OCR_PRIMARY_DPI", "200"))
+        primary_dpi = int(os.environ.get("OCR_PRIMARY_DPI", "150"))
         secondary_dpi = int(os.environ.get("OCR_SECONDARY_DPI", "120"))
         primary_psm = int(os.environ.get("OCR_PRIMARY_PSM", "6"))
         sufficiency_words = int(os.environ.get("OCR_WORD_THRESHOLD", "12"))
@@ -637,6 +637,7 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = No
                 config = f"--psm {psm} --oem 3"
                 try:
                     logger.info("Starting Tesseract for page %s (dpi=%s psm=%s)", page_num or "?", dpi, psm)
+                    logger.info("OCR_COMPARE dpi=%s page=%s", dpi, page_num + 1 if page_num is not None else '?')
                 except Exception:
                     pass
                 start = time.perf_counter()
@@ -647,6 +648,7 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = No
                 infer_time += time.perf_counter() - start
                 try:
                     logger.info("Finished Tesseract for page %s (elapsed %.0f ms)", page_num or "?", (time.perf_counter() - start) * 1000.0)
+                    logger.info("OCR_WORDS page=%s words=%d", page_num + 1 if page_num is not None else '?', _count_text_words(clean_pdf_text(text)))
                 except Exception:
                     pass
                 pass_count += 1
