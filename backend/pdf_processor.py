@@ -97,6 +97,22 @@ def _record_timing(timings: Dict[str, Any], key: str, value: float) -> None:
         timings[key] = timings.get(key, 0.0) + value
 
 
+def _resize_image_for_ocr(img, max_long_side: int = 2000):
+    """Resize large OCR images to a bounded long side before inference."""
+    if img is None:
+        return img
+    if max(img.width, img.height) <= max_long_side:
+        return img
+
+    scale = max_long_side / max(img.width, img.height)
+    new_size = (max(1, int(img.width * scale)), max(1, int(img.height * scale)))
+    try:
+        return img.resize(new_size, resample=Image.LANCZOS)
+    except Exception as exc:
+        logger.debug("Image resize for OCR failed: %s", exc)
+        return img
+
+
 def _is_noisy_page_text(cleaned_text: str) -> bool:
     if not cleaned_text:
         return True
@@ -278,6 +294,7 @@ def _extract_text_with_rapidocr(page, timings: Dict[str, Any] = None) -> str:
         render_time += time.perf_counter() - start
 
         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        img = _resize_image_for_ocr(img, max_long_side=2000)
         arr = np.asarray(img)
         engine = _create_rapidocr_engine()
         if engine is None:

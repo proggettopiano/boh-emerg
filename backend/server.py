@@ -45,7 +45,7 @@ load_dotenv(ROOT_DIR / ".env")
 
 UPLOAD_DIR = ROOT_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True, parents=True)
-MAX_UPLOAD_SIZE_BYTES = int(os.environ.get("MAX_UPLOAD_SIZE_BYTES", 25 * 1024 * 1024))
+MAX_UPLOAD_SIZE_BYTES = int(os.environ.get("MAX_UPLOAD_SIZE_BYTES", 15 * 1024 * 1024))
 MAX_UPLOAD_FILES_PER_REQUEST = int(os.environ.get("MAX_UPLOAD_FILES_PER_REQUEST", 5))
 MAX_UPLOAD_QUEUE_SIZE_BYTES = int(os.environ.get("MAX_UPLOAD_QUEUE_SIZE_BYTES", 200 * 1024 * 1024))
 
