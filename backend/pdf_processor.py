@@ -625,6 +625,39 @@ def _ocr_page_sync(page, timings: Dict[str, Any] = None) -> str:
     return _ocr_page_text(page, timings=timings)
 
 
+def _ocr_page_text(page, timings: Dict[str, Any] = None) -> str:
+    """Module-level OCR wrapper used by workers.
+
+    Calls RapidOCR first, falls back to Tesseract. Keeps timing and logging
+    centralized so thread workers can call a stable module-level function.
+    """
+    try:
+        rapid_text = _extract_text_with_rapidocr(page, timings=timings)
+    except Exception as exc:
+        logger.warning("RapidOCR invocation failed: %s", exc)
+        rapid_text = ""
+
+    if rapid_text:
+        _record_timing(timings, "rapidocr_pages", 1)
+        logger.info("RapidOCR OCR produced %d chars", len(rapid_text))
+        return rapid_text
+
+    try:
+        text = _tesseract_ocr_text(page, timings=timings)
+    except Exception as exc:
+        logger.warning("Tesseract OCR invocation failed: %s", exc)
+        text = ""
+
+    if text:
+        _record_timing(timings, "tesseract_pages", 1)
+    return text
+
+
+def _ocr_page_worker(page_num: int, page, timings: Dict[str, Any] = None) -> str:
+    logger.info("OCR worker started for page %s", page_num + 1)
+    return _ocr_page_text(page, timings=timings)
+
+
 def _ocr_needs_page(page_info: Dict[str, Any]) -> bool:
     return page_info.get("ocr_attempted", False)
 
@@ -783,7 +816,7 @@ def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None) -> Tuple[Lis
         max_workers = _choose_ocr_worker_count(ocr_candidates, page_details)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_page = {
-                executor.submit(_ocr_page_sync, page, timings): (page_num, cleaned, page_info)
+                executor.submit(_ocr_page_worker, page_num, page, timings): (page_num, cleaned, page_info)
                 for page_num, page, cleaned, page_info in ocr_candidates
             }
             for future in as_completed(future_to_page):
