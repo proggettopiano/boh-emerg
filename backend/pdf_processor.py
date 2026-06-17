@@ -655,7 +655,7 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = No
 
     results = []
     try:
-        primary_dpi = int(os.environ.get("OCR_PRIMARY_DPI", "150"))
+        primary_dpi = int(os.environ.get("OCR_DPI") or os.environ.get("OCR_PRIMARY_DPI", "150"))
         secondary_dpi = int(os.environ.get("OCR_SECONDARY_DPI", "120"))
         primary_psm = int(os.environ.get("OCR_PRIMARY_PSM", "6"))
         sufficiency_words = int(os.environ.get("OCR_WORD_THRESHOLD", "12"))
@@ -706,6 +706,7 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = No
                 gray = img
 
             logger.info("OCR_RUNTIME dpi=%s width=%s height=%s", dpi, pix.width, pix.height)
+            logger.info("OCR_TIMING raster_ms=%.0f tesseract_ms=%.0f", render_time * 1000.0, infer_time * 1000.0)
             try:
                 lang = os.environ.get("TESSERACT_LANG", "ita+eng")
                 config = f"--psm {psm} --oem 3"
@@ -803,6 +804,7 @@ def _ocr_page_text(page, timings: Dict[str, Any] = None, page_num: int = None) -
         return direct_text
 
     logger.info("OCR_PATH=fallback-raster")
+    logger.info("OCR_PATH_REASON=page-raster-fallback")
     try:
         text = _tesseract_ocr_text(page, timings=timings, page_num=page_num)
     except Exception as exc:
