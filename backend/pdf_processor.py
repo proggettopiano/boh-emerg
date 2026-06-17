@@ -558,7 +558,7 @@ def _has_google_vision_auth() -> bool:
     )
 
 
-def _tesseract_ocr_text(page, timings: Dict[str, Any] = None) -> str:
+def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = None) -> str:
     start_total = time.perf_counter()
     render_time = 0.0
     infer_time = 0.0
@@ -607,6 +607,13 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None) -> str:
                     logger.warning("Failed to convert pixmap to Image: %s", exc)
                     continue
 
+            # Log image size and dpi for performance debugging
+            try:
+                logger.info("OCR page %s image size: %sx%s", page_num or "?", pix.width, pix.height)
+                logger.info("OCR page %s dpi: %s", page_num or "?", dpi)
+            except Exception:
+                pass
+
             try:
                 if ImageOps is not None and ImageFilter is not None and ImageEnhance is not None:
                     gray = ImageOps.grayscale(img)
@@ -621,16 +628,25 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None) -> str:
                 logger.debug("Image preprocessing failed: %s", exc)
                 gray = img
 
-            for psm in psm_values:
+                for psm in psm_values:
                 try:
                     lang = os.environ.get("TESSERACT_LANG", "ita+eng")
                     config = f"--psm {psm} --oem 3"
+                    # Log before/after Tesseract to identify if Tesseract is the bottleneck
+                    try:
+                        logger.info("Starting Tesseract for page %s (dpi=%s psm=%s)", page_num or "?", dpi, psm)
+                    except Exception:
+                        pass
                     start = time.perf_counter()
                     try:
-                        text = pytesseract.image_to_string(gray, lang=lang, config=config)
+                        text = _pytesseract_module.image_to_string(gray, lang=lang, config=config)
                     except TypeError:
-                        text = pytesseract.image_to_string(gray)
+                        text = _pytesseract_module.image_to_string(gray)
                     infer_time += time.perf_counter() - start
+                    try:
+                        logger.info("Finished Tesseract for page %s (elapsed %.0f ms)", page_num or "?", (time.perf_counter() - start) * 1000.0)
+                    except Exception:
+                        pass
                     pass_count += 1
                     if text:
                         results.append(text)
@@ -670,10 +686,10 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None) -> str:
 
 
 def _ocr_page_sync(page, timings: Dict[str, Any] = None) -> str:
-    return _ocr_page_text(page, timings=timings)
+    return _ocr_page_text(page, timings=timings, page_num=None)
 
 
-def _ocr_page_text(page, timings: Dict[str, Any] = None) -> str:
+def _ocr_page_text(page, timings: Dict[str, Any] = None, page_num: int = None) -> str:
     """Module-level OCR wrapper used by workers.
 
     Calls RapidOCR first, falls back to Tesseract. Keeps timing and logging
@@ -691,7 +707,7 @@ def _ocr_page_text(page, timings: Dict[str, Any] = None) -> str:
         return rapid_text
 
     try:
-        text = _tesseract_ocr_text(page, timings=timings)
+        text = _tesseract_ocr_text(page, timings=timings, page_num=page_num)
     except Exception as exc:
         logger.warning("Tesseract OCR invocation failed: %s", exc)
         text = ""
@@ -704,7 +720,7 @@ def _ocr_page_text(page, timings: Dict[str, Any] = None) -> str:
 def _ocr_page_worker(page_num: int, page, timings: Dict[str, Any] = None):
     logger.info("OCR worker started for page %s", page_num + 1)
     start = time.perf_counter()
-    text = _ocr_page_text(page, timings=timings)
+    text = _ocr_page_text(page, timings=timings, page_num=page_num)
     ms = (time.perf_counter() - start) * 1000.0
     return text, ms
 
