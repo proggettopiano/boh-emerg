@@ -581,15 +581,14 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = No
 
     results = []
     try:
-        # Use a single DPI by default to reduce rasterization cost for phone photos.
-        dpis = [200]
-        # Single-pass primary psm to avoid expensive multi-pass OCR. Fallback passes only if result is weak.
-        primary_psm = 6
-        fallback_psms = [11, 3]
-        # Minimum words to consider OCR result sufficient and stop further passes.
-        sufficiency_words = 12
+        primary_dpi = int(os.environ.get("OCR_PRIMARY_DPI", "150"))
+        secondary_dpi = int(os.environ.get("OCR_SECONDARY_DPI", "120"))
+        primary_psm = int(os.environ.get("OCR_PRIMARY_PSM", "6"))
+        fallback_psm = int(os.environ.get("OCR_FALLBACK_PSM", "11"))
+        sufficiency_words = int(os.environ.get("OCR_WORD_THRESHOLD", "12"))
 
-        for dpi in dpis:
+        def do_pass(dpi: int, psm: int):
+            nonlocal render_time, infer_time, pass_count, results
             try:
                 start = time.perf_counter()
                 pix = page.get_pixmap(alpha=False, dpi=dpi)
@@ -601,7 +600,7 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = No
                     render_time += time.perf_counter() - start
                 except Exception as exc:
                     logger.warning("Failed to rasterize page for OCR: %s", exc)
-                    continue
+                    return None
 
             try:
                 img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
@@ -610,7 +609,7 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = No
                     img = Image.frombuffer("RGB", (pix.width, pix.height), pix.samples, "raw", "RGB", 0, 1)
                 except Exception as exc:
                     logger.warning("Failed to convert pixmap to Image: %s", exc)
-                    continue
+                    return None
 
             # Log image size and dpi for performance debugging
             try:
@@ -632,12 +631,12 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = No
             except Exception as exc:
                 logger.debug("Image preprocessing failed: %s", exc)
                 gray = img
-            # Primary single-pass OCR
+
             try:
                 lang = os.environ.get("TESSERACT_LANG", "ita+eng")
-                config = f"--psm {primary_psm} --oem 3"
+                config = f"--psm {psm} --oem 3"
                 try:
-                    logger.info("Starting Tesseract for page %s (dpi=%s psm=%s)", page_num or "?", dpi, primary_psm)
+                    logger.info("Starting Tesseract for page %s (dpi=%s psm=%s)", page_num or "?", dpi, psm)
                 except Exception:
                     pass
                 start = time.perf_counter()
@@ -654,80 +653,59 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = No
                 if text:
                     results.append(text)
             except Exception as exc:
-                logger.debug("Tesseract primary pass failed (dpi=%s psm=%s): %s", dpi, primary_psm, exc)
+                logger.debug("Tesseract pass failed (dpi=%s psm=%s): %s", dpi, psm, exc)
+            return gray
 
-            # Check sufficiency and run fallback passes only if needed
-            merged_candidate = "\n".join([ln for r in results for ln in [l.strip() for l in r.splitlines() if l.strip()]])
-            cleaned_candidate = clean_pdf_text(merged_candidate)
-            words_found = _count_text_words(cleaned_candidate)
-            if words_found >= sufficiency_words:
-                return cleaned_candidate
+        # First try primary DPI single-pass
+        do_pass(primary_dpi, primary_psm)
+        merged_candidate = "\n".join([ln for r in results for ln in [l.strip() for l in r.splitlines() if l.strip()]])
+        cleaned_candidate = clean_pdf_text(merged_candidate)
+        words_found = _count_text_words(cleaned_candidate)
+        if words_found >= sufficiency_words:
+            return cleaned_candidate
 
-            for psm in fallback_psms:
+        # Second try lower DPI single-pass (faster, for phone photos)
+        do_pass(secondary_dpi, primary_psm)
+        merged_candidate = "\n".join([ln for r in results for ln in [l.strip() for l in r.splitlines() if l.strip()]])
+        cleaned_candidate = clean_pdf_text(merged_candidate)
+        words_found = _count_text_words(cleaned_candidate)
+        if words_found >= sufficiency_words:
+            return cleaned_candidate
+
+        # Fallback: try higher DPI with fallback psm once
+        try:
+            start = time.perf_counter()
+            pix_hi = page.get_pixmap(alpha=False, dpi=300)
+            render_time += time.perf_counter() - start
+            try:
+                img_hi = Image.frombytes("RGB", [pix_hi.width, pix_hi.height], pix_hi.samples)
+            except Exception:
+                try:
+                    img_hi = Image.frombuffer("RGB", (pix_hi.width, pix_hi.height), pix_hi.samples, "raw", "RGB", 0, 1)
+                except Exception:
+                    img_hi = None
+            if img_hi is not None:
+                gray_hi = img_hi
                 try:
                     lang = os.environ.get("TESSERACT_LANG", "ita+eng")
-                    config = f"--psm {psm} --oem 3"
+                    config = f"--psm {fallback_psm} --oem 3"
                     try:
-                        logger.info("Starting Tesseract fallback for page %s (dpi=%s psm=%s)", page_num or "?", dpi, psm)
+                        logger.info("Starting Tesseract (fallback high DPI) for page %s (dpi=%s)", page_num or "?", 300)
                     except Exception:
                         pass
                     start = time.perf_counter()
                     try:
-                        text = _pytesseract_module.image_to_string(gray, lang=lang, config=config)
+                        text = _pytesseract_module.image_to_string(gray_hi, lang=lang, config=config)
                     except TypeError:
-                        text = _pytesseract_module.image_to_string(gray)
+                        text = _pytesseract_module.image_to_string(gray_hi)
                     infer_time += time.perf_counter() - start
-                    try:
-                        logger.info("Finished Tesseract fallback for page %s (elapsed %.0f ms)", page_num or "?", (time.perf_counter() - start) * 1000.0)
-                    except Exception:
-                        pass
                     pass_count += 1
                     if text:
                         results.append(text)
-                except Exception as exc:
-                    logger.debug("Tesseract fallback pass failed (dpi=%s psm=%s): %s", dpi, psm, exc)
-
-            # Re-evaluate after fallback passes
-            merged_candidate = "\n".join([ln for r in results for ln in [l.strip() for l in r.splitlines() if l.strip()]])
-            cleaned_candidate = clean_pdf_text(merged_candidate)
-            words_found = _count_text_words(cleaned_candidate)
-            if words_found >= 1:
-                return cleaned_candidate
-            # If still nothing, as a last resort try a higher DPI once
-            try_higher_dpi = 300
-            try:
-                start = time.perf_counter()
-                pix_hi = page.get_pixmap(alpha=False, dpi=try_higher_dpi)
-                render_time += time.perf_counter() - start
-                try:
-                    img_hi = Image.frombytes("RGB", [pix_hi.width, pix_hi.height], pix_hi.samples)
                 except Exception:
-                    try:
-                        img_hi = Image.frombuffer("RGB", (pix_hi.width, pix_hi.height), pix_hi.samples, "raw", "RGB", 0, 1)
-                    except Exception:
-                        img_hi = None
-                if img_hi is not None:
-                    gray_hi = img_hi
-                    try:
-                        lang = os.environ.get("TESSERACT_LANG", "ita+eng")
-                        config = f"--psm {primary_psm} --oem 3"
-                        try:
-                            logger.info("Starting Tesseract (high DPI) for page %s (dpi=%s)", page_num or "?", try_higher_dpi)
-                        except Exception:
-                            pass
-                        start = time.perf_counter()
-                        try:
-                            text = _pytesseract_module.image_to_string(gray_hi, lang=lang, config=config)
-                        except TypeError:
-                            text = _pytesseract_module.image_to_string(gray_hi)
-                        infer_time += time.perf_counter() - start
-                        pass_count += 1
-                        if text:
-                            results.append(text)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+                    pass
+        except Exception:
+            pass
 
         if not results:
             return ""
