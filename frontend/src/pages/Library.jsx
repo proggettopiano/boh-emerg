@@ -186,9 +186,9 @@ export default function Library() {
                 </select>
               )}
             </div>
-            <div className="ml-auto flex items-center gap-2">
+            <div className="ml-auto flex w-full flex-col items-end gap-1 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
               <span className="overline">ORDINA</span>
-              <select value={sort} onChange={(e) => setSort(e.target.value)} className="border border-rule rounded-sm px-3 py-1.5 text-sm bg-card">
+              <select value={sort} onChange={(e) => setSort(e.target.value)} className="w-full border border-rule rounded-sm px-3 py-1.5 text-sm bg-card sm:w-auto">
                 <option value="date_desc">Più recenti</option>
                 <option value="date_asc">Meno recenti</option>
                 <option value="name_asc">Nome A-Z</option>
