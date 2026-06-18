@@ -554,6 +554,9 @@ async def login(payload: LoginIn, request: Request):
 async def request_access(payload: AccessRequestIn, request: Request):
     email = payload.email.lower().strip()
     ip = get_client_ip(request)
+    existing = await db.access_requests.find_one({"email": email})
+    if existing and existing.get("status") == "approved":
+        raise HTTPException(status_code=409, detail="Hai già ottenuto l'accesso. Se necessario chiedi un reset all'amministratore.")
     await db.access_requests.update_one(
         {"email": email},
         {

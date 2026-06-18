@@ -72,6 +72,34 @@ class TestAuth:
         assert r.status_code == 400
 
 
+class TestAccessRequests:
+    def test_approved_request_blocks_new_submission(self, api_client, auth_headers):
+        email = f"approved_{uuid.uuid4().hex[:8]}@example.com"
+        name = "Tester Approved"
+
+        r1 = api_client.post(f"{BASE_URL}/api/auth/request-access", json={"name": name, "email": email})
+        assert r1.status_code == 200, r1.text
+
+        r2 = api_client.post(f"{BASE_URL}/api/admin/access-requests/approve", json={"email": email}, headers=auth_headers)
+        assert r2.status_code == 200, r2.text
+
+        r3 = api_client.post(f"{BASE_URL}/api/auth/request-access", json={"name": name, "email": email})
+        assert r3.status_code == 409, r3.text
+
+    def test_rejected_request_can_be_resubmitted(self, api_client, auth_headers):
+        email = f"rejected_{uuid.uuid4().hex[:8]}@example.com"
+        name = "Tester Rejected"
+
+        r1 = api_client.post(f"{BASE_URL}/api/auth/request-access", json={"name": name, "email": email})
+        assert r1.status_code == 200, r1.text
+
+        r2 = api_client.post(f"{BASE_URL}/api/admin/access-requests/reject", json={"email": email}, headers=auth_headers)
+        assert r2.status_code == 200, r2.text
+
+        r3 = api_client.post(f"{BASE_URL}/api/auth/request-access", json={"name": name, "email": email})
+        assert r3.status_code == 200, r3.text
+
+
 # ---------------- PROFILE / SETTINGS ----------------
 class TestProfileSettings:
     def test_patch_profile(self, api_client, auth_headers):

@@ -135,18 +135,18 @@ export default function Admin() {
   return (
     <div className="max-w-7xl mx-auto px-6 md:px-12 py-12">
       <div className="flex items-end justify-between flex-wrap gap-4 mb-10">
-        <div>
+        <div className="min-w-0">
           <p className="overline mb-2 flex items-center gap-2"><Shield size={12} /> AMMINISTRATORE</p>
           <h1 className="font-display font-black text-4xl md:text-5xl tracking-tighter">Pannello Amministratore</h1>
         </div>
-        <div className="flex gap-2">
-          <button onClick={() => navigate("/logs")} className="btn-ghost border border-rule rounded-sm px-3 py-2 text-sm">
+        <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+          <button onClick={() => navigate("/logs")} className="btn-ghost border border-rule rounded-sm px-3 py-2 text-sm whitespace-nowrap">
             <ScrollText size={14} /> Log di sistema
           </button>
-          <button ref={resetBtnRef} onClick={resetTodayData} className="btn-ghost border border-rule rounded-sm px-3 py-2 text-sm !text-black dark:!text-amber-300 admin-reset-btn">
+          <button ref={resetBtnRef} onClick={resetTodayData} className="btn-ghost border border-rule rounded-sm px-3 py-2 text-sm !text-black dark:!text-amber-300 admin-reset-btn whitespace-nowrap">
             <AlertTriangle size={14} /> Reset dati odierni
           </button>
-          <button onClick={load} disabled={busy} className="btn-primary">
+          <button onClick={load} disabled={busy} className="btn-primary whitespace-nowrap">
             <RefreshCw size={14} className={busy ? "animate-spin" : ""} /> Aggiorna
           </button>
         </div>
@@ -171,17 +171,17 @@ export default function Admin() {
           <div className="border border-rule rounded-md bg-card divide-y divide-rule">
             {users.length > 0 ? (
               visibleUsers.map((u, idx) => (
-                <div key={idx} className="p-4 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
+                <div key={idx} className="p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
                     <div className="w-8 h-8 rounded-full bg-canvas3 flex items-center justify-center text-xs font-bold">
                       {u.name.split(' ').map(n => n[0]).join('').toUpperCase()}
                     </div>
-                    <div>
-                      <div className="font-medium">{u.name}</div>
-                      <div className="text-[10px] text-muted3 text-mono uppercase tracking-widest">{u.email}</div>
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">{u.name}</div>
+                      <div className="text-[10px] text-muted3 text-mono uppercase tracking-widest break-all sm:break-normal">{u.email}</div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1.5 text-[10px] text-muted2 uppercase tracking-wider font-mono">
+                  <div className="flex items-center gap-1.5 text-[10px] text-muted2 uppercase tracking-wider font-mono self-start sm:self-auto">
                     <div className="text-xs text-muted3">{u.created_at ? new Date(u.created_at).toLocaleString() : "-"}</div>
                   </div>
                 </div>
@@ -203,7 +203,39 @@ export default function Admin() {
             <AlertTriangle size={20} /> Richieste di Accesso
           </h2>
           <div className="border border-rule rounded-md overflow-hidden bg-card">
-            <table className="w-full text-sm">
+            <div className="md:hidden divide-y divide-rule">
+              {visibleRequests.map((r, idx) => (
+                <div key={idx} className="p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-bold break-words">{r.name}</div>
+                      <div className="text-xs text-muted3 text-mono break-all">{r.email}</div>
+                    </div>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                      r.status === 'approved' ? 'bg-emerald-500 text-emerald-950 dark:bg-emerald-400 dark:text-emerald-950' :
+                      r.status === 'rejected' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
+                    }`}>
+                      {r.status.toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 text-xs text-mono text-muted2">
+                    <span>IP</span>
+                    <span className="break-all text-right">{r.ip || "—"}</span>
+                  </div>
+                  {r.status === 'pending' && (
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button onClick={() => handleRequest(r.email, "approve")} className="p-2 bg-emerald-100 text-emerald-700 rounded-sm hover:bg-emerald-200" aria-label="Approva richiesta"><Check size={16} /></button>
+                      <button onClick={() => handleRequest(r.email, "reject")} className="p-2 bg-red-100 text-red-700 rounded-sm hover:bg-red-200" aria-label="Rifiuta richiesta"><X size={16} /></button>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {requests.length === 0 && (
+                <div className="py-8 text-center text-muted3 italic">Nessuna richiesta trovata</div>
+              )}
+            </div>
+
+            <table className="hidden md:table w-full text-sm">
               <thead className="bg-canvas2 border-b border-rule text-left">
                 <tr>
                   <th className="py-3 px-4 overline">Richiedente</th>
