@@ -1188,7 +1188,10 @@ def make_snippet(text: str, query: str, length: int = 200) -> str:
     start = max(0, idx - length // 3)
     end = min(len(text), idx + length)
     snippet = text[start:end]
-    snippet = re.sub(r"\s*\r?\n+\s*", ". ", snippet)
+    # Preserve explicit linebreak positions in snippets using a visible marker (U+23CE):
+    # replace newline runs with a unique marker after the period so the frontend can
+    # render a lightweight separator for preview only.
+    snippet = re.sub(r"\s*\r?\n+\s*", ".\u23CE", snippet)
     snippet = re.sub(r"\s+", " ", snippet)
     snippet = snippet.strip()
     if start > 0:

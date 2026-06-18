@@ -1218,7 +1218,7 @@ def format_search_result(p: dict, pg: dict, q: str, score: int, snippet: Optiona
         # `viewer_page` is the canonical numeric page the viewer should open (physical page)
         "viewer_page": pg["page"],
         "page_label": pg.get("page_label", pg["page"]),
-        "snippet": snippet if snippet is not None else make_snippet(clean_pdf_text(pg.get("text", "")), q),
+        "snippet": snippet if snippet is not None else make_snippet(pg.get("text_raw", pg.get("text", "")), q),
         "score": score,
         "is_protected": p.get("is_protected", False),
         "source": source,
@@ -1286,7 +1286,7 @@ async def search(
                 seen.add(key)
                 p = await db.pdfs.find_one({"id": pg["pdf_id"]})
                 if p:
-                    results.append(format_search_result(p, pg, raw_q, score=120, snippet=make_snippet(pg.get("text_normalized", pg.get("text", "")), q), match_in="cantico"))
+                    results.append(format_search_result(p, pg, raw_q, score=120, snippet=make_snippet(pg.get("text_raw", pg.get("text", "")), q), match_in="cantico"))
 
         label_filter = {"page_label": raw_q}
         if pdf_ids_list:
