@@ -4,7 +4,17 @@ const APOSTROPHE_RE = /[’‘`]/g;
 const DECORATIVE_NUMBER_RE = /~\s*\d+\s*~/g;
 
 export function sanitizeSnippetText(value) {
-  return sanitizeSearchText(value);
+  if (value == null) return "";
+  // Preserve original line breaks and sanitize each line independently,
+  // then join using a light visual separator (comma + space) so the
+  // preview shows where original lines ended without changing the
+  // indexed/original text.
+  return String(value)
+    .split(/\r?\n/)
+    .map((line) => sanitizeSearchText(line))
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .join(", ");
 }
 
 export function sanitizeSearchText(value) {

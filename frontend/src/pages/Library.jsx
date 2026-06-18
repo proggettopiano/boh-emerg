@@ -180,13 +180,13 @@ export default function Library() {
                 <Star size={14} fill={favOnly ? "#FFFFFF" : "none"} /> Preferiti
               </button>
               {tags.length > 0 && (
-                <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} className="-mt-1 md:mt-0 border border-rule rounded-sm px-3 py-1.5 text-sm bg-card">
+                <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} className="border border-rule rounded-sm px-3 py-1.5 text-sm bg-card">
                   <option value="">Tutti i tag</option>
                   {tags.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
               )}
             </div>
-            <div className="ml-auto flex w-full flex-col items-end gap-1 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
+            <div className="ml-auto flex w-full flex-col items-start gap-1 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
               <span className="overline">ORDINA</span>
               <select value={sort} onChange={(e) => setSort(e.target.value)} className="w-full border border-rule rounded-sm px-3 py-1.5 text-sm bg-card sm:w-auto">
                 <option value="date_desc">Più recenti</option>
