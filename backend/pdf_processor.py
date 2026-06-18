@@ -339,7 +339,8 @@ def _ocr_direct_image(page, timings: Dict[str, Any] = None, page_num: int = None
 
         logger.info("OCR_DIRECT_IMAGE page=%s xref=%s size=%sx%s", page_num + 1 if page_num is not None else "?", xref, width, height)
         lang = os.environ.get("TESSERACT_LANG", "ita+eng")
-        config = "--psm 6 --oem 3"
+        oem = int(os.environ.get("OCR_OEM") or os.environ.get("OCR_PRIMARY_OEM", "3"))
+        config = f"--psm 6 --oem {oem}"
         try:
             text = _pytesseract_module.image_to_string(img, lang=lang, config=config)
         except TypeError:
@@ -708,7 +709,8 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = No
             logger.info("OCR_TIMING raster_ms=%.0f tesseract_ms=%.0f", render_time * 1000.0, infer_time * 1000.0)
             try:
                 lang = os.environ.get("TESSERACT_LANG", "ita+eng")
-                config = f"--psm {psm} --oem 3"
+                oem = int(os.environ.get("OCR_OEM") or os.environ.get("OCR_PRIMARY_OEM", "3"))
+                config = f"--psm {psm} --oem {oem}"
                 try:
                     logger.info("Starting Tesseract for page %s (dpi=%s psm=%s)", page_num or "?", dpi, psm)
                     logger.info("OCR_COMPARE dpi=%s page=%s", dpi, page_num + 1 if page_num is not None else '?')

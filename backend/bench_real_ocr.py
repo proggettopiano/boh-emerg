@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import fitz
@@ -22,6 +23,26 @@ import pdf_processor
 
 OUTPUT_DIR = Path(__file__).parent / "bench_outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
+
+
+@contextmanager
+def temp_env(overrides):
+    original = {}
+    missing = set()
+    for key, value in overrides.items():
+        if key in os.environ:
+            original[key] = os.environ[key]
+        else:
+            missing.add(key)
+        os.environ[key] = str(value)
+    try:
+        yield
+    finally:
+        for key in overrides:
+            if key in original:
+                os.environ[key] = original[key]
+            elif key in missing and key in os.environ:
+                del os.environ[key]
 
 
 def make_image_only_pdf() -> bytes:
@@ -114,10 +135,40 @@ def run_case(name: str, pdf_bytes: bytes, repeats: int = 1):
     }
 
 
+def run_tesseract_profile(name: str, pdf_bytes: bytes, profile: dict, repeats: int = 1):
+    def measure_once():
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            page = doc[0]
+            start = time.perf_counter()
+            text = pdf_processor._tesseract_ocr_text(page, page_num=0)
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+            cleaned_text = pdf_processor.clean_pdf_text(text)
+            return elapsed_ms, text, cleaned_text
+        finally:
+            doc.close()
+
+    with temp_env(profile):
+        timings = [measure_once() for _ in range(repeats)]
+
+    elapsed_values = [item[0] for item in timings]
+    texts = [item[1] for item in timings]
+    cleaned_text = timings[0][2] if timings else ""
+    return {
+        "name": name,
+        "profile": profile,
+        "elapsed_ms": round(sum(elapsed_values) / len(elapsed_values), 1) if elapsed_values else 0.0,
+        "words": len([w for w in cleaned_text.split() if len(w) > 2]),
+        "has_expected": all(token in cleaned_text.lower() for token in ["canto", "gesu", "pace", "benchmark"]),
+        "text_preview": texts[0][:120] if texts else "",
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description="Measure real OCR timings on image-based PDFs")
     parser.add_argument("--case", choices=["image_only_pdf", "long_54_pages_pdf"], default=None)
     parser.add_argument("--repeats", type=int, default=1)
+    parser.add_argument("--compare-tesseract-profiles", action="store_true")
     args = parser.parse_args()
 
     cases = [
@@ -130,8 +181,18 @@ def main():
     for name, pdf_bytes in cases:
         out_path = OUTPUT_DIR / f"{name}.pdf"
         out_path.write_bytes(pdf_bytes)
-        result = run_case(name, pdf_bytes, repeats=args.repeats)
-        print("BENCHMARK", result)
+        if args.compare_tesseract_profiles:
+            profiles = [
+                {"TESSERACT_LANG": "ita", "OCR_PRIMARY_PSM": 6, "OCR_PRIMARY_OEM": 3},
+                {"TESSERACT_LANG": "ita", "OCR_PRIMARY_PSM": 11, "OCR_PRIMARY_OEM": 3},
+                {"TESSERACT_LANG": "ita", "OCR_PRIMARY_PSM": 6, "OCR_PRIMARY_OEM": 1},
+            ]
+            for profile in profiles:
+                result = run_tesseract_profile(name, pdf_bytes, profile, repeats=args.repeats)
+                print("BENCHMARK", result)
+        else:
+            result = run_case(name, pdf_bytes, repeats=args.repeats)
+            print("BENCHMARK", result)
 
 
 if __name__ == "__main__":
