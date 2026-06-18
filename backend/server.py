@@ -37,7 +37,7 @@ from auth_utils import (
     hash_password, verify_password, create_jwt, decode_jwt,
     get_client_ip, get_current_user_id, get_optional_user_id,
 )
-from pdf_processor import extract_pages, compress_pdf, make_snippet, clean_pdf_text, normalize_pdf_text, extract_page_metadata
+from pdf_processor import extract_pages, compress_pdf, make_snippet, clean_pdf_text, normalize_pdf_text, normalize_search_query, extract_page_metadata
 import google_integration as gi
 
 ROOT_DIR = Path(__file__).parent
@@ -1218,7 +1218,8 @@ def format_search_result(p: dict, pg: dict, q: str, score: int, snippet: Optiona
         # `viewer_page` is the canonical numeric page the viewer should open (physical page)
         "viewer_page": pg["page"],
         "page_label": pg.get("page_label", pg["page"]),
-        "snippet": snippet if snippet is not None else make_snippet(pg.get("text_raw", pg.get("text", "")), q),
+        # Build raw snippet and sanitize for API consumers so no internal markers or chords leak out
+        "snippet": (lambda raw: ( __import__('pdf_processor').sanitize_snippet_for_api(raw) if raw else "" ))(snippet if snippet is not None else make_snippet(pg.get("text_raw", pg.get("text", "")), q)),
         "score": score,
         "is_protected": p.get("is_protected", False),
         "source": source,
@@ -1233,8 +1234,7 @@ async def search(
     share_token: Optional[str] = Query(None),
     user_id: Optional[str] = Depends(get_optional_user_id),
 ):
-    raw_q = clean_pdf_text(q).strip()
-    normalized_q = normalize_pdf_text(raw_q).strip()
+    raw_q = normalize_search_query(q).strip()
     if not raw_q:
         return {"results": []}
 
@@ -1328,7 +1328,7 @@ async def search(
         return pattern
 
     safe_raw_q = rf"(?<!\d){re.escape(raw_q)}(?!\d)" if raw_q.isdigit() else re.escape(raw_q)
-    safe_normalized_q = _apostrophe_tolerant_regex(normalized_q) if normalized_q else safe_raw_q
+    safe_normalized_q = _apostrophe_tolerant_regex(raw_q) if raw_q else safe_raw_q
 
     # 3. CERCA TITOLO PDF
     title_filter = {

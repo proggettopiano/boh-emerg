@@ -114,12 +114,18 @@ def normalize_pdf_text(text: str) -> str:
     if not text:
         return ""
 
-    text = text.replace("\r", " ").replace("\n", " ")
+    # Normalize line breaks and underscores/hyphens into spaces to avoid spurious joins
+    text = text.replace("\r", " ").replace("\n", " ").replace("_", " ")
     text = unicodedata.normalize("NFKD", text)
+    # strip combining diacritics (é -> e) for matching
     text = re.sub(r"[\u0300-\u036f]", "", text)
     text = APOSTROPHE_RE.sub("'", text)
+    # normalize spaces around apostrophes and hyphens
     text = re.sub(r"\s*'\s*", "'", text)
+    text = re.sub(r"[-–—]+", " ", text)
+    # Remove characters that are not letters/numbers/spaces/apostrophe
     text = re.sub(r"[^A-Za-z0-9\s']+", " ", text, flags=re.UNICODE)
+    # collapse whitespace
     text = re.sub(r"\s+", " ", text).strip()
 
     replacements = {
@@ -131,6 +137,50 @@ def normalize_pdf_text(text: str) -> str:
         text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
 
     return text
+
+
+def normalize_search_query(text: str) -> str:
+    """Normalize a search query to be tolerant of user input errors:
+    - handles typos in punctuation, capitalization, accents, apostrophes
+    - removes chord/musical symbols
+    - normalizes whitespace
+    - strips accents for flexible matching
+    
+    This is used in search endpoints and should match the same normalization
+    applied to indexed text for consistent results.
+    """
+    if not text:
+        return ""
+    
+    text = str(text).strip()
+    if not text:
+        return ""
+    
+    # 1. Replace various apostrophe forms with standard apostrophe
+    text = APOSTROPHE_RE.sub("'", text)
+    
+    # 2. Normalize unicode: NFKD + strip combining diacritics
+    text = unicodedata.normalize("NFKD", text)
+    text = re.sub(r"[\u0300-\u036f]", "", text)
+    
+    # 3. Replace non-breaking spaces and other whitespace variants with regular space
+    text = re.sub(r"[\u00a0\u2000-\u200b]", " ", text)
+    text = text.replace("\r", " ").replace("\n", " ")
+    
+    # 4. Normalize hyphens/dashes to spaces (for phrase matching)
+    text = re.sub(r"[-–—_]+", " ", text)
+    
+    # 5. Remove chords and musical notation
+    text = re.sub(r"\b(?:DO|RE|MI|FA|SOL|LA|SI)(?:[#b]|[-/][A-Z0-9#b]+|\d+|maj|min|m|dim|aug|sus|add|7|9|11|13)*\b", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?<![A-Za-zÀ-ÿ])(?:[A-G](?:#|b)?(?:maj|min|m|dim|aug|sus|add)?\d*(?:/[A-G](?:#|b)?\d*)?)(?![A-Za-zÀ-ÿ])", " ", text, flags=re.IGNORECASE)
+    
+    # 6. Remove decorative/special characters except apostrophe (keep apostrophes in words like "dell'")
+    text = re.sub(r"[^A-Za-z0-9À-ÿ\s']+", " ", text, flags=re.UNICODE)
+    
+    # 7. Compress multiple spaces
+    text = re.sub(r"\s+", " ", text)
+    
+    return text.strip()
 
 
 def extract_page_metadata(text: str) -> dict:
@@ -1170,6 +1220,56 @@ def compress_pdf(pdf_bytes: bytes) -> Tuple[bytes, bool]:
         return pdf_bytes, False
 
 
+def sanitize_snippet_for_api(snippet: str) -> str:
+    """Sanitize snippet for API responses: remove internal markers, strip musical
+    chords and OCR noise, collapse whitespace, and join broken lines with ", ".
+    This function is safe for presentation and does NOT affect indexed text.
+    """
+    if not snippet:
+        return ""
+    s = str(snippet)
+    # Replace internal newline marker (U+23CE) and real newlines with a visual separator
+    parts = re.split(r"\u23CE|\r?\n", s)
+    cleaned_parts = []
+    for p in parts:
+        # remove decorative tokens and non-readable glyphs
+        p = p.replace("\u00a0", " ")
+        p = p.replace("\xa0", " ")
+        p = re.sub(r"[œŒ˙…⏎]+", " ", p)
+        # normalize various apostrophes
+        p = re.sub(r"[''`]+", "'", p)
+        # Remove control characters and invalid unicode
+        p = re.sub(r"[\u0000-\u001F\u007F-\u009F]", " ", p)
+        # Remove common OCR artifacts and decorative sequences
+        p = re.sub(r"(?:[.,;:!?])\s*(?:[.,;:!?])+", ".", p)  # compress repeated punctuation
+        # Remove chord-like tokens DO RE MI etc and standalone chord fragments
+        p = re.sub(r"\b(?:DO|RE|MI|FA|SOL|LA|SI)(?:[#b\-\d/]*)\b", " ", p, flags=re.IGNORECASE)
+        # Remove typical chord tokens like A#m, G7, D/F# but avoid words starting with single letters
+        p = re.sub(r"(?<!\w)\b[A-G](?:#|b)?(?:maj|min|m|dim|aug|sus|add)?\d*(?:/[A-G](?:#|b)?\d*)?\b", " ", p, flags=re.IGNORECASE)
+        # Remove standalone single-letter tokens that are likely chords (A, B, C, etc)
+        p = re.sub(r"\b([A-G])\s+(?=[A-GÀ-ÿ#b]|\d|$)", " ", p, flags=re.IGNORECASE)
+        # Remove common accidental/artifact punctuation sequences
+        p = re.sub(r"[^A-Za-z0-9À-ÿ\s'.,;:\-?!()]+", " ", p)
+        # Collapse repeated non-word chars and spaces
+        p = re.sub(r"\s+", " ", p)
+        p = p.strip(" .,;:-\n\r\t")
+        if not p:
+            continue
+        # Skip parts that are mostly non-letters or too short (likely noise)
+        words = [w for w in p.split() if re.search(r"[A-Za-zÀ-ÿ0-9]", w)]
+        if not words:
+            continue
+        # If part is composed mostly of short tokens (likely chords), skip
+        short_tokens = sum(1 for w in words if len(re.sub(r"[^A-Za-zÀ-ÿ0-9]","",w)) <= 2)
+        if len(words) >= 1 and (short_tokens / len(words)) > 0.65:
+            continue
+        cleaned_parts.append(" ".join(words))
+    # Join with comma separator for preview
+    out = ", ".join(cleaned_parts)
+    out = re.sub(r"\s+", " ", out).strip()
+    return out
+
+
 def make_snippet(text: str, query: str, length: int = 200) -> str:
     """Return a snippet of `text` around the first occurrence of `query`."""
     if not text:
@@ -1188,9 +1288,7 @@ def make_snippet(text: str, query: str, length: int = 200) -> str:
     start = max(0, idx - length // 3)
     end = min(len(text), idx + length)
     snippet = text[start:end]
-    # Preserve explicit linebreak positions in snippets using a visible marker (U+23CE):
-    # replace newline runs with a unique marker after the period so the frontend can
-    # render a lightweight separator for preview only.
+    # Preserve explicit linebreak positions in snippets using a visible marker (U+23CE).
     snippet = re.sub(r"\s*\r?\n+\s*", ".\u23CE", snippet)
     snippet = re.sub(r"\s+", " ", snippet)
     snippet = snippet.strip()

@@ -184,7 +184,8 @@ export default function Library() {
                 {tags.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
             )}
-            <span className="overline ml-auto">ORDINA</span>
+            <div className="flex-1"></div>
+            <span className="overline whitespace-nowrap">ORDINA</span>
             <select value={sort} onChange={(e) => setSort(e.target.value)} className="border border-rule rounded-sm px-3 py-1.5 text-sm bg-card">
               <option value="date_desc">Più recenti</option>
               <option value="date_asc">Meno recenti</option>
