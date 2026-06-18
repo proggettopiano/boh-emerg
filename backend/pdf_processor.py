@@ -320,9 +320,10 @@ def _extract_embedded_image(page):
         from PIL import Image
 
         with Image.open(io.BytesIO(image_bytes)) as img:
+            img.load()
             if img.mode not in ("RGB", "L"):
                 img = img.convert("RGB")
-            return img, xref, width, height
+            return img.copy(), xref, width, height
     except Exception:
         return None
 
@@ -339,10 +340,15 @@ def _ocr_direct_image(page, timings: Dict[str, Any] = None, page_num: int = None
         return ""
 
     try:
+        img.load()
+        img = img.copy()
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
         if max(img.size) > MAX_OCR_IMAGE_SIZE:
             img = _resize_image_for_ocr(img, max_long_side=MAX_OCR_IMAGE_SIZE)
 
         logger.info("OCR_DIRECT_IMAGE page=%s xref=%s size=%sx%s", page_num + 1 if page_num is not None else "?", xref, width, height)
+        logger.info("OCR_DIRECT_IMAGE_IMAGE mode=%s format=%s fp_open=%s", img.mode, getattr(img, "format", None), bool(getattr(img, "fp", None)))
         image_mode = _is_image_ocr_mode()
         lang = os.environ.get("TESSERACT_LANG_IMAGE") if image_mode else os.environ.get("TESSERACT_LANG", "ita+eng")
         if not lang:
