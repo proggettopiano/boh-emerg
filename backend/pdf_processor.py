@@ -118,6 +118,7 @@ def normalize_pdf_text(text: str) -> str:
     text = unicodedata.normalize("NFKD", text)
     text = re.sub(r"[\u0300-\u036f]", "", text)
     text = APOSTROPHE_RE.sub("'", text)
+    text = re.sub(r"\s*'\s*", "'", text)
     text = re.sub(r"[^A-Za-z0-9\s']+", " ", text, flags=re.UNICODE)
     text = re.sub(r"\s+", " ", text).strip()
 
@@ -1186,7 +1187,10 @@ def make_snippet(text: str, query: str, length: int = 200) -> str:
         return text[:length].strip()
     start = max(0, idx - length // 3)
     end = min(len(text), idx + length)
-    snippet = text[start:end].replace("\n", " ").strip()
+    snippet = text[start:end]
+    snippet = re.sub(r"\s*\r?\n+\s*", ". ", snippet)
+    snippet = re.sub(r"\s+", " ", snippet)
+    snippet = snippet.strip()
     if start > 0:
         snippet = "… " + snippet
     if end < len(text):

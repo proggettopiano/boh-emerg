@@ -478,6 +478,20 @@ def test_ocr_page_text_does_not_call_google_vision_when_tesseract_is_missing(mon
 
 # ---------------- SEARCH ----------------
 class TestSearch:
+    def test_normalize_pdf_text_collapses_apostrophe_spacing(self):
+        import pdf_processor
+
+        assert pdf_processor.normalize_pdf_text("dall' amore") == "dall'amore"
+        assert pdf_processor.normalize_pdf_text("dall'amore") == pdf_processor.normalize_pdf_text("dall' amore")
+
+    def test_make_snippet_separates_lines_with_periods(self):
+        import pdf_processor
+
+        snippet = pdf_processor.make_snippet("Prima linea\nSeconda linea", "Prima")
+
+        assert ". " in snippet
+        assert "Prima linea" in snippet
+
     def test_search_returns_results(self, api_client, auth_headers, uploaded_pdf):
         # word from uploaded pdf body
         r = api_client.get(f"{BASE_URL}/api/search?q=jazz", headers=auth_headers)

@@ -1305,7 +1305,12 @@ async def search(
     safe_normalized_q = re.escape(normalized_q) if normalized_q else safe_raw_q
 
     # 3. CERCA TITOLO PDF
-    title_filter = {"title": {"$regex": safe_raw_q, "$options": "i"}}
+    title_filter = {
+        "$or": [
+            {"title": {"$regex": safe_raw_q, "$options": "i"}},
+            {"title": {"$regex": safe_normalized_q, "$options": "i"}},
+        ]
+    }
     if pdf_ids_list:
         title_filter["id"] = {"$in": pdf_ids_list}
     title_cursor = db.pdfs.find(title_filter, {"_id": 0})

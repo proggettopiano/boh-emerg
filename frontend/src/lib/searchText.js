@@ -21,7 +21,7 @@ export function sanitizeSearchText(value) {
   text = text.replace(NOTE_CHORD_RE, " ");
   text = text.replace(CHORD_RE, " ");
   text = text.replace(/(?<=[A-Za-zÀ-ÿ])\s*[-–—]\s*(?=[A-Za-zÀ-ÿ])/g, "");
-  text = text.replace(/[^A-Za-z0-9À-ÿ\s']+/g, " ");
+  text = text.replace(/[^A-Za-z0-9À-ÿ\s'.]+/g, " ");
   text = text.replace(/(?<=[a-zà-ÿ])(?=[A-ZÀ-Ý][a-zà-ÿ])/g, " ");
   text = text.replace(/\s+/g, " ");
   return text.trim();
