@@ -180,7 +180,7 @@ export default function Library() {
                 <Star size={14} fill={favOnly ? "#FFFFFF" : "none"} /> Preferiti
               </button>
               {tags.length > 0 && (
-                <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} className="border border-rule rounded-sm px-3 py-1.5 text-sm bg-card">
+                <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} className="-mt-1 md:mt-0 border border-rule rounded-sm px-3 py-1.5 text-sm bg-card">
                   <option value="">Tutti i tag</option>
                   {tags.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>

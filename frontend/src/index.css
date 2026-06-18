@@ -197,15 +197,19 @@
   span.hl {
     background: transparent;
     color: inherit;
-    padding: 0;
-    margin: 0 0 0 -0.35em;
-    border-radius: 0;
+    /* Add a small horizontal padding to keep highlighted fragments visually separated
+       and avoid background overlap when adjacent lines are both highlighted. */
+    padding: 0 0.15em;
+    margin: 0;
+    /* Slight rounding so adjacent highlights don't appear glued across line breaks */
+    border-radius: 0.125rem;
     box-shadow: none;
     outline: none;
     transition: background 100ms ease;
+    /* keep display inline to avoid changing text wrapping; inherit line-height to preserve layout */
     display: inline;
-    line-height: 1;
-    vertical-align: middle;
+    line-height: inherit;
+    vertical-align: baseline;
     pointer-events: none;
   }
   html.dark mark.hl,

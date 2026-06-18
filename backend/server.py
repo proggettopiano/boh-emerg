@@ -1301,8 +1301,23 @@ async def search(
             if p:
                 results.append(format_search_result(p, pg, raw_q, score=50, snippet=f"Pagina {raw_q}"))
 
+    def _apostrophe_tolerant_regex(s: str) -> str:
+        """Build a regex that treats spaces and apostrophes between word parts as equivalent.
+        Example: "dall' amore", "dall'amore", "dall amore" -> same pattern."""
+        if not s:
+            return ""
+        # split on runs of apostrophes/spaces and rejoin with a tolerant group
+        parts = [p for p in re.split(r"[\s']+", s) if p]
+        if not parts:
+            return re.escape(s)
+        pattern = re.escape(parts[0])
+        for p in parts[1:]:
+            # allow either an apostrophe (with optional surrounding spaces) or plain whitespace between parts
+            pattern += r"(?:\s*'\s*|\s+)" + re.escape(p)
+        return pattern
+
     safe_raw_q = rf"(?<!\d){re.escape(raw_q)}(?!\d)" if raw_q.isdigit() else re.escape(raw_q)
-    safe_normalized_q = re.escape(normalized_q) if normalized_q else safe_raw_q
+    safe_normalized_q = _apostrophe_tolerant_regex(normalized_q) if normalized_q else safe_raw_q
 
     # 3. CERCA TITOLO PDF
     title_filter = {
