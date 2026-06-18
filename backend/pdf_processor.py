@@ -287,33 +287,50 @@ def _page_has_images(page) -> bool:
         return False
 
 
-def _extract_embedded_image(page):
+def _extract_embedded_image(page, page_num: int = None):
     """Return a single large embedded image from the page, if available."""
     try:
         image_refs = page.get_images(full=True) or []
     except Exception:
+        logger.info("OCR_DIRECT_IMAGE_SKIP page=%s reason=get_images_failed", page_num + 1 if page_num is not None else "?")
         return None
 
     if not image_refs or len(image_refs) != 1:
+        logger.info(
+            "OCR_DIRECT_IMAGE_SKIP page=%s reason=image_ref_count count=%s",
+            page_num + 1 if page_num is not None else "?",
+            len(image_refs),
+        )
         return None
 
     xref = image_refs[0][0]
     doc = getattr(page, "parent", None)
     if doc is None:
+        logger.info("OCR_DIRECT_IMAGE_SKIP page=%s reason=no_parent xref=%s", page_num + 1 if page_num is not None else "?", xref)
         return None
 
     try:
         image_info = doc.extract_image(xref)
     except Exception:
+        logger.info("OCR_DIRECT_IMAGE_SKIP page=%s reason=extract_image_failed xref=%s", page_num + 1 if page_num is not None else "?", xref)
         return None
 
     if not isinstance(image_info, dict):
+        logger.info("OCR_DIRECT_IMAGE_SKIP page=%s reason=invalid_image_info xref=%s", page_num + 1 if page_num is not None else "?", xref)
         return None
 
     image_bytes = image_info.get("image")
     width = int(image_info.get("width", 0) or 0)
     height = int(image_info.get("height", 0) or 0)
     if not image_bytes or width < 800 or height < 800:
+        logger.info(
+            "OCR_DIRECT_IMAGE_SKIP page=%s reason=small_or_missing_image xref=%s width=%s height=%s has_bytes=%s",
+            page_num + 1 if page_num is not None else "?",
+            xref,
+            width,
+            height,
+            bool(image_bytes),
+        )
         return None
 
     try:
@@ -325,12 +342,13 @@ def _extract_embedded_image(page):
                 img = img.convert("RGB")
             return img.copy(), xref, width, height
     except Exception:
+        logger.info("OCR_DIRECT_IMAGE_SKIP page=%s reason=pil_open_failed xref=%s", page_num + 1 if page_num is not None else "?", xref)
         return None
 
 
 def _ocr_direct_image(page, timings: Dict[str, Any] = None, page_num: int = None) -> str:
     """Try OCR on a single embedded page image before falling back to page rasterization."""
-    payload = _extract_embedded_image(page)
+    payload = _extract_embedded_image(page, page_num=page_num)
     if not payload:
         return ""
 
