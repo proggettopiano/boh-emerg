@@ -5,47 +5,15 @@ const DECORATIVE_NUMBER_RE = /~\s*\d+\s*~/g;
 
 export function sanitizeSnippetText(value) {
   if (value == null) return "";
-  // Preserve original line breaks and sanitize each line independently,
-  // then join using a light visual separator (comma + space) so the
-  // preview shows where original lines ended without changing the
-  // indexed/original text.
-  const raw = String(value);
-  // If backend preserved newline positions via marker U+23CE (see make_snippet),
-  // split on that marker and render with light comma separators for preview only.
-  if (raw.indexOf('\u23CE') >= 0) {
-    return raw
-      .split('\u23CE')
-      .map((part) => sanitizeSearchText(part).trim())
-      .filter(Boolean)
-      .join(', ');
-  }
-  // If original contains explicit newlines, split and join with comma separator.
-  if (/\r?\n/.test(raw)) {
-    return raw
-      .split(/\r?\n/)
-      .map((line) => sanitizeSearchText(line))
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .join(", ");
-  }
-
-  // If make_snippet collapsed newlines into '. ' the snippet will contain multiple
-  // '. ' separators. Only convert these to commas when the fragments are short
-  // (likely line fragments), to avoid touching normal multi-sentence snippets.
-  // Only convert when original snippet still contains explicit newlines.
-  // This avoids false positives where normal sentences use ". " but are not line breaks.
-  const rawHasNewline = /\r?\n/.test(raw);
-  if (rawHasNewline) {
-    return raw
-      .split(/\r?\n/)
-      .map((line) => sanitizeSearchText(line))
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .join(", ");
-  }
-
-  // Do not touch ". " sequences otherwise — preserve sentence punctuation.
-  return sanitizeSearchText(raw);
+  let s = String(value);
+  // 1. normalizza spazi
+  s = s.replace(/\s+/g, " ").trim();
+  // 2. comprime sequenze rumorose di punteggiatura OCR
+  // (., ., ., -> , )
+  s = s.replace(/(?:[.,]\s*){2,}/g, ", ");
+  // 3. pulizia base di ", , ,"
+  s = s.replace(/(?:,\s*){2,}/g, ", ");
+  return s.trim();
 }
 
 export function sanitizeSearchText(value) {

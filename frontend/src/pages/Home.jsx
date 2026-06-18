@@ -69,6 +69,8 @@ function highlight(text, q) {
 
 export default function Home() {
   const [q, setQ] = useState("");
+  const [selectedTag, setSelectedTag] = useState(null);
+  const [availableTags, setAvailableTags] = useState([]);
   const [results, setResults] = useState(null);
   const [count, setCount] = useState(0);
   const [countLoading, setCountLoading] = useState(true);
@@ -80,6 +82,18 @@ export default function Home() {
 
   useEffect(() => {
     setRecentSearches(loadRecentSearches());
+    // Carica i tag disponibili da /pdfs
+    api.get("/pdfs")
+      .then((r) => {
+        const tagsSet = new Set();
+        (r.data.items || []).forEach(item => {
+          if (item.tags && Array.isArray(item.tags)) {
+            item.tags.forEach(t => tagsSet.add(t));
+          }
+        });
+        setAvailableTags(Array.from(tagsSet).sort());
+      })
+      .catch(() => {}); // ignora errori nel caricamento tag
   }, []);
 
   const addRecentSearch = (term) => {
@@ -124,7 +138,9 @@ export default function Home() {
     let alive = true;
     tref.current = setTimeout(async () => {
       try {
-        const r = await api.get(`/search`, { params: { q }, signal: ctrl.signal });
+        const params = { q };
+        if (selectedTag) params.tag = selectedTag;
+        const r = await api.get(`/search`, { params, signal: ctrl.signal });
         if (alive) {
           setResults(r.data.results);
         }
@@ -133,7 +149,7 @@ export default function Home() {
       }
     }, 350);
     return () => { alive = false; clearTimeout(tref.current); ctrl.abort(); };
-  }, [q]);
+  }, [q, selectedTag]);
 
   return (
     <div className="max-w-4xl mx-auto px-6 md:px-12 py-12 md:py-20">
@@ -161,6 +177,22 @@ export default function Home() {
           {q && <button type="button" onClick={() => setQ("")} className="text-mono text-xs text-muted2 hover:text-ink">CANCELLA</button>}
         </div>
       </form>
+      {availableTags.length > 0 && (
+        <div className="bg-card border-2 border-rule rounded-md mb-4 px-5 py-3 flex items-center gap-3">
+          <label htmlFor="tagSelect" className="text-sm font-semibold text-muted2 whitespace-nowrap">Filtra per tag:</label>
+          <select
+            id="tagSelect"
+            value={selectedTag || ""}
+            onChange={(e) => setSelectedTag(e.target.value || null)}
+            className="flex-1 px-3 py-2 bg-canvas border border-rule rounded text-sm outline-none"
+          >
+            <option value="">-- Tutti i tag --</option>
+            {availableTags.map(tag => (
+              <option key={tag} value={tag}>{tag}</option>
+            ))}
+          </select>
+        </div>
+      )}
       {recentSearches.length > 0 && (
         <div className="bg-card border-2 border-rule rounded-md mb-6 px-5 py-4 text-sm text-muted2" style={{ boxShadow: "0 6px 0 0 rgba(0,0,0,0.08)" }}>
           <div className="mb-2 uppercase tracking-[0.18em] text-[10px] font-semibold">Ricerche recenti</div>

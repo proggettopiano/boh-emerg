@@ -1229,6 +1229,7 @@ def format_search_result(p: dict, pg: dict, q: str, score: int, snippet: Optiona
 async def search(
     q: str = Query(..., min_length=1),
     pdf_ids: Optional[str] = Query(None),
+    tag: Optional[str] = Query(None),
     share_token: Optional[str] = Query(None),
     user_id: Optional[str] = Depends(get_optional_user_id),
 ):
@@ -1241,6 +1242,16 @@ async def search(
         raise HTTPException(status_code=401, detail="Login richiesto")
 
     pdf_ids_list = [pid.strip() for pid in (pdf_ids or "").split(",") if pid.strip()] or None
+    
+    # Se tag è selezionato, filtra per PDF IDs che hanno quel tag
+    if tag:
+        tag_pdfs = await db.pdfs.find({"tags": tag.lower()}, {"_id": 0, "id": 1}).to_list(1000)
+        tag_pdf_ids = set(p["id"] for p in tag_pdfs)
+        if pdf_ids_list:
+            pdf_ids_list = [pid for pid in pdf_ids_list if pid in tag_pdf_ids]
+        else:
+            pdf_ids_list = list(tag_pdf_ids)
+    
     if share_token:
         lib = await db.shared_libraries.find_one({"share_token": share_token}, {"_id": 0, "pdf_ids": 1})
         if not lib:
