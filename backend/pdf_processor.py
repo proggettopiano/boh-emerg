@@ -341,6 +341,11 @@ def _ocr_direct_image(page, timings: Dict[str, Any] = None, page_num: int = None
         lang = os.environ.get("TESSERACT_LANG", "ita+eng")
         oem = int(os.environ.get("OCR_OEM") or os.environ.get("OCR_PRIMARY_OEM", "3"))
         config = f"--psm 6 --oem {oem}"
+        logger.info("TESSERACT_VERSION=%s", _pytesseract_module.get_tesseract_version())
+        logger.info("OCR_LANGUAGE=%s", lang)
+        logger.info("OCR_CONFIG=%s", config)
+        logger.info("OCR_DPI=%s", "embedded-image")
+        logger.info("OCR_IMAGE_SIZE=%sx%s", img.width, img.height)
         try:
             text = _pytesseract_module.image_to_string(img, lang=lang, config=config)
         except TypeError:
@@ -693,12 +698,31 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = No
 
             try:
                 if ImageOps is not None and ImageFilter is not None and ImageEnhance is not None:
+                    preprocess_start = time.perf_counter()
                     gray = ImageOps.grayscale(img)
+                    grayscale_ms = (time.perf_counter() - preprocess_start) * 1000.0
+                    preprocess_start = time.perf_counter()
                     gray = ImageOps.autocontrast(gray)
+                    autocontrast_ms = (time.perf_counter() - preprocess_start) * 1000.0
+                    preprocess_start = time.perf_counter()
                     gray = gray.filter(ImageFilter.MedianFilter(size=3))
+                    medianfilter_ms = (time.perf_counter() - preprocess_start) * 1000.0
+                    preprocess_start = time.perf_counter()
                     gray = gray.filter(ImageFilter.SHARPEN)
+                    sharpen_ms = (time.perf_counter() - preprocess_start) * 1000.0
+                    preprocess_start = time.perf_counter()
                     enhancer = ImageEnhance.Contrast(gray)
                     gray = enhancer.enhance(1.3)
+                    contrast_ms = (time.perf_counter() - preprocess_start) * 1000.0
+                    logger.info(
+                        "OCR_PREPROCESS grayscale_ms=%.0f autocontrast_ms=%.0f medianfilter_ms=%.0f sharpen_ms=%.0f contrast_ms=%.0f total_ms=%.0f",
+                        grayscale_ms,
+                        autocontrast_ms,
+                        medianfilter_ms,
+                        sharpen_ms,
+                        contrast_ms,
+                        grayscale_ms + autocontrast_ms + medianfilter_ms + sharpen_ms + contrast_ms,
+                    )
                 else:
                     gray = img
             except Exception as exc:
@@ -711,6 +735,11 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = No
                 lang = os.environ.get("TESSERACT_LANG", "ita+eng")
                 oem = int(os.environ.get("OCR_OEM") or os.environ.get("OCR_PRIMARY_OEM", "3"))
                 config = f"--psm {psm} --oem {oem}"
+                logger.info("TESSERACT_VERSION=%s", _pytesseract_module.get_tesseract_version())
+                logger.info("OCR_LANGUAGE=%s", lang)
+                logger.info("OCR_CONFIG=%s", config)
+                logger.info("OCR_DPI=%s", dpi)
+                logger.info("OCR_IMAGE_SIZE=%sx%s", pix.width, pix.height)
                 try:
                     logger.info("Starting Tesseract for page %s (dpi=%s psm=%s)", page_num or "?", dpi, psm)
                     logger.info("OCR_COMPARE dpi=%s page=%s", dpi, page_num + 1 if page_num is not None else '?')
@@ -733,7 +762,6 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = No
             except Exception as exc:
                 logger.debug("Tesseract pass failed (dpi=%s psm=%s): %s", dpi, psm, exc)
             return gray
-
         # Primary OCR pass with lower DPI and fixed PSM.
         do_pass(primary_dpi, primary_psm)
         merged_candidate = "\n".join([ln for r in results for ln in [l.strip() for l in r.splitlines() if l.strip()]])
