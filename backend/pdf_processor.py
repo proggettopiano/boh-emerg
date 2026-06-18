@@ -322,7 +322,7 @@ def _extract_embedded_image(page, page_num: int = None):
     image_bytes = image_info.get("image")
     width = int(image_info.get("width", 0) or 0)
     height = int(image_info.get("height", 0) or 0)
-    if not image_bytes or width < 800 or height < 800:
+    if not image_bytes or width < 500 or height < 500:
         logger.info(
             "OCR_DIRECT_IMAGE_SKIP page=%s reason=small_or_missing_image xref=%s width=%s height=%s has_bytes=%s",
             page_num + 1 if page_num is not None else "?",
