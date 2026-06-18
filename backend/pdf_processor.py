@@ -28,6 +28,11 @@ _pytesseract_module = None
 MAX_OCR_IMAGE_SIZE = 1400
 MAX_PARALLEL_OCR_WORKERS = 3
 _timing_lock = threading.Lock()
+_ocr_context = threading.local()
+
+
+def _is_image_ocr_mode() -> bool:
+    return bool(getattr(_ocr_context, "image_mode", False))
 
 # Probe RapidOCR availability once to avoid expensive per-page attempts.
 try:
@@ -338,9 +343,13 @@ def _ocr_direct_image(page, timings: Dict[str, Any] = None, page_num: int = None
             img = _resize_image_for_ocr(img, max_long_side=MAX_OCR_IMAGE_SIZE)
 
         logger.info("OCR_DIRECT_IMAGE page=%s xref=%s size=%sx%s", page_num + 1 if page_num is not None else "?", xref, width, height)
-        lang = os.environ.get("TESSERACT_LANG", "ita+eng")
-        oem = int(os.environ.get("OCR_OEM") or os.environ.get("OCR_PRIMARY_OEM", "3"))
-        config = f"--psm 6 --oem {oem}"
+        image_mode = _is_image_ocr_mode()
+        lang = os.environ.get("TESSERACT_LANG_IMAGE") if image_mode else os.environ.get("TESSERACT_LANG", "ita+eng")
+        if not lang:
+            lang = os.environ.get("TESSERACT_LANG", "ita+eng")
+        psm = int(os.environ.get("OCR_IMAGE_PSM", "11")) if image_mode else 6
+        oem = int(os.environ.get("OCR_IMAGE_OEM") or os.environ.get("OCR_OEM") or os.environ.get("OCR_PRIMARY_OEM", "1")) if image_mode else int(os.environ.get("OCR_OEM") or os.environ.get("OCR_PRIMARY_OEM", "3"))
+        config = f"--psm {psm} --oem {oem}"
         logger.info("TESSERACT_VERSION=%s", _pytesseract_module.get_tesseract_version())
         logger.info("OCR_LANGUAGE=%s", lang)
         logger.info("OCR_CONFIG=%s", config)
@@ -661,8 +670,9 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = No
 
     results = []
     try:
-        primary_dpi = int(os.environ.get("OCR_DPI") or os.environ.get("OCR_PRIMARY_DPI", "150"))
-        primary_psm = int(os.environ.get("OCR_PRIMARY_PSM", "6"))
+        image_mode = _is_image_ocr_mode()
+        primary_dpi = int(os.environ.get("OCR_IMAGE_DPI") or os.environ.get("OCR_DPI") or os.environ.get("OCR_PRIMARY_DPI", "100" if image_mode else "150"))
+        primary_psm = int(os.environ.get("OCR_IMAGE_PSM") or os.environ.get("OCR_PRIMARY_PSM", "11" if image_mode else "6"))
         sufficiency_words = int(os.environ.get("OCR_WORD_THRESHOLD", "12"))
 
         def do_pass(dpi: int, psm: int):
@@ -704,18 +714,23 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = No
                     preprocess_start = time.perf_counter()
                     gray = ImageOps.autocontrast(gray)
                     autocontrast_ms = (time.perf_counter() - preprocess_start) * 1000.0
-                    preprocess_start = time.perf_counter()
-                    gray = gray.filter(ImageFilter.MedianFilter(size=3))
-                    medianfilter_ms = (time.perf_counter() - preprocess_start) * 1000.0
-                    preprocess_start = time.perf_counter()
-                    gray = gray.filter(ImageFilter.SHARPEN)
-                    sharpen_ms = (time.perf_counter() - preprocess_start) * 1000.0
-                    preprocess_start = time.perf_counter()
-                    enhancer = ImageEnhance.Contrast(gray)
-                    gray = enhancer.enhance(1.3)
-                    contrast_ms = (time.perf_counter() - preprocess_start) * 1000.0
+                    medianfilter_ms = 0.0
+                    sharpen_ms = 0.0
+                    contrast_ms = 0.0
+                    if not image_mode:
+                        preprocess_start = time.perf_counter()
+                        gray = gray.filter(ImageFilter.MedianFilter(size=3))
+                        medianfilter_ms = (time.perf_counter() - preprocess_start) * 1000.0
+                        preprocess_start = time.perf_counter()
+                        gray = gray.filter(ImageFilter.SHARPEN)
+                        sharpen_ms = (time.perf_counter() - preprocess_start) * 1000.0
+                        preprocess_start = time.perf_counter()
+                        enhancer = ImageEnhance.Contrast(gray)
+                        gray = enhancer.enhance(1.3)
+                        contrast_ms = (time.perf_counter() - preprocess_start) * 1000.0
                     logger.info(
-                        "OCR_PREPROCESS grayscale_ms=%.0f autocontrast_ms=%.0f medianfilter_ms=%.0f sharpen_ms=%.0f contrast_ms=%.0f total_ms=%.0f",
+                        "OCR_PREPROCESS mode=%s grayscale_ms=%.0f autocontrast_ms=%.0f medianfilter_ms=%.0f sharpen_ms=%.0f contrast_ms=%.0f total_ms=%.0f",
+                        "image-fast" if image_mode else "full",
                         grayscale_ms,
                         autocontrast_ms,
                         medianfilter_ms,
@@ -733,7 +748,11 @@ def _tesseract_ocr_text(page, timings: Dict[str, Any] = None, page_num: int = No
             logger.info("OCR_TIMING raster_ms=%.0f tesseract_ms=%.0f", render_time * 1000.0, infer_time * 1000.0)
             try:
                 lang = os.environ.get("TESSERACT_LANG", "ita+eng")
-                oem = int(os.environ.get("OCR_OEM") or os.environ.get("OCR_PRIMARY_OEM", "3"))
+                if image_mode:
+                    lang = os.environ.get("TESSERACT_LANG_IMAGE", lang) or lang
+                    oem = int(os.environ.get("OCR_IMAGE_OEM") or os.environ.get("OCR_OEM") or os.environ.get("OCR_PRIMARY_OEM", "1"))
+                else:
+                    oem = int(os.environ.get("OCR_OEM") or os.environ.get("OCR_PRIMARY_OEM", "3"))
                 config = f"--psm {psm} --oem {oem}"
                 logger.info("TESSERACT_VERSION=%s", _pytesseract_module.get_tesseract_version())
                 logger.info("OCR_LANGUAGE=%s", lang)
@@ -851,10 +870,15 @@ def _ocr_page_text(page, timings: Dict[str, Any] = None, page_num: int = None) -
     return text
 
 
-def _ocr_page_worker(page_num: int, page, timings: Dict[str, Any] = None):
+def _ocr_page_worker(page_num: int, page, timings: Dict[str, Any] = None, image_mode: bool = False):
     logger.info("OCR worker started for page %s", page_num + 1)
     start = time.perf_counter()
-    text = _ocr_page_text(page, timings=timings, page_num=page_num)
+    previous_image_mode = getattr(_ocr_context, "image_mode", False)
+    _ocr_context.image_mode = image_mode
+    try:
+        text = _ocr_page_text(page, timings=timings, page_num=page_num)
+    finally:
+        _ocr_context.image_mode = previous_image_mode
     ms = (time.perf_counter() - start) * 1000.0
     return text, ms
 
@@ -994,7 +1018,7 @@ def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None) -> Tuple[Lis
                     page_images,
                     "+".join(page_info["reason"]) or "unknown",
                 )
-                ocr_candidates.append((page_num, page, cleaned, page_info))
+                ocr_candidates.append((page_num, page, cleaned, page_info, page_images))
 
             pages_text[page_num] = cleaned
             raw_texts[page_num] = raw_text
@@ -1020,9 +1044,9 @@ def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None) -> Tuple[Lis
 
         # If there is only one candidate, avoid ThreadPool overhead and run synchronously.
         if len(ocr_candidates) == 1:
-            page_num, page, cleaned, page_info = ocr_candidates[0]
+            page_num, page, cleaned, page_info, image_mode = ocr_candidates[0]
             try:
-                ocr_text, ocr_ms = _ocr_page_worker(page_num, page, timings)
+                ocr_text, ocr_ms = _ocr_page_worker(page_num, page, timings, image_mode=image_mode)
             except Exception as exc:
                 logger.warning("Page %s OCR failed: %s", page_num + 1, exc)
                 ocr_text, ocr_ms = "", 0.0
@@ -1048,8 +1072,8 @@ def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None) -> Tuple[Lis
         else:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_page = {
-                    executor.submit(_ocr_page_worker, page_num, page, timings): (page_num, cleaned, page_info)
-                    for page_num, page, cleaned, page_info in ocr_candidates
+                    executor.submit(_ocr_page_worker, page_num, page, timings, image_mode=image_mode): (page_num, cleaned, page_info)
+                    for page_num, page, cleaned, page_info, image_mode in ocr_candidates
                 }
                 for future in as_completed(future_to_page):
                     page_num, cleaned, page_info = future_to_page[future]
