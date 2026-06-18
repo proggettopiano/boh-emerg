@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search as SearchIcon, Upload as UploadIcon } from "lucide-react";
 import api from "@/lib/api";
-import { sanitizeSnippetText } from "@/lib/searchText";
+import { sanitizeSnippetText, normalizeSearchQuery } from "@/lib/searchText";
 import UploadModal from "@/components/UploadModal";
 import TrebleClef from "@/components/TrebleClef";
 
@@ -138,7 +138,8 @@ export default function Home() {
     let alive = true;
     tref.current = setTimeout(async () => {
       try {
-        const params = { q };
+        const normalizedQ = normalizeSearchQuery(q);
+        const params = { q: normalizedQ };
         if (selectedTag) params.tag = selectedTag;
         const r = await api.get(`/search`, { params, signal: ctrl.signal });
         if (alive) {

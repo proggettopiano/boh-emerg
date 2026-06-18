@@ -171,30 +171,26 @@ export default function Library() {
         </div>
       </div>
 
-          <div className="flex flex-wrap items-center gap-3 mb-4 pb-4 border-b border-rule">
-            <div className="flex flex-col md:flex-row items-start md:items-center gap-3">
-              <button
-                onClick={() => setFavOnly((v) => !v)}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-sm border transition-colors ${favOnly ? "bg-ink text-white border-ink" : "border-rule hover:border-ink"}`}
-              >
-                <Star size={14} fill={favOnly ? "#FFFFFF" : "none"} /> Preferiti
-              </button>
-              {tags.length > 0 && (
-                <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} className="border border-rule rounded-sm px-3 py-1.5 text-sm bg-card">
-                  <option value="">Tutti i tag</option>
-                  {tags.map((t) => <option key={t} value={t}>{t}</option>)}
-                </select>
-              )}
-            </div>
-            <div className="ml-auto flex w-full flex-col items-start gap-1 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
-              <span className="overline">ORDINA</span>
-              <select value={sort} onChange={(e) => setSort(e.target.value)} className="w-full border border-rule rounded-sm px-3 py-1.5 text-sm bg-card sm:w-auto">
-                <option value="date_desc">Più recenti</option>
-                <option value="date_asc">Meno recenti</option>
-                <option value="name_asc">Nome A-Z</option>
-                <option value="name_desc">Nome Z-A</option>
+          <div className="flex flex-wrap items-center gap-2 mb-4 pb-4 border-b border-rule">
+            <button
+              onClick={() => setFavOnly((v) => !v)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-sm border transition-colors ${favOnly ? "bg-ink text-white border-ink" : "border-rule hover:border-ink"}`}
+            >
+              <Star size={14} fill={favOnly ? "#FFFFFF" : "none"} /> Preferiti
+            </button>
+            {tags.length > 0 && (
+              <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} className="border border-rule rounded-sm px-3 py-1.5 text-sm bg-card">
+                <option value="">Tutti i tag</option>
+                {tags.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
-            </div>
+            )}
+            <span className="overline ml-auto">ORDINA</span>
+            <select value={sort} onChange={(e) => setSort(e.target.value)} className="border border-rule rounded-sm px-3 py-1.5 text-sm bg-card">
+              <option value="date_desc">Più recenti</option>
+              <option value="date_asc">Meno recenti</option>
+              <option value="name_asc">Nome A-Z</option>
+              <option value="name_desc">Nome Z-A</option>
+            </select>
           </div>
 
       {loading ? (
