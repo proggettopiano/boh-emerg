@@ -183,6 +183,109 @@ def normalize_search_query(text: str) -> str:
     return text.strip()
 
 
+def _tokenize_text(text: str) -> List[str]:
+    """Tokenize text into words, agnostic to apostrophes and punctuation.
+    Also handles single letters followed by spaces (like "d amore" from "d'amore").
+    Example:
+    - "l'anima" → ["lanima"]
+    - "d'amore" → ["damore"]
+    - "d amore" → ["damore"]  (from "d'amore" after splitting)
+    - "Padre," → ["padre"]
+    - "sei." → ["sei"]
+    """
+    if not text:
+        return []
+    
+    # Normalize unicode and lowercase
+    text = unicodedata.normalize("NFKD", text)
+    text = re.sub(r"[\u0300-\u036f]", "", text)  # strip accents
+    text = text.lower()
+    
+    # Remove apostrophes and all punctuation except spaces
+    text = re.sub(r"['\"`''´]", "", text)  # remove apostrophes
+    text = re.sub(r"[^a-z0-9\s]", " ", text)  # remove other punctuation
+    
+    # Merge single letters followed by spaces with next word (for "d amore" → "damore")
+    text = re.sub(r"\b([a-z])\s+([a-z])", r"\1\2", text)
+    
+    # Split on whitespace and filter empty
+    tokens = [t.strip() for t in text.split() if t.strip()]
+    return tokens
+
+
+def _token_sliding_window_match(query_tokens: List[str], doc_tokens: List[str], fuzzy_threshold: float = 0.7) -> bool:
+    """Check if query tokens match any consecutive sliding window in doc_tokens.
+    
+    This implements prefix-tolerant, partial phrase matching:
+    - "padre posso dire" matches "padre posso dire solo questo quando"
+    - Tolerance for missing/extra words via fuzzy_threshold
+    - Works with any consecutive substring
+    
+    Returns True if match found, False otherwise.
+    """
+    if not query_tokens:
+        return False
+    if not doc_tokens:
+        return False
+    
+    query_len = len(query_tokens)
+    doc_len = len(doc_tokens)
+    
+    # Try each starting position in the document
+    for start_idx in range(doc_len - query_len + 1):
+        window = doc_tokens[start_idx : start_idx + query_len]
+        
+        # Count matching tokens in this window
+        matching = sum(1 for i, q_token in enumerate(query_tokens) if i < len(window) and window[i] == q_token)
+        match_ratio = matching / query_len if query_len > 0 else 0
+        
+        # If ratio meets threshold, it's a match
+        if match_ratio >= fuzzy_threshold:
+            return True
+    
+    # Also try longer windows (query could be a subset of a longer sequence)
+    for window_len in range(query_len + 1, min(doc_len + 1, query_len + 4)):
+        for start_idx in range(doc_len - window_len + 1):
+            window = doc_tokens[start_idx : start_idx + window_len]
+            
+            # Check if query tokens form a subsequence (not necessarily consecutive) in window
+            q_idx = 0
+            for w_token in window:
+                if q_idx < len(query_tokens) and w_token == query_tokens[q_idx]:
+                    q_idx += 1
+            
+            # If we matched all query tokens as a subsequence, it's a match
+            if q_idx == len(query_tokens):
+                return True
+    
+    return False
+
+
+def text_matches_query(text: str, query: str, use_fuzzy: bool = True) -> bool:
+    """Check if text matches query using token-based, fuzzy-tolerant matching.
+    
+    This is the main matching function for search:
+    - Handles partial phrases
+    - Handles incomplete queries
+    - Ignores apostrophes and punctuation
+    - Lowercase and accent-agnostic
+    
+    Returns True if query semantically matches the text.
+    """
+    if not text or not query:
+        return False
+    
+    query_tokens = _tokenize_text(query)
+    doc_tokens = _tokenize_text(text)
+    
+    if not query_tokens or not doc_tokens:
+        return False
+    
+    # Use sliding window matching with fuzzy tolerance if enabled
+    threshold = 0.7 if use_fuzzy else 1.0
+    return _token_sliding_window_match(query_tokens, doc_tokens, fuzzy_threshold=threshold)
+
+
 def extract_page_metadata(text: str) -> dict:
     normalized = normalize_pdf_text(text)
     meter = {}
@@ -1221,8 +1324,9 @@ def compress_pdf(pdf_bytes: bytes) -> Tuple[bytes, bool]:
 
 
 def sanitize_snippet_for_api(snippet: str) -> str:
-    """Sanitize snippet for API responses: remove internal markers, strip musical
-    chords and OCR noise, collapse whitespace, and join broken lines with ", ".
+    """Sanitize snippet for API responses: AGGRESSIVELY remove internal markers,
+    musical chords and OCR noise while preserving real text. Collapse whitespace
+    and join broken lines with ", ".
     This function is safe for presentation and does NOT affect indexed text.
     """
     if not snippet:
@@ -1232,38 +1336,58 @@ def sanitize_snippet_for_api(snippet: str) -> str:
     parts = re.split(r"\u23CE|\r?\n", s)
     cleaned_parts = []
     for p in parts:
-        # remove decorative tokens and non-readable glyphs
+        # Step 1: Remove all decorative and non-readable glyphs
         p = p.replace("\u00a0", " ")
         p = p.replace("\xa0", " ")
-        p = re.sub(r"[œŒ˙…⏎]+", " ", p)
-        # normalize various apostrophes
-        p = re.sub(r"[''`]+", "'", p)
-        # Remove control characters and invalid unicode
-        p = re.sub(r"[\u0000-\u001F\u007F-\u009F]", " ", p)
-        # Remove common OCR artifacts and decorative sequences
-        p = re.sub(r"(?:[.,;:!?])\s*(?:[.,;:!?])+", ".", p)  # compress repeated punctuation
-        # Remove chord-like tokens DO RE MI etc and standalone chord fragments
+        p = re.sub(r"[œŒ˙…⏎⏭⏮ªº°†‡‰′″‴⁰¹²³⁴⁵⁶⁷⁸⁹]+", " ", p)
+        
+        # Step 2: Normalize various apostrophes
+        p = re.sub(r"[''`´`]+", "'", p)
+        
+        # Step 3: Remove ALL control characters and invalid unicode
+        p = re.sub(r"[\u0000-\u001F\u007F-\u009F\u200B-\u200D\uFEFF]+", " ", p)
+        
+        # Step 4: AGGRESSIVELY remove musical notation and accordi
+        # Remove notes: DO, RE, MI, FA, SOL, LA, SI with any variants
         p = re.sub(r"\b(?:DO|RE|MI|FA|SOL|LA|SI)(?:[#b\-\d/]*)\b", " ", p, flags=re.IGNORECASE)
-        # Remove typical chord tokens like A#m, G7, D/F# but avoid words starting with single letters
+        # Remove chord notations: A#m, G7, D/F#, Cmaj7, etc.
         p = re.sub(r"(?<!\w)\b[A-G](?:#|b)?(?:maj|min|m|dim|aug|sus|add)?\d*(?:/[A-G](?:#|b)?\d*)?\b", " ", p, flags=re.IGNORECASE)
-        # Remove standalone single-letter tokens that are likely chords (A, B, C, etc)
+        # Remove standalone single-letter tokens that are likely chords
         p = re.sub(r"\b([A-G])\s+(?=[A-GÀ-ÿ#b]|\d|$)", " ", p, flags=re.IGNORECASE)
-        # Remove common accidental/artifact punctuation sequences
+        # Remove sequences that look like OCR noise: ##, ??, &&, etc.
+        p = re.sub(r"([#?&]+)\s*\1+", " ", p)
+        
+        # Step 5: Remove repeated/malformed punctuation sequences
+        p = re.sub(r"(?:[.,;:!?])\s*(?:[.,;:!?])+", ".", p)
+        
+        # Step 6: Remove common accidental/artifact punctuation sequences
         p = re.sub(r"[^A-Za-z0-9À-ÿ\s'.,;:\-?!()]+", " ", p)
-        # Collapse repeated non-word chars and spaces
+        
+        # Step 7: Collapse repeated whitespace
         p = re.sub(r"\s+", " ", p)
         p = p.strip(" .,;:-\n\r\t")
+        
         if not p:
             continue
-        # Skip parts that are mostly non-letters or too short (likely noise)
+        
+        # Step 8: Filter out parts that are mostly non-letters (likely noise)
         words = [w for w in p.split() if re.search(r"[A-Za-zÀ-ÿ0-9]", w)]
         if not words:
             continue
-        # If part is composed mostly of short tokens (likely chords), skip
+        
+        # Step 9: Skip parts that are composed mostly of short tokens (likely pure chord sections)
         short_tokens = sum(1 for w in words if len(re.sub(r"[^A-Za-zÀ-ÿ0-9]","",w)) <= 2)
-        if len(words) >= 1 and (short_tokens / len(words)) > 0.65:
+        if len(words) >= 3 and (short_tokens / len(words)) > 0.6:
+            # If all or mostly short tokens in a multi-word line, it's likely a chord line
             continue
+        
+        # Step 10: Reject if the part looks like ONLY punctuation and numbers (common in OCR)
+        letter_ratio = sum(1 for w in words if re.search(r"[A-Za-zÀ-ÿ]", w)) / len(words) if words else 0
+        if letter_ratio < 0.5:
+            continue
+        
         cleaned_parts.append(" ".join(words))
+    
     # Join with comma separator for preview
     out = ", ".join(cleaned_parts)
     out = re.sub(r"\s+", " ", out).strip()

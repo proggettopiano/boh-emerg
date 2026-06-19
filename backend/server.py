@@ -37,7 +37,7 @@ from auth_utils import (
     hash_password, verify_password, create_jwt, decode_jwt,
     get_client_ip, get_current_user_id, get_optional_user_id,
 )
-from pdf_processor import extract_pages, compress_pdf, make_snippet, clean_pdf_text, normalize_pdf_text, normalize_search_query, extract_page_metadata
+from pdf_processor import extract_pages, compress_pdf, make_snippet, clean_pdf_text, normalize_pdf_text, normalize_search_query, text_matches_query, extract_page_metadata
 import google_integration as gi
 
 ROOT_DIR = Path(__file__).parent
@@ -1371,15 +1371,42 @@ async def search(
     }
     if pdf_ids_list:
         text_filter["pdf_id"] = {"$in": pdf_ids_list}
-    text_cursor = db.pdf_pages.find(text_filter).limit(50)
+    text_cursor = db.pdf_pages.find(text_filter).limit(100)
+    
+    # First pass: collect all text pages to apply fuzzy token matching
+    matched_pages = []
     async for pg in text_cursor:
+        matched_pages.append(pg)
+    
+    # Second pass: apply token-based fuzzy matching to the results
+    for pg in matched_pages:
         key = (pg["pdf_id"], pg["page"])
         if key in seen:
             continue
-        seen.add(key)
-        p = await db.pdfs.find_one({"id": pg["pdf_id"]})
-        if p:
-            results.append(format_search_result(p, pg, raw_q, score=10, source="personal", match_in="content"))
+        
+        # Apply token-based matching to the actual text
+        pg_text = pg.get("text", "")
+        if pg_text and text_matches_query(pg_text, q, use_fuzzy=True):
+            seen.add(key)
+            p = await db.pdfs.find_one({"id": pg["pdf_id"]})
+            if p:
+                results.append(format_search_result(p, pg, raw_q, score=10, source="personal", match_in="content"))
+    
+    # Also perform fallback fuzzy search on all pages if initial results are sparse
+    if len(results) < 3 and not raw_q.isdigit():
+        # Get all pages and apply fuzzy matching
+        all_pages = await db.pdf_pages.find({} if not pdf_ids_list else {"pdf_id": {"$in": pdf_ids_list}}).limit(200).to_list(200)
+        for pg in all_pages:
+            key = (pg["pdf_id"], pg["page"])
+            if key in seen:
+                continue
+            
+            pg_text = pg.get("text", "")
+            if pg_text and text_matches_query(pg_text, q, use_fuzzy=True):
+                seen.add(key)
+                p = await db.pdfs.find_one({"id": pg["pdf_id"]})
+                if p:
+                    results.append(format_search_result(p, pg, raw_q, score=8, source="personal", match_in="content"))
 
     # Sort by score desc, then by physical page number (use actual_page if present, fall back to page)
     results.sort(key=lambda x: (-x["score"], x.get("actual_page", x.get("page", 0))))
