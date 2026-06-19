@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Trash2, FileText, Upload as UploadIcon, Star, Tag as TagIcon, Lock, Unlock } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
@@ -20,8 +20,23 @@ export default function Library() {
   const loadSeq = useRef(0);
   const mountedRef = useRef(false);
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
   const isAdmin = user?.is_admin;
+
+  // Load tag from URL parameter on mount
+  useEffect(() => {
+    const tagFromUrl = searchParams.get("tag");
+    if (tagFromUrl) {
+      setTagFilter(tagFromUrl);
+    } else {
+      // Also try localStorage as fallback
+      const storedTag = localStorage.getItem("lib_tagFilter");
+      if (storedTag) {
+        setTagFilter(storedTag);
+      }
+    }
+  }, []);
 
   // Load library with retry and cache fallback for resilience during indexing
   const load = useCallback(async () => {
@@ -205,6 +220,12 @@ export default function Library() {
                   const newTag = e.target.value;
                   setTagFilter(newTag);
                   localStorage.setItem("lib_tagFilter", newTag);
+                  // Update URL parameter
+                  if (newTag) {
+                    setSearchParams({ tag: newTag });
+                  } else {
+                    setSearchParams({});
+                  }
                 }} className="w-full border border-rule rounded-sm px-3 py-1.5 text-sm bg-card">
                   <option value="">Tutti i tag</option>
                   {tags.map((t) => <option key={t} value={t}>{t}</option>)}

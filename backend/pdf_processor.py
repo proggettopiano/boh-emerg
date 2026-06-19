@@ -216,11 +216,10 @@ def _tokenize_text(text: str) -> List[str]:
 def _token_sliding_window_match(query_tokens: List[str], doc_tokens: List[str], fuzzy_threshold: float = 0.7) -> bool:
     """Check if query tokens match any consecutive sliding window in doc_tokens.
     
-    This implements VERY flexible prefix-tolerant, partial phrase matching:
+    STRICT matching - only exact phrase or clear subsequence:
     - "padre posso dire" matches "padre posso dire solo questo quando"
-    - Tolerance for missing/extra words via fuzzy_threshold
-    - Works with any consecutive substring
-    - HIGHLY tolerates typos, missing accents, and partial words
+    - Requires 70%+ of query tokens to match consecutively OR
+    - All query tokens must appear in order with limited gaps
     
     Returns True if match found, False otherwise.
     """
@@ -233,6 +232,7 @@ def _token_sliding_window_match(query_tokens: List[str], doc_tokens: List[str], 
     doc_len = len(doc_tokens)
     
     # STRATEGY 1: Try exact consecutive match (highest confidence)
+    # Requires 70% of tokens to match in sequence
     for start_idx in range(max(0, doc_len - query_len + 1)):
         window = doc_tokens[start_idx : start_idx + query_len]
         matching = sum(1 for i, q_token in enumerate(query_tokens) if i < len(window) and window[i] == q_token)
@@ -240,7 +240,8 @@ def _token_sliding_window_match(query_tokens: List[str], doc_tokens: List[str], 
         if match_ratio >= fuzzy_threshold:
             return True
     
-    # STRATEGY 2: Try longer windows (query could be a subset of a longer sequence)
+    # STRATEGY 2: Try longer windows (query tokens appear in order, but scattered)
+    # Only check within limited window size (query_len + 3)
     for window_len in range(query_len + 1, min(doc_len + 1, query_len + 4)):
         for start_idx in range(max(0, doc_len - window_len + 1)):
             window = doc_tokens[start_idx : start_idx + window_len]
@@ -248,34 +249,16 @@ def _token_sliding_window_match(query_tokens: List[str], doc_tokens: List[str], 
             for w_token in window:
                 if q_idx < len(query_tokens) and w_token == query_tokens[q_idx]:
                     q_idx += 1
+            # All query tokens must be found in order
             if q_idx == len(query_tokens):
                 return True
     
-    # STRATEGY 3: Flexible matching with much lower threshold for typo tolerance
-    # Check if query words appear scattered in document (not necessarily consecutive)
-    # Accept if we find 50%+ of query words anywhere in the document
-    if query_len >= 2:
-        matched_count = 0
-        for q_token in query_tokens:
-            if q_token in doc_tokens:
-                matched_count += 1
-        
-        match_ratio = matched_count / query_len if query_len > 0 else 0
-        if match_ratio >= 0.5:  # Accept with just 50% of words matching
-            return True
-    
-    # STRATEGY 4: Sliding window with VERY permissive threshold (40%)
-    # For longer queries, allow more word skipping
-    if query_len >= 3:
-        for start_idx in range(max(0, doc_len - query_len * 2)):
-            if start_idx + query_len > doc_len:
-                break
-            window = doc_tokens[start_idx : min(start_idx + query_len + 2, doc_len)]
-            matching = sum(1 for i, q_token in enumerate(query_tokens) if i < len(window) and window[i] == q_token)
-            match_ratio = matching / query_len if query_len > 0 else 0
-            
-            if match_ratio >= 0.4:  # Accept with 40% threshold
-                return True
+    # DISABLED: Tier 3 & 4 removed (too permissive, causes false positives)
+    # - Tier 3 (50% scattered words): would match "quando" + "sento" in unrelated documents
+    # - Tier 4 (40% threshold): accepts too many partial matches
+    # 
+    # These tiers were causing false positives where "quando qualcosa" 
+    # matched query "quando mi sento solo" because they share 50% of words.
     
     return False
 
@@ -303,6 +286,50 @@ def text_matches_query(text: str, query: str, use_fuzzy: bool = True) -> bool:
     # Use sliding window matching with fuzzy tolerance if enabled
     threshold = 0.7 if use_fuzzy else 1.0
     return _token_sliding_window_match(query_tokens, doc_tokens, fuzzy_threshold=threshold)
+
+
+def _calculate_match_quality(text: str, query: str) -> float:
+    """Calculate match quality score (0.0-1.0) for ranking purposes.
+    
+    Returns:
+    - 1.0: Query tokens found exactly consecutive (e.g., "padre posso dire" in "padre posso dire solo")
+    - 0.9: Query tokens found in order but scattered (e.g., "quando...sento...solo")
+    - 0.0: No match
+    
+    Used for ranking results - higher score = better match = ranked first.
+    """
+    if not text or not query:
+        return 0.0
+    
+    query_tokens = _tokenize_text(query)
+    doc_tokens = _tokenize_text(text)
+    
+    if not query_tokens or not doc_tokens:
+        return 0.0
+    
+    query_len = len(query_tokens)
+    doc_len = len(doc_tokens)
+    
+    # Check for exact consecutive match (highest quality)
+    for start_idx in range(max(0, doc_len - query_len + 1)):
+        window = doc_tokens[start_idx : start_idx + query_len]
+        matching = sum(1 for i, q_token in enumerate(query_tokens) if i < len(window) and window[i] == q_token)
+        match_ratio = matching / query_len if query_len > 0 else 0
+        if match_ratio >= 0.7:
+            return 1.0  # Exact/near-exact consecutive match
+    
+    # Check for subsequence match (query tokens in order but scattered)
+    for window_len in range(query_len + 1, min(doc_len + 1, query_len + 4)):
+        for start_idx in range(max(0, doc_len - window_len + 1)):
+            window = doc_tokens[start_idx : start_idx + window_len]
+            q_idx = 0
+            for w_token in window:
+                if q_idx < len(query_tokens) and w_token == query_tokens[q_idx]:
+                    q_idx += 1
+            if q_idx == len(query_tokens):
+                return 0.9  # Subsequence match
+    
+    return 0.0  # No match
 
 
 def extract_page_metadata(text: str) -> dict:

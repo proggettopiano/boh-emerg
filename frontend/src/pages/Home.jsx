@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Search as SearchIcon, Upload as UploadIcon } from "lucide-react";
 import api from "@/lib/api";
 import { sanitizeSnippetText, normalizeSearchQuery } from "@/lib/searchText";
@@ -78,7 +78,16 @@ export default function Home() {
   const [recentSearches, setRecentSearches] = useState([]);
   const tref = useRef(null);
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const inputRef = useRef(null);
+
+  // Read tag from URL parameter on mount
+  useEffect(() => {
+    const tagFromUrl = searchParams.get("tag");
+    if (tagFromUrl) {
+      setSelectedTag(tagFromUrl);
+    }
+  }, []);
 
   useEffect(() => {
     setRecentSearches(loadRecentSearches());
@@ -184,7 +193,16 @@ export default function Home() {
           <select
             id="tagSelect"
             value={selectedTag || ""}
-            onChange={(e) => setSelectedTag(e.target.value || null)}
+            onChange={(e) => {
+              const newTag = e.target.value || null;
+              setSelectedTag(newTag);
+              // Update URL parameter
+              if (newTag) {
+                setSearchParams({ tag: newTag });
+              } else {
+                setSearchParams({});
+              }
+            }}
             className="flex-1 px-3 py-2 bg-canvas border border-rule rounded text-sm outline-none"
           >
             <option value="">-- Tutti i tag --</option>

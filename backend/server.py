@@ -37,7 +37,7 @@ from auth_utils import (
     hash_password, verify_password, create_jwt, decode_jwt,
     get_client_ip, get_current_user_id, get_optional_user_id,
 )
-from pdf_processor import extract_pages, compress_pdf, make_snippet, clean_pdf_text, normalize_pdf_text, normalize_search_query, text_matches_query, extract_page_metadata
+from pdf_processor import extract_pages, compress_pdf, make_snippet, clean_pdf_text, normalize_pdf_text, normalize_search_query, text_matches_query, extract_page_metadata, _calculate_match_quality
 import google_integration as gi
 
 ROOT_DIR = Path(__file__).parent
@@ -1390,7 +1390,10 @@ async def search(
             seen.add(key)
             p = await db.pdfs.find_one({"id": pg["pdf_id"]})
             if p:
-                results.append(format_search_result(p, pg, raw_q, score=10, source="personal", match_in="content"))
+                # Calculate quality-based score (1.0 exact match → score 100, 0.9 subsequence → score 90)
+                quality = _calculate_match_quality(pg_text, q)
+                score = int(quality * 100) if quality > 0 else 10
+                results.append(format_search_result(p, pg, raw_q, score=score, source="personal", match_in="content"))
     
     # Also perform fallback fuzzy search on all pages if initial results are sparse
     if len(results) < 3 and not raw_q.isdigit():
@@ -1406,7 +1409,10 @@ async def search(
                 seen.add(key)
                 p = await db.pdfs.find_one({"id": pg["pdf_id"]})
                 if p:
-                    results.append(format_search_result(p, pg, raw_q, score=8, source="personal", match_in="content"))
+                    # Fallback results get lower base score (80 for exact, 70 for subsequence)
+                    quality = _calculate_match_quality(pg_text, q)
+                    score = int(quality * 80) if quality > 0 else 8
+                    results.append(format_search_result(p, pg, raw_q, score=score, source="personal", match_in="content"))
 
     # Sort by score desc, then by physical page number (use actual_page if present, fall back to page)
     results.sort(key=lambda x: (-x["score"], x.get("actual_page", x.get("page", 0))))
