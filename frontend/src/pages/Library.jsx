@@ -122,9 +122,10 @@ export default function Library() {
     };
   }, []);
 
+  // Separate effect to reload when tagFilter changes (or on mount)
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, tagFilter]);
 
   const remove = async (id, title) => {
     if (!window.confirm(`Eliminare definitivamente "${title}"?`)) return;
@@ -181,7 +182,7 @@ export default function Library() {
             <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={() => setFavOnly((v) => !v)}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-sm border transition-colors ${favOnly ? "bg-ink text-white border-ink" : "border-rule hover:border-ink"}`}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-sm border transition-colors ${favOnly ? "bg-amber-500 text-white border-amber-500 dark:bg-amber-600 dark:border-amber-600" : "border-rule hover:border-ink dark:border-rule dark:hover:border-amber-400"}`}
               >
                 <Star size={14} fill={favOnly ? "#FFFFFF" : "none"} /> Preferiti
               </button>

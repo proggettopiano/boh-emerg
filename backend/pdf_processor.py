@@ -216,11 +216,11 @@ def _tokenize_text(text: str) -> List[str]:
 def _token_sliding_window_match(query_tokens: List[str], doc_tokens: List[str], fuzzy_threshold: float = 0.7) -> bool:
     """Check if query tokens match any consecutive sliding window in doc_tokens.
     
-    This implements prefix-tolerant, partial phrase matching:
+    This implements VERY flexible prefix-tolerant, partial phrase matching:
     - "padre posso dire" matches "padre posso dire solo questo quando"
     - Tolerance for missing/extra words via fuzzy_threshold
     - Works with any consecutive substring
-    - Tolerates typos via reduced threshold for incomplete matches
+    - HIGHLY tolerates typos, missing accents, and partial words
     
     Returns True if match found, False otherwise.
     """
@@ -232,45 +232,49 @@ def _token_sliding_window_match(query_tokens: List[str], doc_tokens: List[str], 
     query_len = len(query_tokens)
     doc_len = len(doc_tokens)
     
-    # Try each starting position in the document with exact match
-    for start_idx in range(doc_len - query_len + 1):
+    # STRATEGY 1: Try exact consecutive match (highest confidence)
+    for start_idx in range(max(0, doc_len - query_len + 1)):
         window = doc_tokens[start_idx : start_idx + query_len]
-        
-        # Count matching tokens in this window
         matching = sum(1 for i, q_token in enumerate(query_tokens) if i < len(window) and window[i] == q_token)
         match_ratio = matching / query_len if query_len > 0 else 0
-        
-        # If ratio meets threshold, it's a match
         if match_ratio >= fuzzy_threshold:
             return True
     
-    # Also try longer windows (query could be a subset of a longer sequence)
+    # STRATEGY 2: Try longer windows (query could be a subset of a longer sequence)
     for window_len in range(query_len + 1, min(doc_len + 1, query_len + 4)):
-        for start_idx in range(doc_len - window_len + 1):
+        for start_idx in range(max(0, doc_len - window_len + 1)):
             window = doc_tokens[start_idx : start_idx + window_len]
-            
-            # Check if query tokens form a subsequence (not necessarily consecutive) in window
             q_idx = 0
             for w_token in window:
                 if q_idx < len(query_tokens) and w_token == query_tokens[q_idx]:
                     q_idx += 1
-            
-            # If we matched all query tokens as a subsequence, it's a match
             if q_idx == len(query_tokens):
                 return True
     
-    # FALLBACK: If no exact match found, try with lower threshold (tolerates minor typos)
-    # Only do this on longer queries to avoid false positives on short ones
+    # STRATEGY 3: Flexible matching with much lower threshold for typo tolerance
+    # Check if query words appear scattered in document (not necessarily consecutive)
+    # Accept if we find 50%+ of query words anywhere in the document
     if query_len >= 2:
+        matched_count = 0
+        for q_token in query_tokens:
+            if q_token in doc_tokens:
+                matched_count += 1
+        
+        match_ratio = matched_count / query_len if query_len > 0 else 0
+        if match_ratio >= 0.5:  # Accept with just 50% of words matching
+            return True
+    
+    # STRATEGY 4: Sliding window with VERY permissive threshold (40%)
+    # For longer queries, allow more word skipping
+    if query_len >= 3:
         for start_idx in range(max(0, doc_len - query_len * 2)):
             if start_idx + query_len > doc_len:
                 break
-            window = doc_tokens[start_idx : min(start_idx + query_len + 1, doc_len)]
+            window = doc_tokens[start_idx : min(start_idx + query_len + 2, doc_len)]
             matching = sum(1 for i, q_token in enumerate(query_tokens) if i < len(window) and window[i] == q_token)
             match_ratio = matching / query_len if query_len > 0 else 0
             
-            # Accept with lower threshold (60%) for typo tolerance
-            if match_ratio >= 0.6:
+            if match_ratio >= 0.4:  # Accept with 40% threshold
                 return True
     
     return False
