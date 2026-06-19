@@ -87,6 +87,7 @@ export default function Home() {
     if (tagFromUrl) {
       setSelectedTag(tagFromUrl);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

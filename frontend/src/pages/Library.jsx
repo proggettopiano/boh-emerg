@@ -36,6 +36,7 @@ export default function Library() {
         setTagFilter(storedTag);
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Load library with retry and cache fallback for resilience during indexing
