@@ -111,6 +111,11 @@ export default function Library() {
 
   useEffect(() => {
     mountedRef.current = true;
+    // Load tag filter from localStorage on mount
+    const savedTagFilter = localStorage.getItem("lib_tagFilter");
+    if (savedTagFilter) {
+      setTagFilter(savedTagFilter);
+    }
     return () => {
       mountedRef.current = false;
       loadSeq.current += 1;
@@ -195,7 +200,11 @@ export default function Library() {
             {/* Second row: Tags filter */}
             {tags.length > 0 && (
               <div className="w-full">
-                <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} className="w-full border border-rule rounded-sm px-3 py-1.5 text-sm bg-card">
+                <select value={tagFilter} onChange={(e) => {
+                  const newTag = e.target.value;
+                  setTagFilter(newTag);
+                  localStorage.setItem("lib_tagFilter", newTag);
+                }} className="w-full border border-rule rounded-sm px-3 py-1.5 text-sm bg-card">
                   <option value="">Tutti i tag</option>
                   {tags.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
@@ -224,7 +233,12 @@ export default function Library() {
           {items.map((p) => (
             <li key={p.id} className="group flex items-center justify-between gap-4 py-4 border-b border-rule hover:bg-canvas2 px-2 -mx-2 transition-colors">
               <button onClick={() => toggleFav(p)} className="shrink-0" title={p.is_favorite ? "Rimuovi preferito" : "Aggiungi ai preferiti"}>
-                <Star size={18} strokeWidth={1.5} fill={p.is_favorite ? "#0A0A0A" : "none"} className={p.is_favorite ? "" : "text-muted3 hover:text-ink"} />
+                <Star 
+                  size={18} 
+                  strokeWidth={1.5} 
+                  fill={p.is_favorite ? "currentColor" : "none"} 
+                  className={p.is_favorite ? "text-ink dark:text-amber-400" : "text-muted3 hover:text-ink dark:hover:text-amber-400"} 
+                />
               </button>
               <button onClick={() => navigate(`/viewer/${p.id}`)} className="flex-1 text-left flex items-center gap-3 min-w-0">
                 <FileText size={18} strokeWidth={1.5} className="shrink-0 text-muted2" />

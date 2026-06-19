@@ -220,6 +220,7 @@ def _token_sliding_window_match(query_tokens: List[str], doc_tokens: List[str], 
     - "padre posso dire" matches "padre posso dire solo questo quando"
     - Tolerance for missing/extra words via fuzzy_threshold
     - Works with any consecutive substring
+    - Tolerates typos via reduced threshold for incomplete matches
     
     Returns True if match found, False otherwise.
     """
@@ -231,7 +232,7 @@ def _token_sliding_window_match(query_tokens: List[str], doc_tokens: List[str], 
     query_len = len(query_tokens)
     doc_len = len(doc_tokens)
     
-    # Try each starting position in the document
+    # Try each starting position in the document with exact match
     for start_idx in range(doc_len - query_len + 1):
         window = doc_tokens[start_idx : start_idx + query_len]
         
@@ -256,6 +257,20 @@ def _token_sliding_window_match(query_tokens: List[str], doc_tokens: List[str], 
             
             # If we matched all query tokens as a subsequence, it's a match
             if q_idx == len(query_tokens):
+                return True
+    
+    # FALLBACK: If no exact match found, try with lower threshold (tolerates minor typos)
+    # Only do this on longer queries to avoid false positives on short ones
+    if query_len >= 2:
+        for start_idx in range(max(0, doc_len - query_len * 2)):
+            if start_idx + query_len > doc_len:
+                break
+            window = doc_tokens[start_idx : min(start_idx + query_len + 1, doc_len)]
+            matching = sum(1 for i, q_token in enumerate(query_tokens) if i < len(window) and window[i] == q_token)
+            match_ratio = matching / query_len if query_len > 0 else 0
+            
+            # Accept with lower threshold (60%) for typo tolerance
+            if match_ratio >= 0.6:
                 return True
     
     return False
@@ -1348,6 +1363,8 @@ def sanitize_snippet_for_api(snippet: str) -> str:
         p = re.sub(r"[\u0000-\u001F\u007F-\u009F\u200B-\u200D\uFEFF]+", " ", p)
         
         # Step 4: AGGRESSIVELY remove musical notation and accordi
+        # Remove decorative page numbers like "~ 846 ~" or "~ 123 ~"
+        p = re.sub(r"~\s*\d+\s*~", " ", p)
         # Remove notes: DO, RE, MI, FA, SOL, LA, SI with any variants
         p = re.sub(r"\b(?:DO|RE|MI|FA|SOL|LA|SI)(?:[#b\-\d/]*)\b", " ", p, flags=re.IGNORECASE)
         # Remove chord notations: A#m, G7, D/F#, Cmaj7, etc.
