@@ -1390,7 +1390,8 @@ async def search(
             seen.add(key)
             p = await db.pdfs.find_one({"id": pg["pdf_id"]})
             if p:
-                # Calculate quality-based score (1.0 exact match → score 100, 0.9 subsequence → score 90)
+                # Calculate quality-based score with gradation
+                # 1.0 (exact) → 100, 0.95 → 95, 0.90 → 90, 0.85 → 85
                 quality = _calculate_match_quality(pg_text, q)
                 score = int(quality * 100) if quality > 0 else 10
                 results.append(format_search_result(p, pg, raw_q, score=score, source="personal", match_in="content"))
@@ -1398,7 +1399,8 @@ async def search(
     # Also perform fallback fuzzy search on all pages if initial results are sparse
     if len(results) < 3 and not raw_q.isdigit():
         # Get all pages and apply fuzzy matching
-        all_pages = await db.pdf_pages.find({} if not pdf_ids_list else {"pdf_id": {"$in": pdf_ids_list}}).limit(200).to_list(200)
+        # Limit to 50 pages for performance (fallback should be targeted, not exhaustive)
+        all_pages = await db.pdf_pages.find({} if not pdf_ids_list else {"pdf_id": {"$in": pdf_ids_list}}).limit(50).to_list(50)
         for pg in all_pages:
             key = (pg["pdf_id"], pg["page"])
             if key in seen:
@@ -1409,7 +1411,7 @@ async def search(
                 seen.add(key)
                 p = await db.pdfs.find_one({"id": pg["pdf_id"]})
                 if p:
-                    # Fallback results get lower base score (80 for exact, 70 for subsequence)
+                    # Fallback results get lower base score with gradation
                     quality = _calculate_match_quality(pg_text, q)
                     score = int(quality * 80) if quality > 0 else 8
                     results.append(format_search_result(p, pg, raw_q, score=score, source="personal", match_in="content"))

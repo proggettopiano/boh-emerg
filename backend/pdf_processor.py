@@ -221,6 +221,11 @@ def _token_sliding_window_match(query_tokens: List[str], doc_tokens: List[str], 
     - Requires 70%+ of query tokens to match consecutively OR
     - All query tokens must appear in order with limited gaps
     
+    For longer queries (3+ words), implements PARTIAL CREDIT:
+    - If 80%+ of tokens match, it's still valid (graceful degradation)
+    - If N-1 tokens match exactly and 1 is missing, still valid
+    - Avoids sudden invalidation when user adds a word
+    
     Returns True if match found, False otherwise.
     """
     if not query_tokens:
@@ -251,6 +256,27 @@ def _token_sliding_window_match(query_tokens: List[str], doc_tokens: List[str], 
                     q_idx += 1
             # All query tokens must be found in order
             if q_idx == len(query_tokens):
+                return True
+    
+    # STRATEGY 3: PARTIAL CREDIT for longer queries
+    # For queries with 3+ words, accept 80%+ token match
+    # This provides graceful degradation instead of complete invalidation
+    # Example: "padre posso dire solo questo quando" (6 words)
+    #          vs "padre posso dire solo questo" (5 words) → 83% match, still valid
+    if query_len >= 3:
+        for start_idx in range(max(0, doc_len - query_len * 2)):
+            if start_idx + query_len > doc_len:
+                break
+            # Try matching up to query_len words in broader window
+            window = doc_tokens[start_idx : min(start_idx + query_len + 2, doc_len)]
+            q_idx = 0
+            for w_token in window:
+                if q_idx < len(query_tokens) and w_token == query_tokens[q_idx]:
+                    q_idx += 1
+            
+            # Accept if 80%+ of query tokens found in order
+            match_ratio = q_idx / query_len if query_len > 0 else 0
+            if match_ratio >= 0.8:
                 return True
     
     # DISABLED: Tier 3 & 4 removed (too permissive, causes false positives)
@@ -291,9 +317,11 @@ def text_matches_query(text: str, query: str, use_fuzzy: bool = True) -> bool:
 def _calculate_match_quality(text: str, query: str) -> float:
     """Calculate match quality score (0.0-1.0) for ranking purposes.
     
-    Returns:
-    - 1.0: Query tokens found exactly consecutive (e.g., "padre posso dire" in "padre posso dire solo")
-    - 0.9: Query tokens found in order but scattered (e.g., "quando...sento...solo")
+    Scoring hierarchy:
+    - 1.0: Query tokens found exactly consecutive (best match)
+    - 0.95: Query tokens consecutive with 1 extra word allowed
+    - 0.90: Query tokens in order, scattered but within tight window
+    - 0.85: Query tokens in order, scattered with medium gaps
     - 0.0: No match
     
     Used for ranking results - higher score = better match = ranked first.
@@ -309,25 +337,43 @@ def _calculate_match_quality(text: str, query: str) -> float:
     
     query_len = len(query_tokens)
     doc_len = len(doc_tokens)
+    max_gap = 3  # maximum gap between tokens for tight window
     
-    # Check for exact consecutive match (highest quality)
+    # STRATEGY 1: Exact consecutive match (highest quality)
+    # All query tokens appear consecutively in order
     for start_idx in range(max(0, doc_len - query_len + 1)):
         window = doc_tokens[start_idx : start_idx + query_len]
         matching = sum(1 for i, q_token in enumerate(query_tokens) if i < len(window) and window[i] == q_token)
         match_ratio = matching / query_len if query_len > 0 else 0
         if match_ratio >= 0.7:
-            return 1.0  # Exact/near-exact consecutive match
+            # Check if it's a true consecutive match (100% of tokens match in order)
+            if matching == query_len:
+                return 1.0
+            # 70%-99% consecutive match
+            return 0.95
     
-    # Check for subsequence match (query tokens in order but scattered)
+    # STRATEGY 2a: Subsequence in tight window (max_gap = 3)
+    # Query tokens appear in order with limited scattered words between them
     for window_len in range(query_len + 1, min(doc_len + 1, query_len + 4)):
         for start_idx in range(max(0, doc_len - window_len + 1)):
             window = doc_tokens[start_idx : start_idx + window_len]
             q_idx = 0
-            for w_token in window:
+            last_pos = -1
+            max_gap_found = 0
+            
+            for w_idx, w_token in enumerate(window):
                 if q_idx < len(query_tokens) and w_token == query_tokens[q_idx]:
+                    gap = w_idx - last_pos - 1
+                    max_gap_found = max(max_gap_found, gap)
+                    last_pos = w_idx
                     q_idx += 1
+            
             if q_idx == len(query_tokens):
-                return 0.9  # Subsequence match
+                # All tokens found in order
+                if max_gap_found <= 1:
+                    return 0.90  # Very tight (1 gap max)
+                else:
+                    return 0.85  # Moderate gaps (up to 2-3)
     
     return 0.0  # No match
 
@@ -1443,9 +1489,16 @@ def sanitize_snippet_for_api(snippet: str) -> str:
 
 
 def make_snippet(text: str, query: str, length: int = 200) -> str:
-    """Return a snippet of `text` around the first occurrence of `query`."""
+    """Return a snippet of `text` around the first occurrence of `query`.
+    Removes decorative numbers (~N~) to avoid confusing the user.
+    """
     if not text:
         return ""
+    
+    # Remove decorative page numbers before processing snippet
+    text = DECORATIVE_NUMBER_RE.sub(" ", text)
+    text = re.sub(r"\s+", " ", text)
+    
     lower = text.lower()
     q = query.lower().strip()
     if not q:
