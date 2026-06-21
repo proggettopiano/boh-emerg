@@ -1,28 +1,7 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import { FileText } from "lucide-react";
-
-function escapeRegExp(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function highlight(text, q) {
-  if (!text || !q) return text;
-  try {
-    const re = new RegExp(`(${escapeRegExp(q)})`, "ig");
-    const parts = text.split(re);
-    let offset = 0;
-    return parts.map((part) => {
-      const key = `${offset}-${part}`;
-      offset += part.length;
-      return part.toLowerCase() === q.toLowerCase()
-        ? <mark key={key} className="hl">{part}</mark>
-        : <span key={key}>{part}</span>;
-    });
-  } catch {
-    return text;
-  }
-}
+import { highlightText } from "@/lib/searchText";
 
 /**
  * Shared search results list — used by SharedLibraryDetail and SharedView.
@@ -57,14 +36,14 @@ export default function SearchResults({ results, q, shareToken = "", emptyText =
             <FileText size={20} className="text-muted2 mt-1 shrink-0" />
             <div className="min-w-0">
               <div className="font-display font-bold text-lg hover:underline decoration-2 underline-offset-4">
-                {highlight(r.title, q)}
+                {highlightText(r.title, q, { defaultMarkClass: 'hl', chordMarkClass: 'bg-emerald-100 text-emerald-900 px-1 rounded' })}
                 <span className="text-mono text-xs font-normal text-muted3 ml-2">PAG {r.page_label || r.page}</span>
                 {r.is_protected && (
                   <span className="text-mono text-xs font-normal ml-2 px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded-sm">PROTETTO</span>
                 )}
               </div>
               {r.snippet && (
-                <p className="text-sm text-muted2 mt-1 leading-relaxed">{highlight(r.snippet, q)}</p>
+                <p className="text-sm text-muted2 mt-1 leading-relaxed">{highlightText(r.snippet, q, { defaultMarkClass: 'hl', chordMarkClass: 'bg-emerald-100 text-emerald-900 px-1 rounded' })}</p>
               )}
             </div>
           </button>

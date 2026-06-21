@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import api from "@/lib/api";
-import { sanitizeSearchText } from "@/lib/searchText";
+import { normalizeForMatching } from "@/lib/searchText";
 
 /**
  * Unified search hook used by Home, SharedLibraryDetail and SharedView.
@@ -31,7 +31,7 @@ export function useSearch(q, { pdfIdsStr = "", shareToken = "", tag = "" } = {})
 
     tref.current = setTimeout(async () => {
       try {
-        const params = { q: sanitizeSearchText(q) };
+        const params = { q: normalizeForMatching(q) };
         if (pdfIdsStr) params.pdf_ids = pdfIdsStr;
         if (shareToken) params.share_token = shareToken;
         if (tag) params.tag = tag;

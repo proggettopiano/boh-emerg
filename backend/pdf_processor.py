@@ -1488,31 +1488,138 @@ def sanitize_snippet_for_api(snippet: str) -> str:
     return out
 
 
+def _normalize_text_and_map_for_snippet(text: str) -> (str, list):
+    """Normalize text similar to normalize_pdf_text but also return a map from
+    normalized character index -> original character index. The normalized string
+    is lowercase, NFKD, combining diacritics removed, apostrophes normalized to
+    single apostrophe, hyphens -> space, and non-alnum (except apostrophe) -> space.
+    Consecutive spaces are collapsed.
+    """
+    if not text:
+        return "", []
+    s = str(text).replace("\r", " ").replace("\n", " ")
+    s = unicodedata.normalize("NFKD", s)
+    # We'll remove combining diacritics per-char below; create arrays
+    norm_chars = []
+    map_norm_to_orig = []
+    last_was_space = False
+    for i, ch in enumerate(s):
+        # remove combining diacritics
+        decomposed = unicodedata.normalize("NFKD", ch)
+        # take base characters (remove combining marks)
+        base = ''.join([c for c in decomposed if not unicodedata.category(c).startswith('M')])
+        if not base:
+            # treat as separator
+            if not last_was_space:
+                norm_chars.append(' ')
+                map_norm_to_orig.append(i)
+                last_was_space = True
+            continue
+        c = base
+        # normalize apostrophe variants
+        if APOSTROPHE_RE.search(c):
+            out = "'"
+        else:
+            out = c
+        # hyphens/dashes -> space
+        if re.match(r"[-–—_]+", out):
+            if not last_was_space:
+                norm_chars.append(' ')
+                map_norm_to_orig.append(i)
+                last_was_space = True
+            continue
+        # keep letters/numbers/apostrophe, else space
+        if re.match(r"[A-Za-z0-9']", out):
+            # lowercase each character in out (could be multiple characters)
+            for ch2 in out:
+                norm_chars.append(ch2.lower())
+                map_norm_to_orig.append(i)
+            last_was_space = False
+        else:
+            if not last_was_space:
+                norm_chars.append(' ')
+                map_norm_to_orig.append(i)
+                last_was_space = True
+    # trim leading/trailing spaces
+    while norm_chars and norm_chars[0] == ' ':
+        norm_chars.pop(0); map_norm_to_orig.pop(0)
+    while norm_chars and norm_chars[-1] == ' ':
+        norm_chars.pop(); map_norm_to_orig.pop()
+    # collapse multiple spaces in normalized string (map keeps first index of group)
+    final_chars = []
+    final_map = []
+    prev_space = False
+    for ch, idx in zip(norm_chars, map_norm_to_orig):
+        if ch == ' ':
+            if prev_space:
+                continue
+            prev_space = True
+            final_chars.append(' ')
+            final_map.append(idx)
+        else:
+            prev_space = False
+            final_chars.append(ch)
+            final_map.append(idx)
+    normalized = ''.join(final_chars)
+    return normalized, final_map
+
+
 def make_snippet(text: str, query: str, length: int = 200) -> str:
     """Return a snippet of `text` around the first occurrence of `query`.
     Removes decorative numbers (~N~) to avoid confusing the user.
+
+    This implementation locates the match using a normalized version of the
+    text (accent/apostrophe-insensitive) and maps the normalized indices back to
+    original offsets to extract a user-facing snippet from the original text.
     """
     if not text:
         return ""
-    
     # Remove decorative page numbers before processing snippet
     text = DECORATIVE_NUMBER_RE.sub(" ", text)
     text = re.sub(r"\s+", " ", text)
-    
-    lower = text.lower()
-    q = query.lower().strip()
+
+    q = (query or "").strip()
     if not q:
         return text[:length]
-    idx = lower.find(q)
-    if idx < 0:
-        # try first word
-        first = q.split()[0] if q.split() else q
-        idx = lower.find(first)
-    if idx < 0:
-        return text[:length].strip()
-    start = max(0, idx - length // 3)
-    end = min(len(text), idx + length)
-    snippet = text[start:end]
+
+    # Normalize text with mapping and normalize query similarly
+    txt_norm, map_norm_to_orig = _normalize_text_and_map_for_snippet(text)
+    q_norm = normalize_search_query(q)
+    # normalize_search_query produces capitalized first letter in original function;
+    # for matching we lowercase both
+    txt_norm_l = txt_norm.lower()
+    q_norm_l = (q_norm or "").lower()
+
+    idx = -1
+    if q_norm_l:
+        idx = txt_norm_l.find(q_norm_l)
+    if idx >= 0:
+        # Map normalized index range back to original indices
+        start_norm_idx = idx
+        end_norm_idx = idx + len(q_norm_l) - 1
+        # guard indexes
+        if start_norm_idx < 0: start_norm_idx = 0
+        if end_norm_idx >= len(map_norm_to_orig): end_norm_idx = len(map_norm_to_orig) - 1
+        start_orig = map_norm_to_orig[start_norm_idx]
+        end_orig = map_norm_to_orig[end_norm_idx] + 1
+        # Build snippet around original indices
+        start = max(0, start_orig - length // 3)
+        end = min(len(text), end_orig + length)
+        snippet = text[start:end]
+    else:
+        # Fallback: previous behavior trying raw lowercase find
+        lower = text.lower()
+        q_raw = q.lower()
+        idx2 = lower.find(q_raw)
+        if idx2 < 0:
+            first = q_raw.split()[0] if q_raw.split() else q_raw
+            idx2 = lower.find(first)
+        if idx2 < 0:
+            return text[:length].strip()
+        start = max(0, idx2 - length // 3)
+        end = min(len(text), idx2 + length)
+        snippet = text[start:end]
+
     # Preserve explicit linebreak positions in snippets using a visible marker (U+23CE).
     snippet = re.sub(r"\s*\r?\n+\s*", ".\u23CE", snippet)
     snippet = re.sub(r"\s+", " ", snippet)

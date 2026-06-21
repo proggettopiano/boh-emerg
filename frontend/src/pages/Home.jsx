@@ -5,13 +5,11 @@ import api from "@/lib/api";
 import { useSearch } from "@/hooks/useSearch";
 import UploadModal from "@/components/UploadModal";
 import TrebleClef from "@/components/TrebleClef";
+import { highlightText } from "@/lib/searchText";
 
 const RECENT_SEARCHES_KEY = "scorelib.recentSearches";
 const MAX_RECENT_SEARCHES = 8;
 
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 function normalizeRecentTerm(value) {
   return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
@@ -44,27 +42,6 @@ function saveRecentSearches(list) {
   }
 }
 
-function highlight(text, q) {
-  if (!text || !q) return text;
-  try {
-    const chordMatch = q.match(/^\[(.+)\]$/);
-    const needle = chordMatch ? chordMatch[1].toLowerCase() : q.toLowerCase();
-    const cleanQ = chordMatch ? chordMatch[1] : q;
-    
-    const re = new RegExp(`(${escapeRegExp(cleanQ)})`, "ig");
-    const parts = text.split(re);
-    let offset = 0;
-    return parts.map((part) => {
-      const key = `${offset}-${part}`;
-      offset += part.length;
-      return part.toLowerCase() === needle
-        ? <mark key={key} className={chordMatch ? "bg-emerald-100 text-emerald-900 px-1 rounded" : "hl"}>{part}</mark>
-        : <span key={key}>{part}</span>;
-    });
-  } catch (err) {
-    return text;
-  }
-}
 
 
 export default function Home() {
@@ -254,7 +231,7 @@ export default function Home() {
                 className="text-left w-full group"
               >
                 <div className="flex items-baseline gap-3 flex-wrap mb-1">
-                  <span className="font-display text-xl font-semibold group-hover:underline decoration-2 underline-offset-4">{highlight(r.title, q)}</span>
+                  <span className="font-display text-xl font-semibold group-hover:underline decoration-2 underline-offset-4">{highlightText(r.title, q, { defaultMarkClass: 'hl', chordMarkClass: 'bg-emerald-100 text-emerald-900 px-1 rounded' })}</span>
                   <span className="text-mono text-[10px] px-2 py-0.5 bg-canvas3 rounded-sm text-muted2">
                     PAG {r.page_label || r.page}
                   </span>
@@ -264,7 +241,7 @@ export default function Home() {
                     </span>
                   )}
                 </div>
-                {r.snippet && <p className="text-muted2 leading-relaxed">{highlight(r.snippet, q)}</p>}
+                {r.snippet && <p className="text-muted2 leading-relaxed">{highlightText(r.snippet, q, { defaultMarkClass: 'hl' })}</p>}
               </button>
             </li>
           ))}
