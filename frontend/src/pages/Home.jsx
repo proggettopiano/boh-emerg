@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Search as SearchIcon, Upload as UploadIcon } from "lucide-react";
 import api from "@/lib/api";
-import { sanitizeSnippetText, normalizeSearchQuery } from "@/lib/searchText";
+import { useSearch } from "@/hooks/useSearch";
 import UploadModal from "@/components/UploadModal";
 import TrebleClef from "@/components/TrebleClef";
 
@@ -71,12 +71,10 @@ export default function Home() {
   const [q, setQ] = useState("");
   const [selectedTag, setSelectedTag] = useState(null);
   const [availableTags, setAvailableTags] = useState([]);
-  const [results, setResults] = useState(null);
   const [count, setCount] = useState(0);
   const [countLoading, setCountLoading] = useState(true);
   const [openUpload, setOpenUpload] = useState(false);
   const [recentSearches, setRecentSearches] = useState([]);
-  const tref = useRef(null);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const inputRef = useRef(null);
@@ -141,26 +139,7 @@ export default function Home() {
     addRecentSearch(nextTerm);
   };
 
-  useEffect(() => {
-    if (tref.current) clearTimeout(tref.current);
-    if (!q.trim()) { setResults(null); return; }
-    const ctrl = new AbortController();
-    let alive = true;
-    tref.current = setTimeout(async () => {
-      try {
-        const normalizedQ = normalizeSearchQuery(q);
-        const params = { q: normalizedQ };
-        if (selectedTag) params.tag = selectedTag;
-        const r = await api.get(`/search`, { params, signal: ctrl.signal });
-        if (alive) {
-          setResults(r.data.results);
-        }
-      } catch (e) {
-        if (alive && e.name !== "CanceledError" && e.name !== "AbortError" && e.code !== "ERR_CANCELED") setResults([]);
-      }
-    }, 350);
-    return () => { alive = false; clearTimeout(tref.current); ctrl.abort(); };
-  }, [q, selectedTag]);
+  const results = useSearch(q, { tag: selectedTag });
 
   return (
     <div className="max-w-4xl mx-auto px-6 md:px-12 py-12 md:py-20">
@@ -285,7 +264,7 @@ export default function Home() {
                     </span>
                   )}
                 </div>
-                {r.snippet && <p className="text-muted2 leading-relaxed">{highlight(sanitizeSnippetText(r.snippet), q)}</p>}
+                {r.snippet && <p className="text-muted2 leading-relaxed">{highlight(r.snippet, q)}</p>}
               </button>
             </li>
           ))}

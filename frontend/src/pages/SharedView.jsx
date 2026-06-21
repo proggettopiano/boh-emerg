@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { FileText, Lock } from "lucide-react";
 import api from "@/lib/api";
-import { sanitizeSearchText, sanitizeSnippetText } from "@/lib/searchText";
+import { useSearch } from "@/hooks/useSearch";
+import SearchResults from "@/components/SearchResults";
 
 export default function SharedView() {
   const { token } = useParams();
@@ -10,13 +11,6 @@ export default function SharedView() {
   const [lib, setLib] = useState(null);
   const [error, setError] = useState(null);
   const [q, setQ] = useState("");
-  const [searchResults, setSearchResults] = useState(null);
-  const mountedRef = useRef(false);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => { mountedRef.current = false; };
-  }, []);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -35,42 +29,8 @@ export default function SharedView() {
     };
   }, [token]);
 
-  useEffect(() => {
-    if (!q.trim()) {
-      setSearchResults(null);
-      return undefined;
-    }
-    if (!lib) {
-      setSearchResults([]);
-      return undefined;
-    }
-
-    const safeQ = sanitizeSearchText(q);
-    const libPdfIds = new Set((lib.pdfs || []).map((item) => String(item.id)));
-    if (libPdfIds.size === 0) {
-      setSearchResults([]);
-      return undefined;
-    }
-
-    const ctrl = new AbortController();
-    const timer = setTimeout(async () => {
-      try {
-        const r = await api.get("/search", { params: { q: safeQ, pdf_ids: Array.from(libPdfIds).join(","), share_token: token }, signal: ctrl.signal });
-        const allResults = r.data.results || [];
-        const filtered = allResults.filter((res) => libPdfIds.has(String(res.pdf_id || res.id)));
-        if (mountedRef.current) setSearchResults(filtered);
-      } catch (e) {
-        if (mountedRef.current && e.name !== "CanceledError" && e.name !== "AbortError" && e.code !== "ERR_CANCELED") {
-          setSearchResults([]);
-        }
-      }
-    }, 350);
-
-    return () => {
-      clearTimeout(timer);
-      ctrl.abort();
-    };
-  }, [q, lib, token]);
+  const pdfIdsStr = (lib?.pdfs || []).map((p) => String(p.id)).join(",");
+  const searchResults = useSearch(lib ? q : "", { pdfIdsStr, shareToken: token });
 
   if (error) return (
     <div className="max-w-2xl mx-auto p-12 text-center">
@@ -82,15 +42,12 @@ export default function SharedView() {
 
   if (!lib) return <div className="p-12 text-mono text-sm text-muted2">Caricamento…</div>;
 
-  const safeQ = sanitizeSearchText(q);
-  const visiblePdfs = q.trim() ? (searchResults ?? []) : (lib.pdfs || []);
-
   return (
     <div className="max-w-6xl mx-auto px-6 md:px-12 py-12">
       <p className="overline mb-2">LIBRERIA CONDIVISA</p>
       <h1 className="font-display font-black text-4xl tracking-tighter mb-1">{lib.name}</h1>
       {lib.description && <p className="text-muted2 mb-6 max-w-2xl">{lib.description}</p>}
-      
+
       <div className="public-view-banner border rounded-md p-4 mb-8 text-sm">
         <div className="flex gap-2">
           <Lock size={16} className="shrink-0 mt-0.5" />
@@ -112,29 +69,19 @@ export default function SharedView() {
         />
       </div>
 
-      <ul className="border-t border-rule">
-        {visiblePdfs.length === 0 && (
-          <li className="py-12 text-center text-muted2 text-sm">Nessun PDF disponibile pubblicamente{q ? " per la ricerca richiesta" : ""}.</li>
-        )}
-        {visiblePdfs.map((p, idx) => {
-          if (q.trim()) {
-            return (
-              <li key={p.pdf_id || p.id || idx} className="py-4 border-b border-rule hover:bg-canvas2 px-2 -mx-2 transition-colors">
-                <button
-                  onClick={() => navigate(`/viewer/${p.pdf_id || p.id}?page=${encodeURIComponent(p.page_label || p.page || 1)}&q=${encodeURIComponent(safeQ)}&share=${encodeURIComponent(token)}`)}
-                  className="text-left w-full flex items-start gap-4"
-                >
-                  <FileText size={18} className="text-muted2 mt-1 shrink-0" />
-                  <div className="min-w-0">
-                    <div className="font-display font-bold text-lg hover:underline decoration-2 underline-offset-4">{p.title}</div>
-                    <div className="text-mono text-xs text-muted3 mt-1">PAGINA {p.page_label || p.page}</div>
-                    {p.snippet && <p className="text-sm text-muted2 mt-2 leading-relaxed">{sanitizeSnippetText(p.snippet)}</p>}
-                  </div>
-                </button>
-              </li>
-            );
-          }
-          return (
+      {q.trim() ? (
+        <SearchResults
+          results={searchResults}
+          q={q}
+          shareToken={token}
+          emptyText="Nessun PDF disponibile pubblicamente per la ricerca richiesta."
+        />
+      ) : (
+        <ul className="border-t border-rule">
+          {(lib.pdfs || []).length === 0 && (
+            <li className="py-12 text-center text-muted2 text-sm">Nessun PDF disponibile pubblicamente.</li>
+          )}
+          {(lib.pdfs || []).map((p, idx) => (
             <li key={p.id || idx} className="py-4 border-b border-rule hover:bg-canvas2 px-2 -mx-2 transition-colors">
               <button onClick={() => navigate(`/viewer/${p.id}`)} className="text-left w-full flex items-start gap-4">
                 <FileText size={18} className="text-muted2 mt-1 shrink-0" />
@@ -144,9 +91,9 @@ export default function SharedView() {
                 </div>
               </button>
             </li>
-          );
-        })}
-      </ul>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

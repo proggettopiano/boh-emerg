@@ -1297,7 +1297,7 @@ async def search(
                 seen.add(key)
                 p = await db.pdfs.find_one({"id": pg["pdf_id"]})
                 if p:
-                    results.append(format_search_result(p, pg, raw_q, score=120, snippet=make_snippet(pg.get("text_raw", pg.get("text", "")), q), match_in="cantico"))
+                    results.append(format_search_result(p, pg, raw_q, score=120, snippet=make_snippet(pg.get("text_raw", pg.get("text", "")), raw_q), match_in="cantico"))
 
         label_filter = {"page_label": raw_q}
         if pdf_ids_list:
@@ -1357,7 +1357,7 @@ async def search(
                 pg,
                 raw_q,
                 score=30,
-                snippet=make_snippet(title_text, q),
+                snippet=make_snippet(title_text, raw_q),
                 source="personal",
                 match_in="title",
             )
