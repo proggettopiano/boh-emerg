@@ -170,8 +170,12 @@ def normalize_search_query(text: str) -> str:
     # 4. Normalize hyphens/dashes to spaces (for phrase matching)
     text = re.sub(r"[-–—_]+", " ", text)
     
-    # 5. Remove chords and musical notation
-    text = re.sub(r"\b(?:DO|RE|MI|FA|SOL|LA|SI)(?:[#b]|[-/][A-Z0-9#b]+|\d+|maj|min|m|dim|aug|sus|add|7|9|11|13)*\b", " ", text, flags=re.IGNORECASE)
+    # 5. Remove explicit chord tokens and musical notation.
+    # IMPORTANT: do not remove bare solfeggio words (do,re,mi,...) when they appear as
+    # normal words in prose. Only strip chord-like tokens that include modifiers
+    # (e.g., "Cmaj", "mi7", "A#", "G/B") or explicit chord notation.
+    # Require at least one modifier after the note name (changed `*` -> `+`).
+    text = re.sub(r"\b(?:DO|RE|MI|FA|SOL|LA|SI)(?:[#b]|[-/][A-Z0-9#b]+|\d+|maj|min|m|dim|aug|sus|add|7|9|11|13)+\b", " ", text, flags=re.IGNORECASE)
     text = re.sub(r"(?<![A-Za-zÀ-ÿ])(?:[A-G](?:#|b)?(?:maj|min|m|dim|aug|sus|add)?\d*(?:/[A-G](?:#|b)?\d*)?)(?![A-Za-zÀ-ÿ])", " ", text, flags=re.IGNORECASE)
     
     # 6. Remove decorative/special characters except apostrophe (keep apostrophes in words like "dell'")
