@@ -1369,6 +1369,19 @@ async def search(
             {"text": {"$regex": safe_raw_q, "$options": "i"}},
         ]
     }
+
+    # If the user query contains punctuation that splits the phrase (commas, semicolons,
+    # colons, dashes, etc.), also include the primary segment that appears before the
+    # first punctuation as candidate filter. This makes queries like
+    # "dio ti protegga, ti benedica" still match pages containing "dio ti protegga".
+    primary_split = re.split(r"[,\.;:—–\-]+", raw_q)[0].strip() if raw_q else ""
+    if primary_split and primary_split != raw_q:
+        primary_safe_norm = _apostrophe_tolerant_regex(primary_split)
+        primary_safe_raw = re.escape(primary_split)
+        # Prepend the primary checks so they are considered first in the candidate filter
+        text_filter["$or"].insert(0, {"text_normalized": {"$regex": primary_safe_norm, "$options": "i"}})
+        text_filter["$or"].insert(1, {"text": {"$regex": primary_safe_raw, "$options": "i"}})
+
     if pdf_ids_list:
         text_filter["pdf_id"] = {"$in": pdf_ids_list}
     text_cursor = db.pdf_pages.find(text_filter).limit(100)
