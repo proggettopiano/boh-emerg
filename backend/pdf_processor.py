@@ -235,7 +235,17 @@ def _token_sliding_window_match(query_tokens: List[str], doc_tokens: List[str], 
     
     query_len = len(query_tokens)
     doc_len = len(doc_tokens)
-    
+
+    # QUICK CONTAINMENT CHECK (conservative): if the entire doc token sequence
+    # is contained in the query token sequence (or vice-versa), that's an obvious
+    # phrase match — accept it. This handles cases like
+    # query: "dio ti protegga ti benedica" and doc: "dio ti protegga".
+    qt = " ".join(query_tokens)
+    dt = " ".join(doc_tokens)
+    if dt and qt:
+        if dt in qt or qt in dt:
+            return True
+
     # STRATEGY 1: Try exact consecutive match (highest confidence)
     # Requires 70% of tokens to match in sequence
     for start_idx in range(max(0, doc_len - query_len + 1)):
@@ -244,7 +254,7 @@ def _token_sliding_window_match(query_tokens: List[str], doc_tokens: List[str], 
         match_ratio = matching / query_len if query_len > 0 else 0
         if match_ratio >= fuzzy_threshold:
             return True
-    
+
     # STRATEGY 2: Try longer windows (query tokens appear in order, but scattered)
     # Only check within limited window size (query_len + 3)
     for window_len in range(query_len + 1, min(doc_len + 1, query_len + 4)):
