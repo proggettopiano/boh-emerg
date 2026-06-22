@@ -1384,6 +1384,26 @@ async def search(
 
     if pdf_ids_list:
         text_filter["pdf_id"] = {"$in": pdf_ids_list}
+
+    # TEMP LOGGING (minimal, removable): log received q and candidate counts/sample
+    try:
+        logger.info("[search-debug] incoming q_param=%r normalized_raw_q=%r", q, raw_q)
+        # Count matching candidates conservatively (may be a bit heavy but acceptable for debugging)
+        try:
+            candidate_count = await db.pdf_pages.count_documents(text_filter)
+        except Exception:
+            candidate_count = None
+        sample = []
+        try:
+            async for pdoc in db.pdf_pages.find(text_filter, {"_id": 0, "pdf_id": 1, "page": 1}).limit(10):
+                sample.append({"pdf_id": pdoc.get("pdf_id"), "page": pdoc.get("page")})
+        except Exception:
+            sample = []
+        logger.info("[search-debug] candidates_count=%s sample_first=%s", candidate_count, sample)
+    except Exception:
+        # Swallow any logging errors to avoid affecting request flow
+        logger.exception("[search-debug] failed to log search debug info")
+
     text_cursor = db.pdf_pages.find(text_filter).limit(100)
     
     # First pass: collect all text pages to apply fuzzy token matching
