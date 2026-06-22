@@ -1363,10 +1363,25 @@ async def search(
             )
         )
 
+    def _token_tolerant_regex(s: str) -> str:
+        """Build a token-tolerant regex allowing punctuation, chords or whitespace between tokens.
+        Example: "amore grande profondo" -> "\bamore\b[\s\W]*\bgrande\b[\s\W]*\bprofondo\b"."""
+        if not s:
+            return ""
+        parts = [p for p in re.split(r"\s+", s) if p]
+        if not parts:
+            return re.escape(s)
+        pattern = r"\b" + re.escape(parts[0]) + r"\b"
+        for p in parts[1:]:
+            pattern += r"[\s\W]*" + r"\b" + re.escape(p) + r"\b"
+        return pattern
+
+    tokenized_raw_q = _token_tolerant_regex(raw_q)
+
     text_filter = {
         "$or": [
             {"text_normalized": {"$regex": safe_normalized_q, "$options": "i"}},
-            {"text": {"$regex": safe_raw_q, "$options": "i"}},
+            {"text": {"$regex": tokenized_raw_q, "$options": "i"}},
         ]
     }
 
@@ -1377,10 +1392,10 @@ async def search(
     primary_split = re.split(r"[,\.;:—–\-]+", raw_q)[0].strip() if raw_q else ""
     if primary_split and primary_split != raw_q:
         primary_safe_norm = _apostrophe_tolerant_regex(primary_split)
-        primary_safe_raw = re.escape(primary_split)
+        primary_tokenized = _token_tolerant_regex(primary_split)
         # Prepend the primary checks so they are considered first in the candidate filter
         text_filter["$or"].insert(0, {"text_normalized": {"$regex": primary_safe_norm, "$options": "i"}})
-        text_filter["$or"].insert(1, {"text": {"$regex": primary_safe_raw, "$options": "i"}})
+        text_filter["$or"].insert(1, {"text": {"$regex": primary_tokenized, "$options": "i"}})
 
     if pdf_ids_list:
         text_filter["pdf_id"] = {"$in": pdf_ids_list}
