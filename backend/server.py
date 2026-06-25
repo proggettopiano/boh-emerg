@@ -1225,6 +1225,26 @@ async def _user_can_access_pdf(user_id: Optional[str], pdf_id: str, share_token:
 # ----------------- Search -----------------
 
 def format_search_result(p: dict, pg: dict, q: str, score: int, snippet: Optional[str] = None, source: str = "personal", match_in: str = "content") -> dict:
+    # Build raw snippet (prefer explicit snippet param, else generate from page text)
+    raw_snippet = snippet if snippet is not None else make_snippet(pg.get("text_raw", pg.get("text", "")), q)
+    # First try the aggressive sanitizer (removes chords/boilerplate)
+    sanitized = __import__("pdf_processor").sanitize_snippet_for_api(raw_snippet) if raw_snippet else ""
+
+    # Fallback: if sanitizer removed everything, provide a light-clean, truncated preview
+    if sanitized:
+        final_snippet = sanitized
+    else:
+        if raw_snippet:
+            tmp = re.sub(r"[\u0000-\u001F\u007F-\u009F]+", " ", raw_snippet)
+            tmp = re.sub(r"\s+", " ", tmp).strip()
+            maxlen = 200
+            if len(tmp) > maxlen:
+                tmp = tmp[:maxlen].rstrip()
+                tmp = tmp + " …"
+            final_snippet = tmp
+        else:
+            final_snippet = ""
+
     return {
         "pdf_id": p["id"],
         "title": p["title"],
@@ -1235,8 +1255,8 @@ def format_search_result(p: dict, pg: dict, q: str, score: int, snippet: Optiona
         # `viewer_page` is the canonical numeric page the viewer should open (physical page)
         "viewer_page": pg["page"],
         "page_label": pg.get("page_label", pg["page"]),
-        # Build raw snippet and sanitize for API consumers so no internal markers or chords leak out
-        "snippet": (lambda raw: ( __import__('pdf_processor').sanitize_snippet_for_api(raw) if raw else "" ))(snippet if snippet is not None else make_snippet(pg.get("text_raw", pg.get("text", "")), q)),
+        # Provide sanitized snippet (or fallback light-clean preview)
+        "snippet": final_snippet,
         "score": score,
         "is_protected": p.get("is_protected", False),
         "source": source,
