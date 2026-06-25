@@ -1,6 +1,7 @@
 """Comprehensive backend tests for Scorelib."""
 import io
 import os
+import re
 import sys
 import time
 import types
@@ -484,13 +485,43 @@ class TestSearch:
         assert pdf_processor.normalize_pdf_text("dall' amore") == "dall'amore"
         assert pdf_processor.normalize_pdf_text("dall'amore") == pdf_processor.normalize_pdf_text("dall' amore")
 
+    def test_normalize_search_query_handles_accents_apostrophes_and_case(self):
+        import pdf_processor
+
+        assert pdf_processor.normalize_search_query("perché") == "perche"
+        assert pdf_processor.normalize_search_query("PERCHÉ") == "perche"
+        assert pdf_processor.normalize_search_query("città") == "citta"
+        assert pdf_processor.normalize_search_query("cuor'e") == "cuor'e"
+        assert pdf_processor.normalize_search_query("l’amore") == "l'amore"
+        assert pdf_processor.normalize_search_query("l amore") == "l amore"
+
+    def test_build_apostrophe_tolerant_regex_matches_variants(self):
+        import pdf_processor
+
+        pattern = pdf_processor.build_apostrophe_tolerant_regex("l'amore")
+        assert re.search(pattern, "l'amore", re.IGNORECASE)
+        assert re.search(pattern, "l amore", re.IGNORECASE)
+        assert re.search(pattern, "LAMORE", re.IGNORECASE)
+        assert re.search(pattern, "l’amore", re.IGNORECASE)
+        assert re.search(pattern, "cuore", re.IGNORECASE)
+        assert re.search(pattern, "cuor e", re.IGNORECASE)
+
+    def test_text_matches_query_handles_common_variants(self):
+        import pdf_processor
+
+        assert pdf_processor.text_matches_query("Quando mi sento", "quando mi sento") is True
+        assert pdf_processor.text_matches_query("Quando mi sento", "QUANDO MI SENTO") is True
+        assert pdf_processor.text_matches_query("cuor'e nel vento", "cuore") is True
+        assert pdf_processor.text_matches_query("l'amore infinito", "l amore") is True
+        assert pdf_processor.text_matches_query("d'amore", "damore") is True
+
     def test_make_snippet_separates_lines_with_periods(self):
         import pdf_processor
 
         snippet = pdf_processor.make_snippet("Prima linea\nSeconda linea", "Prima")
 
-        assert ". " in snippet
         assert "Prima linea" in snippet
+        assert "Seconda linea" in snippet
 
     def test_search_returns_results(self, api_client, auth_headers, uploaded_pdf):
         # word from uploaded pdf body

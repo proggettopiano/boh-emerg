@@ -139,6 +139,22 @@ def normalize_pdf_text(text: str) -> str:
     return text
 
 
+def build_apostrophe_tolerant_regex(text: str) -> str:
+    """Build a regex pattern treating spaces and apostrophes between parts as equivalent.
+
+    Example: "dall' amore", "dall'amore", "dall amore", "dallamore" all match.
+    """
+    if not text:
+        return ""
+    parts = [p for p in re.split(r"[\s']+", text) if p]
+    if not parts:
+        return re.escape(text)
+    pattern = re.escape(parts[0])
+    for p in parts[1:]:
+        pattern += r"(?:\s*'\s*|\s*)" + re.escape(p)
+    return pattern
+
+
 def normalize_search_query(text: str) -> str:
     """Normalize a search query to be tolerant of user input errors:
     - handles typos in punctuation, capitalization, accents, apostrophes
@@ -166,6 +182,7 @@ def normalize_search_query(text: str) -> str:
     # 3. Replace non-breaking spaces and other whitespace variants with regular space
     text = re.sub(r"[\u00a0\u2000-\u200b]", " ", text)
     text = text.replace("\r", " ").replace("\n", " ")
+    text = re.sub(r"\s*'\s*", "'", text)
     
     # 4. Normalize hyphens/dashes to spaces (for phrase matching)
     text = re.sub(r"[-–—_]+", " ", text)
@@ -183,7 +200,8 @@ def normalize_search_query(text: str) -> str:
     
     # 7. Compress multiple spaces
     text = re.sub(r"\s+", " ", text)
-    
+
+    text = text.lower()
     return text.strip()
 
 

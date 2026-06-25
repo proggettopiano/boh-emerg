@@ -37,7 +37,7 @@ from auth_utils import (
     hash_password, verify_password, create_jwt, decode_jwt,
     get_client_ip, get_current_user_id, get_optional_user_id,
 )
-from pdf_processor import extract_pages, compress_pdf, make_snippet, clean_pdf_text, normalize_pdf_text, normalize_search_query, text_matches_query, extract_page_metadata, _calculate_match_quality
+from pdf_processor import build_apostrophe_tolerant_regex, extract_pages, compress_pdf, make_snippet, clean_pdf_text, normalize_pdf_text, normalize_search_query, text_matches_query, extract_page_metadata, _calculate_match_quality
 import google_integration as gi
 
 ROOT_DIR = Path(__file__).parent
@@ -432,6 +432,7 @@ async def ensure_indexes():
     await safe_create_index(db.pdf_pages, [("pdf_id", 1), ("page", 1)], unique=True)
     await safe_create_index(db.pdf_pages, "text")
     await safe_create_index(db.pdf_pages, "text_normalized")
+    await safe_create_index(db.pdfs, "title_normalized")
     await safe_create_index(db.upload_jobs, "id", unique=True)
     await safe_create_index(db.app_logs, "created_at")
     await safe_create_index(db.access_requests, "email")
@@ -730,6 +731,7 @@ async def upload_pdf(
         await db.pdfs.insert_one({
             "id": pdf_id,
             "title": filename,
+            "title_normalized": normalize_pdf_text(filename),
             "filename": filename,
             "file_path": str(fpath),
             "size": len(pdf_bytes),
@@ -802,6 +804,8 @@ async def patch_pdf(pdf_id: str, payload: PdfPatchIn, user_id: str = Depends(get
         if not is_admin and p.get("owner_id") != user_id:
             raise HTTPException(status_code=403, detail="Solo il proprietario o un amministratore possono modificare questo file")
     if update:
+        if "title" in update:
+            update["title_normalized"] = normalize_pdf_text(update["title"])
         await db.pdfs.update_one({"id": pdf_id}, {"$set": update})
     p = await db.pdfs.find_one({"id": pdf_id}, {"_id": 0})
     return _serialize_pdf(p)
@@ -1136,6 +1140,7 @@ async def import_shared_pdf(pdf_id: str, user_id: str = Depends(get_current_user
         "file_path": file_path_str,
         "synced_at": None,
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "title_normalized": p.get("title_normalized") or normalize_pdf_text(p.get("title", "")),
     }
     new_doc.pop("_id", None)
     await db.pdfs.insert_one(new_doc)
@@ -1312,29 +1317,15 @@ async def search(
             if p:
                 results.append(format_search_result(p, pg, raw_q, score=50, snippet=f"Pagina {raw_q}"))
 
-    def _apostrophe_tolerant_regex(s: str) -> str:
-        """Build a regex that treats spaces and apostrophes between word parts as equivalent.
-        Example: "dall' amore", "dall'amore", "dall amore" -> same pattern."""
-        if not s:
-            return ""
-        # split on runs of apostrophes/spaces and rejoin with a tolerant group
-        parts = [p for p in re.split(r"[\s']+", s) if p]
-        if not parts:
-            return re.escape(s)
-        pattern = re.escape(parts[0])
-        for p in parts[1:]:
-            # allow either an apostrophe (with optional surrounding spaces) or plain whitespace between parts
-            pattern += r"(?:\s*'\s*|\s+)" + re.escape(p)
-        return pattern
-
     safe_raw_q = rf"(?<!\d){re.escape(raw_q)}(?!\d)" if raw_q.isdigit() else re.escape(raw_q)
-    safe_normalized_q = _apostrophe_tolerant_regex(raw_q) if raw_q else safe_raw_q
+    safe_normalized_q = build_apostrophe_tolerant_regex(raw_q) if raw_q else safe_raw_q
 
     # 3. CERCA TITOLO PDF
     title_filter = {
         "$or": [
             {"title": {"$regex": safe_raw_q, "$options": "i"}},
             {"title": {"$regex": safe_normalized_q, "$options": "i"}},
+            {"title_normalized": {"$regex": safe_normalized_q, "$options": "i"}},
         ]
     }
     if pdf_ids_list:
@@ -1391,7 +1382,7 @@ async def search(
     # "dio ti protegga, ti benedica" still match pages containing "dio ti protegga".
     primary_split = re.split(r"[,\.;:—–\-]+", raw_q)[0].strip() if raw_q else ""
     if primary_split and primary_split != raw_q:
-        primary_safe_norm = _apostrophe_tolerant_regex(primary_split)
+        primary_safe_norm = build_apostrophe_tolerant_regex(primary_split)
         primary_tokenized = _token_tolerant_regex(primary_split)
         # Prepend the primary checks so they are considered first in the candidate filter
         text_filter["$or"].insert(0, {"text_normalized": {"$regex": primary_safe_norm, "$options": "i"}})
