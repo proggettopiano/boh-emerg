@@ -200,7 +200,8 @@ def _tokenize_text(text: str) -> List[str]:
     text = re.sub(r"[^a-z0-9\s]", " ", text)  # remove other punctuation
     
     # Merge single letters followed by spaces with next word (for "d amore" → "damore")
-    text = re.sub(r"\b([a-z])\s+([a-z])", r"\1\2", text)
+    # Accept multi-letter following word to handle cases like "d amore" or "l amore"
+    text = re.sub(r"\b([a-z])\s+([a-z]+)", r"\1\2", text)
     
     # Split on whitespace and filter empty
     tokens = [t.strip() for t in text.split() if t.strip()]
