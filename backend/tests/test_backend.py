@@ -503,8 +503,12 @@ class TestSearch:
         assert re.search(pattern, "l amore", re.IGNORECASE)
         assert re.search(pattern, "LAMORE", re.IGNORECASE)
         assert re.search(pattern, "l’amore", re.IGNORECASE)
-        assert re.search(pattern, "cuore", re.IGNORECASE)
-        assert re.search(pattern, "cuor e", re.IGNORECASE)
+        assert re.search(pattern, "l   amore", re.IGNORECASE)
+        
+        # Validate cuor'e/cuor e as a separate pattern (d'amore → damore case)
+        pattern_cuore = pdf_processor.build_apostrophe_tolerant_regex("cuor'e")
+        assert re.search(pattern_cuore, "cuore", re.IGNORECASE)
+        assert re.search(pattern_cuore, "cuor e", re.IGNORECASE)
 
     def test_text_matches_query_handles_common_variants(self):
         import pdf_processor
@@ -514,6 +518,14 @@ class TestSearch:
         assert pdf_processor.text_matches_query("cuor'e nel vento", "cuore") is True
         assert pdf_processor.text_matches_query("l'amore infinito", "l amore") is True
         assert pdf_processor.text_matches_query("d'amore", "damore") is True
+
+    def test_text_matches_query_handles_minor_ocr_differences(self):
+        import pdf_processor
+
+        assert pdf_processor.text_matches_query("piu", "pid") is True
+        assert pdf_processor.text_matches_query("piu", "più") is True
+        assert pdf_processor.text_matches_query("l'amore", "l amore") is True
+        assert pdf_processor.text_matches_query("citta", "città") is True
 
     def test_make_snippet_separates_lines_with_periods(self):
         import pdf_processor

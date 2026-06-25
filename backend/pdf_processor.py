@@ -146,63 +146,34 @@ def build_apostrophe_tolerant_regex(text: str) -> str:
     """
     if not text:
         return ""
+    text = APOSTROPHE_RE.sub("'", text)
     parts = [p for p in re.split(r"[\s']+", text) if p]
     if not parts:
         return re.escape(text)
     pattern = re.escape(parts[0])
     for p in parts[1:]:
-        pattern += r"(?:\s*'\s*|\s*)" + re.escape(p)
+        pattern += r"(?:\s*[\'’]\s*|\s*)" + re.escape(p)
     return pattern
 
 
 def normalize_search_query(text: str) -> str:
-    """Normalize a search query to be tolerant of user input errors:
-    - handles typos in punctuation, capitalization, accents, apostrophes
-    - removes chord/musical symbols
-    - normalizes whitespace
-    - strips accents for flexible matching
-    
-    This is used in search endpoints and should match the same normalization
-    applied to indexed text for consistent results.
-    """
+    """Normalize a search query to be tolerant of user input errors."""
     if not text:
         return ""
-    
+
     text = str(text).strip()
     if not text:
         return ""
-    
-    # 1. Replace various apostrophe forms with standard apostrophe
+
     text = APOSTROPHE_RE.sub("'", text)
-    
-    # 2. Normalize unicode: NFKD + strip combining diacritics
     text = unicodedata.normalize("NFKD", text)
     text = re.sub(r"[\u0300-\u036f]", "", text)
-    
-    # 3. Replace non-breaking spaces and other whitespace variants with regular space
-    text = re.sub(r"[\u00a0\u2000-\u200b]", " ", text)
-    text = text.replace("\r", " ").replace("\n", " ")
+    text = text.replace("\r", " ").replace("\n", " ").replace("_", " ")
     text = re.sub(r"\s*'\s*", "'", text)
-    
-    # 4. Normalize hyphens/dashes to spaces (for phrase matching)
-    text = re.sub(r"[-–—_]+", " ", text)
-    
-    # 5. Remove explicit chord tokens and musical notation.
-    # IMPORTANT: do not remove bare solfeggio words (do,re,mi,...) when they appear as
-    # normal words in prose. Only strip chord-like tokens that include modifiers
-    # (e.g., "Cmaj", "mi7", "A#", "G/B") or explicit chord notation.
-    # Require at least one modifier after the note name (changed `*` -> `+`).
-    text = re.sub(r"\b(?:DO|RE|MI|FA|SOL|LA|SI)(?:[#b]|[-/][A-Z0-9#b]+|\d+|maj|min|m|dim|aug|sus|add|7|9|11|13)+\b", " ", text, flags=re.IGNORECASE)
-    text = re.sub(r"(?<![A-Za-zÀ-ÿ])(?:[A-G](?:#|b)?(?:maj|min|m|dim|aug|sus|add)?\d*(?:/[A-G](?:#|b)?\d*)?)(?![A-Za-zÀ-ÿ])", " ", text, flags=re.IGNORECASE)
-    
-    # 6. Remove decorative/special characters except apostrophe (keep apostrophes in words like "dell'")
+    text = re.sub(r"[-–—]+", " ", text)
     text = re.sub(r"[^A-Za-z0-9À-ÿ\s']+", " ", text, flags=re.UNICODE)
-    
-    # 7. Compress multiple spaces
     text = re.sub(r"\s+", " ", text)
-
-    text = text.lower()
-    return text.strip()
+    return text.lower().strip()
 
 
 def _tokenize_text(text: str) -> List[str]:
@@ -220,11 +191,12 @@ def _tokenize_text(text: str) -> List[str]:
     
     # Normalize unicode and lowercase
     text = unicodedata.normalize("NFKD", text)
+    text = APOSTROPHE_RE.sub("'", text)
     text = re.sub(r"[\u0300-\u036f]", "", text)  # strip accents
     text = text.lower()
-    
+
     # Remove apostrophes and all punctuation except spaces
-    text = re.sub(r"['\"`''´]", "", text)  # remove apostrophes
+    text = re.sub(r"['\"`´]", "", text)  # remove apostrophes
     text = re.sub(r"[^a-z0-9\s]", " ", text)  # remove other punctuation
     
     # Merge single letters followed by spaces with next word (for "d amore" → "damore")
@@ -233,6 +205,33 @@ def _tokenize_text(text: str) -> List[str]:
     # Split on whitespace and filter empty
     tokens = [t.strip() for t in text.split() if t.strip()]
     return tokens
+
+
+def _token_fuzzy_match(query_token: str, doc_token: str) -> bool:
+    if query_token == doc_token:
+        return True
+    if len(query_token) < 3 or len(doc_token) < 3:
+        return False
+    if abs(len(query_token) - len(doc_token)) > 1:
+        return False
+
+    if len(query_token) == len(doc_token):
+        return sum(1 for a, b in zip(query_token, doc_token) if a != b) <= 1
+
+    shorter, longer = (query_token, doc_token) if len(query_token) < len(doc_token) else (doc_token, query_token)
+    diff = 0
+    i = 0
+    j = 0
+    while i < len(shorter) and j < len(longer):
+        if shorter[i] == longer[j]:
+            i += 1
+            j += 1
+            continue
+        diff += 1
+        if diff > 1:
+            return False
+        j += 1
+    return True
 
 
 def _token_sliding_window_match(query_tokens: List[str], doc_tokens: List[str], fuzzy_threshold: float = 0.7) -> bool:
@@ -268,11 +267,19 @@ def _token_sliding_window_match(query_tokens: List[str], doc_tokens: List[str], 
         if dt in qt or qt in dt:
             return True
 
+    def token_matches(q_token: str, d_token: str) -> bool:
+        if q_token == d_token:
+            return True
+        allow_fuzzy = fuzzy_threshold < 1.0
+        if not allow_fuzzy:
+            return False
+        return _token_fuzzy_match(q_token, d_token)
+
     # STRATEGY 1: Try exact consecutive match (highest confidence)
     # Requires 70% of tokens to match in sequence
     for start_idx in range(max(0, doc_len - query_len + 1)):
         window = doc_tokens[start_idx : start_idx + query_len]
-        matching = sum(1 for i, q_token in enumerate(query_tokens) if i < len(window) and window[i] == q_token)
+        matching = sum(1 for i, q_token in enumerate(query_tokens) if i < len(window) and token_matches(q_token, window[i]))
         match_ratio = matching / query_len if query_len > 0 else 0
         if match_ratio >= fuzzy_threshold:
             return True
@@ -284,7 +291,7 @@ def _token_sliding_window_match(query_tokens: List[str], doc_tokens: List[str], 
             window = doc_tokens[start_idx : start_idx + window_len]
             q_idx = 0
             for w_token in window:
-                if q_idx < len(query_tokens) and w_token == query_tokens[q_idx]:
+                if q_idx < len(query_tokens) and token_matches(query_tokens[q_idx], w_token):
                     q_idx += 1
             # All query tokens must be found in order
             if q_idx == len(query_tokens):
@@ -490,7 +497,7 @@ def _is_noisy_page_text(cleaned_text: str) -> bool:
     return False
 
 
-def _choose_page_text(native_text: str, ocr_text: str) -> str:
+def _choose_page_text(native_text: str, ocr_text: str, prefer_ocr: bool = False) -> str:
     cleaned_native = clean_pdf_text(native_text)
     cleaned_ocr = clean_pdf_text(ocr_text)
     if not cleaned_native:
@@ -500,6 +507,10 @@ def _choose_page_text(native_text: str, ocr_text: str) -> str:
 
     native_words = _count_text_words(cleaned_native)
     ocr_words = _count_text_words(cleaned_ocr)
+
+    if prefer_ocr and not _is_noisy_page_text(cleaned_ocr):
+        if _is_noisy_page_text(cleaned_native) or ocr_words >= native_words + 2:
+            return cleaned_ocr
 
     if _is_noisy_page_text(cleaned_native) and not _is_noisy_page_text(cleaned_ocr):
         return cleaned_ocr
@@ -1149,6 +1160,12 @@ def _ocr_page_text(page, timings: Dict[str, Any] = None, page_num: int = None) -
     logger.info("OCR_PATH_REASON=page-raster-fallback")
     try:
         text = _tesseract_ocr_text(page, timings=timings, page_num=page_num)
+    except TypeError:
+        try:
+            text = _tesseract_ocr_text(page)
+        except Exception as exc:
+            logger.warning("Tesseract OCR invocation failed: %s", exc)
+            text = ""
     except Exception as exc:
         logger.warning("Tesseract OCR invocation failed: %s", exc)
         text = ""
@@ -1157,6 +1174,7 @@ def _ocr_page_text(page, timings: Dict[str, Any] = None, page_num: int = None) -
         _record_timing(timings, "tesseract_pages", 1)
         return text
 
+    # If RapidOCR is available, prefer it over Tesseract when possible.
     try:
         rapid_text = _extract_text_with_rapidocr(page, timings=timings)
     except Exception as exc:
@@ -1358,7 +1376,7 @@ def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None) -> Tuple[Lis
                 _record_timing(timings, "page_ocr_ms", ocr_ms)
 
             if ocr_text:
-                chosen = _choose_page_text(cleaned, ocr_text)
+                chosen = _choose_page_text(cleaned, ocr_text, prefer_ocr=image_mode)
                 if chosen != cleaned:
                     used_ocr = True
                     page_info["ocr_used"] = True
@@ -1391,7 +1409,7 @@ def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None) -> Tuple[Lis
                         _record_timing(timings, "page_ocr_ms", ocr_ms)
 
                     if ocr_text:
-                        chosen = _choose_page_text(cleaned, ocr_text)
+                        chosen = _choose_page_text(cleaned, ocr_text, prefer_ocr=image_mode)
                         if chosen != cleaned:
                             used_ocr = True
                             page_info["ocr_used"] = True

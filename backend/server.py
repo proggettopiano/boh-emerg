@@ -615,23 +615,35 @@ async def _download_from_drive_with_fallback(pdf_record: dict) -> bytes:
     if master_token and master_token not in candidates:
         candidates.append(master_token)
 
+    if not candidates:
+        message = "Nessun token Drive disponibile per il recupero: owner e master token mancanti o invalidi"
+        await log_event(
+            "pdf.error",
+            message,
+            user_id=pdf_record.get("owner_id"),
+            level="error",
+            meta={"pdf_id": pdf_record.get("id"), "drive_file_id": pdf_record.get("drive_file_id"), "stage": "drive_download_fallback", "reason": "no_tokens"},
+        )
+        raise RuntimeError(message)
+
     last_error = None
     for token in candidates:
+        source = "primary_owner" if token == primary else "master"
         try:
             return await asyncio.to_thread(gi.download_from_drive, token, pdf_record["drive_file_id"])
         except Exception as exc:
             last_error = exc
             await log_event(
                 "pdf.error",
-                f"Drive download fallback failed with token source: {type(exc).__name__}: {exc}",
+                f"Drive download fallback failed ({source}) with {type(exc).__name__}: {exc}",
                 user_id=pdf_record.get("owner_id"),
                 level="error",
-                meta={"pdf_id": pdf_record.get("id"), "drive_file_id": pdf_record.get("drive_file_id"), "stage": "drive_download_fallback"},
+                meta={"pdf_id": pdf_record.get("id"), "drive_file_id": pdf_record.get("drive_file_id"), "stage": "drive_download_fallback", "source": source},
             )
 
     if last_error:
         raise last_error
-    raise RuntimeError("Nessun token Drive disponibile per il recupero del PDF")
+    raise RuntimeError("Errore imprevisto nella procedura di recupero Drive")
 
 @api.get("/backup/status")
 async def backup_status(user_id: str = Depends(get_current_user_id)):
@@ -1406,13 +1418,13 @@ async def search(
         
         # Apply token-based matching to the actual text
         pg_text = pg.get("text", "")
-        if pg_text and text_matches_query(pg_text, q, use_fuzzy=True):
+        if pg_text and text_matches_query(pg_text, raw_q, use_fuzzy=True):
             seen.add(key)
             p = await db.pdfs.find_one({"id": pg["pdf_id"]})
             if p:
                 # Calculate quality-based score with gradation
                 # 1.0 (exact) → 100, 0.95 → 95, 0.90 → 90, 0.85 → 85
-                quality = _calculate_match_quality(pg_text, q)
+                quality = _calculate_match_quality(pg_text, raw_q)
                 score = int(quality * 100) if quality > 0 else 10
                 results.append(format_search_result(p, pg, raw_q, score=score, source="personal", match_in="content"))
     
@@ -1427,12 +1439,12 @@ async def search(
                 continue
             
             pg_text = pg.get("text", "")
-            if pg_text and text_matches_query(pg_text, q, use_fuzzy=True):
+            if pg_text and text_matches_query(pg_text, raw_q, use_fuzzy=True):
                 seen.add(key)
                 p = await db.pdfs.find_one({"id": pg["pdf_id"]})
                 if p:
                     # Fallback results get lower base score with gradation
-                    quality = _calculate_match_quality(pg_text, q)
+                    quality = _calculate_match_quality(pg_text, raw_q)
                     score = int(quality * 80) if quality > 0 else 8
                     results.append(format_search_result(p, pg, raw_q, score=score, source="personal", match_in="content"))
 
@@ -1628,17 +1640,27 @@ async def process_pdf_job(job_id):
             async def backup_drive():
                 try:
                     master = await get_master_drive()
-                    if master and master.get("refresh_token") and not pdf.get("drive_file_id"):
-                        folder_id = await asyncio.to_thread(gi.ensure_master_root, master["refresh_token"])
-                        drive_id = await asyncio.to_thread(gi.upload_to_drive, master["refresh_token"], folder_id, pdf["filename"], pdf_bytes)
-                        synced_at = iso_now()
-                        await db.pdfs.update_one({"id": pdf["id"]}, {"$set": {
-                            "drive_file_id": drive_id,
-                            "drive_owner": "master",
-                            "storage_type": "drive",
-                            "synced_at": synced_at,
-                        }})
-                        await log_event("pdf.drive_backup", f"PDF caricato su Drive master: {pdf['id']}", user_id=pdf.get("owner_id"), meta={"pdf_id": pdf["id"], "drive_file_id": drive_id, "folder_id": folder_id})
+                    if not master or not master.get("refresh_token"):
+                        message = "Drive backup skipped: master Drive non configurato o token mancante"
+                        await db.pdfs.update_one({"id": pdf["id"]}, {"$set": {"drive_backup_error": message}})
+                        await log_event("pdf.drive_error", message, user_id=pdf.get("owner_id"), level="warning", meta={"pdf_id": pdf["id"], "stage": "drive_backup", "reason": "no_master_token"})
+                        return
+
+                    if pdf.get("drive_file_id"):
+                        await log_event("pdf.drive_backup", f"Drive backup skipped: PDF già salvato in Drive: {pdf['id']}", user_id=pdf.get("owner_id"), meta={"pdf_id": pdf["id"], "drive_file_id": pdf.get("drive_file_id"), "reason": "already_backed_up"})
+                        return
+
+                    folder_id = await asyncio.to_thread(gi.ensure_master_root, master["refresh_token"])
+                    drive_id = await asyncio.to_thread(gi.upload_to_drive, master["refresh_token"], folder_id, pdf["filename"], pdf_bytes)
+                    synced_at = iso_now()
+                    await db.pdfs.update_one({"id": pdf["id"]}, {"$set": {
+                        "drive_file_id": drive_id,
+                        "drive_owner": "master",
+                        "storage_type": "drive",
+                        "synced_at": synced_at,
+                        "drive_backup_error": "",
+                    }})
+                    await log_event("pdf.drive_backup", f"PDF caricato su Drive master: {pdf['id']}", user_id=pdf.get("owner_id"), meta={"pdf_id": pdf["id"], "drive_file_id": drive_id, "folder_id": folder_id})
                 except Exception as e:
                     await db.pdfs.update_one({"id": pdf["id"]}, {"$set": {"drive_backup_error": str(e)}})
                     await log_event("pdf.drive_error", f"Drive backup fallito: {e}", user_id=pdf.get("owner_id"), level="error", meta={"pdf_id": pdf["id"], "stage": "drive_backup"})
