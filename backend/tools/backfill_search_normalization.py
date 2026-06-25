@@ -23,9 +23,10 @@ from pdf_processor import normalize_pdf_text
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
 
-# For local testing, use hardcoded credentials as primary
-MONGO_URL = "REMOVED_MONGO_URL"
-DB_NAME = "scorelib"
+# SECURITY: Do NOT hardcode credentials in repository.
+# Read Mongo connection details from environment variables.
+MONGO_URL = os.getenv("MONGO_URL")
+DB_NAME = os.getenv("DB_NAME", "scorelib")
 
 
 def normalize_pdf_title(title: str) -> str:
