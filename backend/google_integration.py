@@ -6,6 +6,7 @@ from typing import Optional, Dict, Any
 import httpx
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleRequest
+from google.auth.exceptions import RefreshError
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 
@@ -96,6 +97,9 @@ def _drive_service(refresh_token: str):
     if not creds.valid:
         try:
             creds.refresh(GoogleRequest())
+        except RefreshError as e:
+            logger.error("Drive auth broken - disable fallback")
+            raise
         except Exception as e:
             logger.error(f"Drive credentials refresh failed: {e}")
             raise
@@ -105,7 +109,14 @@ def _drive_service(refresh_token: str):
 def _access_token(refresh_token: str) -> str:
     creds = _build_credentials(refresh_token)
     if not creds.valid:
-        creds.refresh(GoogleRequest())
+        try:
+            creds.refresh(GoogleRequest())
+        except RefreshError as e:
+            logger.error("Drive auth broken - disable fallback")
+            raise
+        except Exception as e:
+            logger.error(f"Drive credentials refresh failed: {e}")
+            raise
     if not creds.token:
         raise RuntimeError("Unable to refresh Google access token")
     return creds.token
