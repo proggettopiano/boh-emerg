@@ -1367,7 +1367,7 @@ async def search(
         )
 
     def _token_tolerant_regex(s: str) -> str:
-        """Build a token-tolerant regex allowing punctuation, chords or whitespace between tokens.
+        r"""Build a token-tolerant regex allowing punctuation, chords or whitespace between tokens.
         Example: "amore grande profondo" -> "\bamore\b[\s\W]*\bgrande\b[\s\W]*\bprofondo\b"."""
         if not s:
             return ""
