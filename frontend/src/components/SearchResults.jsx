@@ -17,8 +17,9 @@ export default function SearchResults({ results, q, shareToken = "", emptyText =
   if (!results) return null;
 
   const handleClick = (r) => {
-    const pageNum = r.viewer_page ?? r.actual_page ?? r.page;
-    const pageParam = pageNum ? String(pageNum) : (r.page_label ?? "");
+    // Prefer explicit page label when available to avoid ambiguity
+    // between numeric page labels and physical page numbers.
+    const pageParam = r.page_label ? String(r.page_label) : (r.viewer_page ?? r.actual_page ?? r.page ? String(r.viewer_page ?? r.actual_page ?? r.page) : "");
     navigate(
       `/viewer/${r.pdf_id}?page=${encodeURIComponent(pageParam)}&q=${encodeURIComponent(q.trim())}` +
       (shareToken ? `&share=${encodeURIComponent(shareToken)}` : "")
