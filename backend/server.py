@@ -1224,26 +1224,57 @@ async def _user_can_access_pdf(user_id: Optional[str], pdf_id: str, share_token:
 
 # ----------------- Search -----------------
 
+def _get_search_candidate_limit() -> int:
+    raw_value = os.environ.get("SEARCH_CANDIDATE_PAGE_LIMIT", "500")
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        value = 500
+    return max(50, min(value, 2000))
+
+
+def _select_readable_snippet(raw_snippet: str, maxlen: int = 200) -> str:
+    if not raw_snippet:
+        return ""
+    tmp = re.sub(r"[\u0000-\u001F\u007F-\u009F]+", " ", raw_snippet)
+    tmp = re.sub(r"\s+", " ", tmp).strip()
+    if not tmp:
+        return ""
+
+    def letter_density(s: str) -> float:
+        letters = sum(1 for ch in s if ch.isalpha())
+        return letters / len(s) if s else 0.0
+
+    if len(tmp) <= maxlen:
+        return tmp if letter_density(tmp) >= 0.35 else ""
+
+    best_fragment = tmp[:maxlen]
+    best_density = letter_density(best_fragment)
+    step = max(1, maxlen // 4)
+    for start in range(0, len(tmp) - 39, step):
+        fragment = tmp[start : start + maxlen]
+        density = letter_density(fragment)
+        if density >= 0.6:
+            return fragment.rstrip() + (" …" if start + maxlen < len(tmp) else "")
+        if density > best_density:
+            best_density = density
+            best_fragment = fragment
+
+    if best_density >= 0.45:
+        return best_fragment.rstrip() + " …"
+    return tmp[:maxlen].rstrip() + " …"
+
+
 def format_search_result(p: dict, pg: dict, q: str, score: int, snippet: Optional[str] = None, source: str = "personal", match_in: str = "content") -> dict:
     # Build raw snippet (prefer explicit snippet param, else generate from page text)
     raw_snippet = snippet if snippet is not None else make_snippet(pg.get("text_raw", pg.get("text", "")), q)
     # First try the aggressive sanitizer (removes chords/boilerplate)
     sanitized = __import__("pdf_processor").sanitize_snippet_for_api(raw_snippet) if raw_snippet else ""
 
-    # Fallback: if sanitizer removed everything, provide a light-clean, truncated preview
     if sanitized:
         final_snippet = sanitized
     else:
-        if raw_snippet:
-            tmp = re.sub(r"[\u0000-\u001F\u007F-\u009F]+", " ", raw_snippet)
-            tmp = re.sub(r"\s+", " ", tmp).strip()
-            maxlen = 200
-            if len(tmp) > maxlen:
-                tmp = tmp[:maxlen].rstrip()
-                tmp = tmp + " …"
-            final_snippet = tmp
-        else:
-            final_snippet = ""
+        final_snippet = _select_readable_snippet(raw_snippet)
 
     return {
         "pdf_id": p["id"],
@@ -1270,6 +1301,7 @@ async def search(
     tag: Optional[str] = Query(None),
     share_token: Optional[str] = Query(None),
     user_id: Optional[str] = Depends(get_optional_user_id),
+    debug: bool = Query(False),
 ):
     raw_q = normalize_search_query(q).strip()
     if not raw_q:
@@ -1301,6 +1333,16 @@ async def search(
 
     results = []
     seen = set()  # Per evitare duplicati (stessa pagina trovata con logiche diverse)
+    candidate_limit = _get_search_candidate_limit()
+    search_debug = {
+        "query": raw_q,
+        "candidate_limit": candidate_limit,
+        "candidate_count": 0,
+        "initial_result_count": 0,
+        "fallback_used": False,
+        "fallback_candidate_count": 0,
+        "final_result_count": 0,
+    }
 
     if raw_q.isdigit():
         hymn_regex = rf"(?m)^\s*{re.escape(raw_q)}[.\s]"
@@ -1423,7 +1465,7 @@ async def search(
     if pdf_ids_list:
         text_filter["pdf_id"] = {"$in": pdf_ids_list}
 
-    text_cursor = db.pdf_pages.find(text_filter).limit(100)
+    text_cursor = db.pdf_pages.find(text_filter).limit(candidate_limit)
     
     # First pass: collect all text pages to apply fuzzy token matching
     matched_pages = []
@@ -1448,11 +1490,19 @@ async def search(
                 score = int(quality * 100) if quality > 0 else 10
                 results.append(format_search_result(p, pg, raw_q, score=score, source="personal", match_in="content"))
     
+    search_debug["candidate_count"] = len(matched_pages)
+    search_debug["initial_result_count"] = len(results)
+
     # Also perform fallback fuzzy search on all pages if initial results are sparse
+    fallback_used = False
+    fallback_candidate_count = 0
     if len(results) < 3 and not raw_q.isdigit():
+        fallback_used = True
         # Get all pages and apply fuzzy matching
-        # Limit to 50 pages for performance (fallback should be targeted, not exhaustive)
-        all_pages = await db.pdf_pages.find({} if not pdf_ids_list else {"pdf_id": {"$in": pdf_ids_list}}).limit(50).to_list(50)
+        # Use a broader-but-bounded fallback to avoid blowing up the search path.
+        fallback_limit = max(50, min(candidate_limit // 2, 200))
+        all_pages = await db.pdf_pages.find({} if not pdf_ids_list else {"pdf_id": {"$in": pdf_ids_list}}).limit(fallback_limit).to_list(fallback_limit)
+        fallback_candidate_count = len(all_pages)
         for pg in all_pages:
             key = (pg["pdf_id"], pg["page"])
             if key in seen:
@@ -1468,9 +1518,27 @@ async def search(
                     score = int(quality * 80) if quality > 0 else 8
                     results.append(format_search_result(p, pg, raw_q, score=score, source="personal", match_in="content"))
 
+    search_debug["fallback_used"] = fallback_used
+    search_debug["fallback_candidate_count"] = fallback_candidate_count
+    search_debug["final_result_count"] = len(results)
+
+    logger.info(
+        "SEARCH_DEBUG query=%s candidate_limit=%d candidate_count=%d initial_results=%d fallback_used=%s fallback_candidates=%d final_results=%d",
+        raw_q,
+        candidate_limit,
+        search_debug["candidate_count"],
+        search_debug["initial_result_count"],
+        fallback_used,
+        fallback_candidate_count,
+        len(results),
+    )
+
     # Sort by score desc, then by physical page number (use actual_page if present, fall back to page)
     results.sort(key=lambda x: (-x["score"], x.get("actual_page", x.get("page", 0))))
-    return {"results": results}
+    payload = {"results": results}
+    if debug:
+        payload["debug"] = search_debug
+    return payload
 
 # ----------------- Admin Logs -----------------
 @api.get("/admin/logs")
@@ -1610,9 +1678,9 @@ async def health():
 app.include_router(api)
 
 # ----------------- Worker -----------------
-def _extract_pages_sync(fpath_bytes: bytes) -> tuple:
+def _extract_pages_sync(fpath_bytes: bytes, known_page_texts: Optional[List[str]] = None) -> tuple:
     """Synchronous wrapper for extract_pages to run in thread pool."""
-    return extract_pages(fpath_bytes)
+    return extract_pages(fpath_bytes, known_page_texts=known_page_texts)
 
 async def process_pdf_job(job_id):
     job = await db.upload_jobs.find_one({"id": job_id})
@@ -1624,7 +1692,16 @@ async def process_pdf_job(job_id):
         if fpath.exists():
             # Run OCR in thread pool to avoid blocking event loop
             pdf_bytes = fpath.read_bytes()
-            pages_text, raw_texts, total, used_ocr, page_labels = await asyncio.to_thread(_extract_pages_sync, pdf_bytes)
+            known_page_texts = [
+                page.get("text", "")
+                for page in await db.pdf_pages.find({}, {"_id": 0, "text": 1}).limit(200).to_list(200)
+                if page.get("text")
+            ]
+            pages_text, raw_texts, total, used_ocr, page_labels = await asyncio.to_thread(
+                _extract_pages_sync,
+                pdf_bytes,
+                known_page_texts,
+            )
             logger.info(f"PDF extraction for {pdf['id']}: {total} pages, OCR used: {used_ocr}")
             
             # Batch update pages in parallel for faster indexing

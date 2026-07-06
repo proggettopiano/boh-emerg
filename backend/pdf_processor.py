@@ -14,6 +14,7 @@ import threading
 import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from difflib import SequenceMatcher
 from typing import Any, Dict, List, Tuple
 import fitz  # PyMuPDF
 import httpx
@@ -27,6 +28,8 @@ _tesseract_ready = False
 _pytesseract_module = None
 MAX_OCR_IMAGE_SIZE = 1400
 MAX_PARALLEL_OCR_WORKERS = 3
+REUSE_TEXT_SIMILARITY_THRESHOLD = float(os.environ.get("OCR_REUSE_TEXT_THRESHOLD", "0.92"))
+FAST_OCR_WORD_THRESHOLD = int(os.environ.get("OCR_FAST_WORD_THRESHOLD", "8"))
 _timing_lock = threading.Lock()
 _ocr_context = threading.local()
 
@@ -208,6 +211,91 @@ def _tokenize_text(text: str) -> List[str]:
     return tokens
 
 
+def _estimate_text_similarity(text_a: str, text_b: str) -> float:
+    """Estimate a similarity score in the [0, 1] range using string and token signals."""
+    if not text_a or not text_b:
+        return 0.0
+
+    normalized_a = normalize_search_query(text_a)
+    normalized_b = normalize_search_query(text_b)
+    if not normalized_a or not normalized_b:
+        return 0.0
+    if normalized_a == normalized_b:
+        return 1.0
+    if normalized_a in normalized_b or normalized_b in normalized_a:
+        return 0.98
+
+    tokens_a = _tokenize_text(normalized_a)
+    tokens_b = _tokenize_text(normalized_b)
+    if not tokens_a or not tokens_b:
+        return SequenceMatcher(None, normalized_a, normalized_b).ratio()
+
+    set_overlap = len(set(tokens_a) & set(tokens_b)) / max(1, min(len(tokens_a), len(tokens_b)))
+    ordered_overlap = 0.0
+    for q_token, d_token in zip(tokens_a, tokens_b):
+        if q_token == d_token:
+            ordered_overlap += 1.0
+        else:
+            break
+    ordered_overlap /= max(1, min(len(tokens_a), len(tokens_b)))
+    string_ratio = SequenceMatcher(None, normalized_a, normalized_b).ratio()
+    return max(0.0, min(1.0, 0.55 * string_ratio + 0.25 * ordered_overlap + 0.20 * set_overlap))
+
+
+def _find_best_reusable_text(candidate_text: str, known_page_texts: List[str]) -> Tuple[str, float]:
+    """Return the best matching known page text and its similarity, if any."""
+    if not candidate_text or not known_page_texts:
+        return "", 0.0
+
+    cleaned_candidate = clean_pdf_text(candidate_text)
+    if _count_text_words(cleaned_candidate) < FAST_OCR_WORD_THRESHOLD:
+        return "", 0.0
+
+    best_text = ""
+    best_score = 0.0
+    for known_text in known_page_texts:
+        if not known_text:
+            continue
+        similarity = _estimate_text_similarity(cleaned_candidate, known_text)
+        if similarity > best_score:
+            best_score = similarity
+            best_text = clean_pdf_text(known_text)
+    return best_text, best_score
+
+
+def _quick_ocr_page_text(page, timings: Dict[str, Any] = None, page_num: int = None) -> str:
+    """Run a low-cost OCR pass for database-assisted reuse checks before full OCR."""
+    if not _init_tesseract_once():
+        return ""
+
+    try:
+        from PIL import Image
+        try:
+            from PIL import ImageOps
+        except Exception:
+            ImageOps = None
+
+        start = time.perf_counter()
+        pix = page.get_pixmap(alpha=False, dpi=120)
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        if ImageOps is not None:
+            gray = ImageOps.grayscale(img)
+            gray = ImageOps.autocontrast(gray)
+        else:
+            gray = img
+
+        lang = os.environ.get("TESSERACT_LANG", "ita+eng")
+        text = _pytesseract_module.image_to_string(gray, lang=lang, config="--psm 6 --oem 3")
+        cleaned = clean_pdf_text(text)
+        if _count_text_words(cleaned) < FAST_OCR_WORD_THRESHOLD:
+            return ""
+        _record_timing(timings, "fast_ocr_ms", (time.perf_counter() - start) * 1000.0)
+        return cleaned
+    except Exception as exc:
+        logger.debug("Fast OCR failed for page %s: %s", page_num + 1 if page_num is not None else "?", exc)
+        return ""
+
+
 def _token_fuzzy_match(query_token: str, doc_token: str) -> bool:
     if query_token == doc_token:
         return True
@@ -355,67 +443,64 @@ def text_matches_query(text: str, query: str, use_fuzzy: bool = True) -> bool:
 
 
 def _calculate_match_quality(text: str, query: str) -> float:
-    """Calculate match quality score (0.0-1.0) for ranking purposes.
-    
-    Scoring hierarchy:
-    - 1.0: Query tokens found exactly consecutive (best match)
-    - 0.95: Query tokens consecutive with 1 extra word allowed
-    - 0.90: Query tokens in order, scattered but within tight window
-    - 0.85: Query tokens in order, scattered with medium gaps
-    - 0.0: No match
-    
-    Used for ranking results - higher score = better match = ranked first.
-    """
+    """Calculate a phrase-aware match quality score for ranking purposes."""
     if not text or not query:
         return 0.0
-    
-    query_tokens = _tokenize_text(query)
-    doc_tokens = _tokenize_text(text)
-    
-    if not query_tokens or not doc_tokens:
+
+    normalized_text = normalize_search_query(text)
+    normalized_query = normalize_search_query(query)
+    if not normalized_text or not normalized_query:
         return 0.0
-    
+
+    query_tokens = _tokenize_text(normalized_query)
+    doc_tokens = _tokenize_text(normalized_text)
+
+    if normalized_query == normalized_text:
+        return 1.0
+    if len(query_tokens) > 1 and (normalized_query in normalized_text or normalized_text in normalized_query):
+        return 0.95
+    if len(query_tokens) == 1 and normalized_query in normalized_text:
+        return 0.8
+    if not query_tokens or not doc_tokens:
+        return _estimate_text_similarity(normalized_text, normalized_query)
+
     query_len = len(query_tokens)
     doc_len = len(doc_tokens)
-    max_gap = 3  # maximum gap between tokens for tight window
-    
-    # STRATEGY 1: Exact consecutive match (highest quality)
-    # All query tokens appear consecutively in order
+    token_score = 0.0
+
     for start_idx in range(max(0, doc_len - query_len + 1)):
         window = doc_tokens[start_idx : start_idx + query_len]
         matching = sum(1 for i, q_token in enumerate(query_tokens) if i < len(window) and window[i] == q_token)
         match_ratio = matching / query_len if query_len > 0 else 0
         if match_ratio >= 0.7:
-            # Check if it's a true consecutive match (100% of tokens match in order)
-            if matching == query_len:
-                return 1.0
-            # 70%-99% consecutive match
-            return 0.95
-    
-    # STRATEGY 2a: Subsequence in tight window (max_gap = 3)
-    # Query tokens appear in order with limited scattered words between them
-    for window_len in range(query_len + 1, min(doc_len + 1, query_len + 4)):
-        for start_idx in range(max(0, doc_len - window_len + 1)):
-            window = doc_tokens[start_idx : start_idx + window_len]
-            q_idx = 0
-            last_pos = -1
-            max_gap_found = 0
-            
-            for w_idx, w_token in enumerate(window):
-                if q_idx < len(query_tokens) and w_token == query_tokens[q_idx]:
-                    gap = w_idx - last_pos - 1
-                    max_gap_found = max(max_gap_found, gap)
-                    last_pos = w_idx
-                    q_idx += 1
-            
-            if q_idx == len(query_tokens):
-                # All tokens found in order
-                if max_gap_found <= 1:
-                    return 0.90  # Very tight (1 gap max)
-                else:
-                    return 0.85  # Moderate gaps (up to 2-3)
-    
-    return 0.0  # No match
+            token_score = 0.95 if matching == query_len else 0.85
+            break
+
+    if token_score == 0.0:
+        for window_len in range(query_len + 1, min(doc_len + 1, query_len + 4)):
+            for start_idx in range(max(0, doc_len - window_len + 1)):
+                window = doc_tokens[start_idx : start_idx + window_len]
+                q_idx = 0
+                max_gap_found = 0
+                last_pos = -1
+                for w_idx, w_token in enumerate(window):
+                    if q_idx < len(query_tokens) and w_token == query_tokens[q_idx]:
+                        gap = w_idx - last_pos - 1
+                        max_gap_found = max(max_gap_found, gap)
+                        last_pos = w_idx
+                        q_idx += 1
+                if q_idx == len(query_tokens):
+                    token_score = 0.90 if max_gap_found <= 1 else 0.80
+                    break
+            if token_score > 0.0:
+                break
+
+    if token_score == 0.0:
+        token_score = min(0.65, max(0.0, len(set(query_tokens) & set(doc_tokens)) / max(1, len(query_tokens))))
+
+    lexical_score = _estimate_text_similarity(normalized_text, normalized_query)
+    phrase_boost = 0.15 if len(query_tokens) > 1 and len(set(query_tokens) & set(doc_tokens)) >= max(1, len(query_tokens) - 1) else 0.0
+    return max(0.0, min(1.0, 0.6 * lexical_score + 0.4 * token_score + phrase_boost))
 
 
 def extract_page_metadata(text: str) -> dict:
@@ -746,13 +831,11 @@ def _create_rapidocr_engine():
     if _rapidocr_engine is not None:
         return _rapidocr_engine
 
-    if not _rapidocr_available:
-        return None
-
     try:
         from rapidocr import RapidOCR
 
         _rapidocr_engine = RapidOCR()
+        _rapidocr_available = True
         logger.info("RapidOCR engine initialized successfully")
         return _rapidocr_engine
     except Exception as exc:
@@ -762,11 +845,10 @@ def _create_rapidocr_engine():
 
 
 def _extract_text_with_rapidocr(page, timings: Dict[str, Any] = None) -> str:
-    # Skip expensive RapidOCR rendering if RapidOCR is not installed.
-    if not _rapidocr_available:
-        return ""
-
     start_total = time.perf_counter()
+    engine = _create_rapidocr_engine()
+    if engine is None:
+        return ""
     render_time = 0.0
     infer_time = 0.0
     try:
@@ -777,9 +859,12 @@ def _extract_text_with_rapidocr(page, timings: Dict[str, Any] = None) -> str:
         pix = page.get_pixmap(alpha=False, dpi=300)
         render_time += time.perf_counter() - start
 
-        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        img = _resize_image_for_ocr(img, max_long_side=2000)
-        arr = np.asarray(img)
+        try:
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            img = _resize_image_for_ocr(img, max_long_side=2000)
+            arr = np.asarray(img)
+        except Exception:
+            arr = pix
         engine = _create_rapidocr_engine()
         if engine is None:
             return ""
@@ -1159,6 +1244,20 @@ def _ocr_page_text(page, timings: Dict[str, Any] = None, page_num: int = None) -
 
     logger.info("OCR_PATH=fallback-raster")
     logger.info("OCR_PATH_REASON=page-raster-fallback")
+
+    # Prefer RapidOCR when available because it is usually cheaper and faster.
+    try:
+        rapid_text = _extract_text_with_rapidocr(page, timings=timings)
+    except Exception as exc:
+        logger.warning("RapidOCR invocation failed: %s", exc)
+        rapid_text = ""
+
+    if rapid_text:
+        _record_timing(timings, "rapidocr_pages", 1)
+        logger.info("OCR_PATH=rapidocr-fallback")
+        logger.info("RapidOCR OCR produced %d chars", len(rapid_text))
+        return rapid_text
+
     try:
         text = _tesseract_ocr_text(page, timings=timings, page_num=page_num)
     except TypeError:
@@ -1174,19 +1273,6 @@ def _ocr_page_text(page, timings: Dict[str, Any] = None, page_num: int = None) -
     if text:
         _record_timing(timings, "tesseract_pages", 1)
         return text
-
-    # If RapidOCR is available, prefer it over Tesseract when possible.
-    try:
-        rapid_text = _extract_text_with_rapidocr(page, timings=timings)
-    except Exception as exc:
-        logger.warning("RapidOCR invocation failed: %s", exc)
-        rapid_text = ""
-
-    if rapid_text:
-        _record_timing(timings, "rapidocr_pages", 1)
-        logger.info("OCR_PATH=rapidocr-fallback")
-        logger.info("RapidOCR OCR produced %d chars", len(rapid_text))
-        return rapid_text
 
     return text
 
@@ -1208,7 +1294,7 @@ def _ocr_needs_page(page_info: Dict[str, Any]) -> bool:
     return page_info.get("ocr_attempted", False)
 
 
-def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None) -> Tuple[List[str], List[str], int, bool, List[str]]:
+def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None, known_page_texts: List[str] = None) -> Tuple[List[str], List[str], int, bool, List[str]]:
     """Extract text from each page. OCR logic remains fallback-only.
     Returns (pages_text, raw_texts, total_pages, used_ocr, page_labels).
     """
@@ -1339,6 +1425,34 @@ def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None) -> Tuple[Lis
                     page_images,
                     "+".join(page_info["reason"]) or "unknown",
                 )
+
+                if known_page_texts:
+                    try:
+                        fast_text = _quick_ocr_page_text(page, timings=timings, page_num=page_num)
+                        if fast_text:
+                            reusable_text, similarity = _find_best_reusable_text(fast_text, known_page_texts)
+                            if reusable_text and similarity >= REUSE_TEXT_SIMILARITY_THRESHOLD:
+                                pages_text[page_num] = clean_pdf_text(reusable_text)
+                                raw_texts[page_num] = reusable_text
+                                page_info["ocr_attempted"] = False
+                                page_info["ocr_used"] = False
+                                page_info["reason"] = ["reused_existing_text"]
+                                page_info["reused_text_similarity"] = similarity
+                                page_info["reused_text_source"] = "database"
+                                logger.info(
+                                    "Page %s: reused existing database text with similarity %.3f",
+                                    page_num + 1,
+                                    similarity,
+                                )
+                                page_details.append(page_info)
+                                if labels and page_num < len(labels) and labels[page_num] is not None:
+                                    page_labels.append(labels[page_num])
+                                else:
+                                    page_labels.append(str(page_num + 1))
+                                continue
+                    except Exception as exc:
+                        logger.debug("Fast OCR comparison failed for page %s: %s", page_num + 1, exc)
+
                 ocr_candidates.append((page_num, page, cleaned, page_info, page_images))
 
             pages_text[page_num] = cleaned
@@ -1539,7 +1653,7 @@ def sanitize_snippet_for_api(snippet: str) -> str:
     return out
 
 
-def _normalize_text_and_map_for_snippet(text: str) -> (str, list):
+def _normalize_text_and_map_for_snippet(text: str) -> Tuple[str, List[int]]:
     """Normalize text similar to normalize_pdf_text but also return a map from
     normalized character index -> original character index. The normalized string
     is lowercase, NFKD, combining diacritics removed, apostrophes normalized to
