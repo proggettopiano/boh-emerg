@@ -37,7 +37,7 @@ from auth_utils import (
     hash_password, verify_password, create_jwt, decode_jwt,
     get_client_ip, get_current_user_id, get_optional_user_id,
 )
-from pdf_processor import build_apostrophe_tolerant_regex, extract_pages, compress_pdf, make_snippet, clean_pdf_text, normalize_pdf_text, normalize_search_query, text_matches_query, extract_page_metadata, _calculate_match_quality
+from pdf_processor import build_apostrophe_tolerant_regex, build_content_signature, extract_pages, compress_pdf, make_snippet, clean_pdf_text, normalize_pdf_text, normalize_search_query, text_matches_query, extract_page_metadata, _calculate_match_quality, _content_signature_similarity
 import google_integration as gi
 
 ROOT_DIR = Path(__file__).parent
@@ -432,6 +432,7 @@ async def ensure_indexes():
     await safe_create_index(db.pdf_pages, [("pdf_id", 1), ("page", 1)], unique=True)
     await safe_create_index(db.pdf_pages, "text")
     await safe_create_index(db.pdf_pages, "text_normalized")
+    await safe_create_index(db.pdf_pages, "content_signature")
     await safe_create_index(db.pdfs, "title_normalized")
     await safe_create_index(db.upload_jobs, "id", unique=True)
     await safe_create_index(db.app_logs, "created_at")
@@ -1233,6 +1234,9 @@ def _get_search_candidate_limit() -> int:
     return max(50, min(value, 2000))
 
 
+CONTENT_SIGNATURE_SIMILARITY_THRESHOLD = float(os.environ.get("CONTENT_SIGNATURE_SIMILARITY_THRESHOLD", "0.55"))
+
+
 def _select_readable_snippet(raw_snippet: str, maxlen: int = 200) -> str:
     if not raw_snippet:
         return ""
@@ -1466,11 +1470,32 @@ async def search(
         text_filter["pdf_id"] = {"$in": pdf_ids_list}
 
     text_cursor = db.pdf_pages.find(text_filter).limit(candidate_limit)
+    signature_query = build_content_signature(raw_q)
     
     # First pass: collect all text pages to apply fuzzy token matching
     matched_pages = []
     async for pg in text_cursor:
         matched_pages.append(pg)
+
+    def _maybe_add_signature_match(pg: dict, base_score: int = 82) -> bool:
+        if not signature_query:
+            return False
+        page_signature = pg.get("content_signature") or build_content_signature(pg.get("text", ""))
+        if not page_signature:
+            return False
+        similarity = _content_signature_similarity(signature_query, page_signature)
+        if similarity < CONTENT_SIGNATURE_SIMILARITY_THRESHOLD:
+            return False
+        key = (pg["pdf_id"], pg["page"])
+        if key in seen:
+            return False
+        seen.add(key)
+        p = await db.pdfs.find_one({"id": pg["pdf_id"]})
+        if p:
+            score = max(base_score, int(similarity * 90))
+            results.append(format_search_result(p, pg, raw_q, score=score, source="personal", match_in="content_signature"))
+            return True
+        return False
     
     # Second pass: apply token-based fuzzy matching to the results
     for pg in matched_pages:
@@ -1489,6 +1514,8 @@ async def search(
                 quality = _calculate_match_quality(pg_text, raw_q)
                 score = int(quality * 100) if quality > 0 else 10
                 results.append(format_search_result(p, pg, raw_q, score=score, source="personal", match_in="content"))
+        else:
+            await _maybe_add_signature_match(pg)
     
     search_debug["candidate_count"] = len(matched_pages)
     search_debug["initial_result_count"] = len(results)
@@ -1517,6 +1544,8 @@ async def search(
                     quality = _calculate_match_quality(pg_text, raw_q)
                     score = int(quality * 80) if quality > 0 else 8
                     results.append(format_search_result(p, pg, raw_q, score=score, source="personal", match_in="content"))
+            else:
+                await _maybe_add_signature_match(pg, base_score=74)
 
     search_debug["fallback_used"] = fallback_used
     search_debug["fallback_candidate_count"] = fallback_candidate_count
@@ -1711,12 +1740,14 @@ async def process_pdf_job(job_id):
                 normalized = normalize_pdf_text(txt)
                 metadata = extract_page_metadata(normalized)
                 logger.info(f"  Page {i+1}: {len(txt)} chars, preview: {txt[:80] if txt else '(empty)'}")
+                content_signature = build_content_signature(txt)
                 update_doc = {
                     "text": txt,
                     "text_raw": raw,
                     "text_clean": txt,
                     "text_normalized": normalized,
                     "page_label": page_labels[i],
+                    "content_signature": content_signature,
                     **metadata,
                 }
                 tasks.append(

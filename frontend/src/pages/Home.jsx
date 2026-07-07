@@ -204,28 +204,7 @@ export default function Home() {
               <button
                 onClick={async () => {
                   addRecentSearch(q);
-                  let pageNum = r.viewer_page ?? r.actual_page ?? r.page;
-                  if (!pageNum && r.page_label) {
-                    try {
-                      const meta = await api.get(`/pdfs/${r.pdf_id}`);
-                      const labels = (meta.data && meta.data.page_labels) || [];
-                      const targetLabel = String(r.page_label).trim();
-                      const idx = labels.findIndex((lbl) => {
-                        if (lbl == null) return false;
-                        const a = String(lbl).trim();
-                        if (a === targetLabel) return true;
-                        if (a.toLowerCase() === targetLabel.toLowerCase()) return true;
-                        const an = parseInt(a, 10);
-                        const bn = parseInt(targetLabel, 10);
-                        if (Number.isFinite(an) && Number.isFinite(bn) && an === bn) return true;
-                        return false;
-                      });
-                      if (idx >= 0) pageNum = idx + 1;
-                    } catch (err) {
-                      console.warn("Failed to resolve page_label to physical page", err);
-                    }
-                  }
-                  const pageParam = pageNum ? String(pageNum) : (r.page_label ?? "");
+                  const pageParam = r.page_label ? String(r.page_label) : (r.viewer_page ?? r.actual_page ?? r.page ? String(r.viewer_page ?? r.actual_page ?? r.page) : "");
                   navigate(`/viewer/${r.pdf_id}?page=${encodeURIComponent(pageParam)}&q=${encodeURIComponent(q)}`);
                 }}
                 className="text-left w-full group"

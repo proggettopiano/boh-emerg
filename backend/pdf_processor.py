@@ -113,6 +113,65 @@ def clean_pdf_text(text: str) -> str:
     return text.strip()
 
 
+def _content_signature_terms(text: str) -> List[str]:
+    """Build a compact token-shingle fingerprint for similarity comparisons."""
+    if not text:
+        return []
+
+    normalized = normalize_pdf_text(text)
+    if not normalized:
+        return []
+
+    tokens = _tokenize_text(normalized)
+    if not tokens:
+        return []
+
+    if len(tokens) <= 2:
+        return tokens[:]
+
+    terms: List[str] = []
+    seen = set()
+    for window_size in (4, 3, 2, 1):
+        if len(tokens) < window_size:
+            continue
+        for start in range(0, len(tokens) - window_size + 1):
+            term = " ".join(tokens[start : start + window_size])
+            if term in seen:
+                continue
+            seen.add(term)
+            terms.append(term)
+            if len(terms) >= 48:
+                return terms
+    return terms
+
+
+def build_content_signature(text: str) -> str:
+    """Create a lightweight normalized signature for content-based similarity checks."""
+    terms = _content_signature_terms(text)
+    return " || ".join(terms)
+
+
+def _content_signature_similarity(signature_a: str, signature_b: str) -> float:
+    if not signature_a or not signature_b:
+        return 0.0
+
+    terms_a = [term for term in signature_a.split(" || ") if term]
+    terms_b = [term for term in signature_b.split(" || ") if term]
+    if not terms_a or not terms_b:
+        return 0.0
+
+    set_a = set(terms_a)
+    set_b = set(terms_b)
+    if not set_a or not set_b:
+        return 0.0
+
+    overlap = len(set_a & set_b)
+    containment = overlap / max(1, min(len(set_a), len(set_b)))
+    jaccard = overlap / max(1, len(set_a | set_b))
+    order_ratio = SequenceMatcher(None, signature_a, signature_b).ratio()
+    return max(0.0, min(1.0, 0.55 * containment + 0.25 * jaccard + 0.20 * order_ratio))
+
+
 def normalize_pdf_text(text: str) -> str:
     if not text:
         return ""

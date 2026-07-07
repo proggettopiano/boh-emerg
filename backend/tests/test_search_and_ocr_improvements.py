@@ -6,6 +6,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pdf_processor import _calculate_match_quality, _estimate_text_similarity
 
 
+def test_build_content_signature_is_stable_for_equivalent_text():
+    from pdf_processor import build_content_signature, _content_signature_similarity
+
+    text_a = "  Ero perso nel peccato, Gesù mi ha trovato  "
+    text_b = "Ero perso nel peccato Gesu mi ha trovato"
+
+    signature_a = build_content_signature(text_a)
+    signature_b = build_content_signature(text_b)
+
+    assert _content_signature_similarity(signature_a, signature_b) >= 0.8
+    assert build_content_signature("") == ""
+
+
 def test_calculate_match_quality_prioritizes_phrase_similarity_over_single_word():
     target = "Cristo salvò col Suo prezioso sangue"
     phrase_query = "cristo salvo sangue"
