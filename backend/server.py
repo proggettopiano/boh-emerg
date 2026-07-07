@@ -1477,7 +1477,7 @@ async def search(
     async for pg in text_cursor:
         matched_pages.append(pg)
 
-    def _maybe_add_signature_match(pg: dict, base_score: int = 82) -> bool:
+    async def _maybe_add_signature_match(pg: dict, base_score: int = 82) -> bool:
         if not signature_query:
             return False
         page_signature = pg.get("content_signature") or build_content_signature(pg.get("text", ""))
