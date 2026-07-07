@@ -15,7 +15,7 @@ import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from difflib import SequenceMatcher
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import fitz  # PyMuPDF
 import httpx
 
@@ -28,7 +28,7 @@ _tesseract_ready = False
 _pytesseract_module = None
 MAX_OCR_IMAGE_SIZE = 1400
 MAX_PARALLEL_OCR_WORKERS = 3
-REUSE_TEXT_SIMILARITY_THRESHOLD = float(os.environ.get("OCR_REUSE_TEXT_THRESHOLD", "0.92"))
+REUSE_TEXT_SIMILARITY_THRESHOLD = float(os.environ.get("OCR_REUSE_TEXT_THRESHOLD", "0.74"))
 FAST_OCR_WORD_THRESHOLD = int(os.environ.get("OCR_FAST_WORD_THRESHOLD", "8"))
 VISUAL_SIGNATURE_DPI = int(os.environ.get("OCR_VISUAL_SIGNATURE_DPI", "48"))
 VISUAL_SIGNATURE_GRID = int(os.environ.get("OCR_VISUAL_SIGNATURE_GRID", "16"))
@@ -323,6 +323,65 @@ def _find_best_reusable_text(candidate_text: str, known_page_texts: List[str]) -
             best_score = similarity
             best_text = clean_pdf_text(known_text)
     return best_text, best_score
+
+
+def _find_best_reusable_text_record(candidate_text: str, known_page_records: List[Dict[str, Any]]) -> Tuple[str, float, Optional[str], Optional[int]]:
+    """Return the best matching known page text, score, and source page metadata."""
+    if not candidate_text or not known_page_records:
+        return "", 0.0, None, None
+
+    cleaned_candidate = clean_pdf_text(candidate_text)
+    if _count_text_words(cleaned_candidate) < FAST_OCR_WORD_THRESHOLD:
+        return "", 0.0, None, None
+
+    best_text = ""
+    best_score = 0.0
+    best_pdf_id = None
+    best_page = None
+    for known_page in known_page_records:
+        known_text = known_page.get("text", "")
+        if not known_text:
+            continue
+        similarity = _estimate_text_similarity(cleaned_candidate, known_text)
+        if similarity > best_score:
+            best_score = similarity
+            best_text = clean_pdf_text(known_text)
+            best_pdf_id = known_page.get("pdf_id")
+            best_page = known_page.get("page")
+    return best_text, best_score, best_pdf_id, best_page
+
+
+def _log_text_reuse_decision(
+    page_num: int,
+    candidate_count: int,
+    best_score: float,
+    threshold: float,
+    decision: str,
+    reason: str,
+    source_pdf_id: Optional[str] = None,
+    source_page: Optional[int] = None,
+) -> None:
+    logger.info(
+        "TEXT_REUSE_START page=%d candidates=%d",
+        page_num,
+        candidate_count,
+    )
+    if decision == "REUSE" and source_pdf_id is not None:
+        logger.info(
+            "TEXT_REUSE_BEST page=%d source_pdf=%s source_page=%s score=%.3f",
+            page_num,
+            source_pdf_id,
+            source_page,
+            best_score,
+        )
+    logger.info(
+        "TEXT_REUSE_DECISION page=%d decision=%s reason=%s threshold=%.3f score=%.3f",
+        page_num,
+        decision,
+        reason,
+        threshold,
+        best_score,
+    )
 
 
 def _build_visual_signature(page, timings: Dict[str, Any] = None, page_num: int = None) -> Dict[str, Any]:
@@ -1668,6 +1727,123 @@ def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None, known_page_t
                 decision = "OCR"
                 decision_reason = "no_candidates"
 
+                reuse_text = ""
+                reuse_similarity = 0.0
+                reuse_source_pdf_id = None
+                reuse_source_page = None
+                reuse_reason = "no_candidate_text"
+
+                candidate_text = native_text_for_quality if has_useful_native_text else cleaned
+                if not candidate_text:
+                    candidate_text = ""
+                if not has_useful_native_text and known_page_records:
+                    try:
+                        candidate_text = _quick_ocr_page_text(page, timings=timings, page_num=page_num) or candidate_text
+                    except Exception:
+                        candidate_text = candidate_text
+
+                if candidate_text and (known_page_records or known_page_texts):
+                    try:
+                        candidate_records = [record for record in known_page_records if record.get("text")] if known_page_records else []
+                        candidate_count = len(candidate_records)
+                        comparison_started = candidate_count > 0
+                        if candidate_count > 0:
+                            reuse_text, reuse_similarity, reuse_source_pdf_id, reuse_source_page = _find_best_reusable_text_record(candidate_text, candidate_records)
+                            best_score = reuse_similarity
+                            if reuse_text and reuse_similarity >= REUSE_TEXT_SIMILARITY_THRESHOLD:
+                                decision = "REUSE"
+                                decision_reason = "score_above_threshold"
+                                reuse_reason = "score_above_threshold"
+                                pages_text[page_num] = clean_pdf_text(reuse_text)
+                                raw_texts[page_num] = reuse_text
+                                page_info["ocr_attempted"] = False
+                                page_info["ocr_used"] = False
+                                page_info["reason"] = ["reused_existing_text"]
+                                page_info["reused_text_similarity"] = reuse_similarity
+                                page_info["reused_text_source"] = "database"
+                                logger.info(
+                                    "Page %s: reused existing database text with similarity %.3f",
+                                    page_num + 1,
+                                    reuse_similarity,
+                                )
+                                page_details.append(page_info)
+                                if labels and page_num < len(labels) and labels[page_num] is not None:
+                                    page_labels.append(labels[page_num])
+                                else:
+                                    page_labels.append(str(page_num + 1))
+                                _log_text_reuse_decision(
+                                    page_num + 1,
+                                    candidate_count,
+                                    reuse_similarity,
+                                    REUSE_TEXT_SIMILARITY_THRESHOLD,
+                                    decision,
+                                    decision_reason,
+                                    reuse_source_pdf_id,
+                                    reuse_source_page,
+                                )
+                                continue
+                            decision_reason = "score_below_threshold"
+                            reuse_reason = "score_below_threshold"
+                        else:
+                            decision_reason = "no_candidates"
+                            reuse_reason = "no_candidates"
+
+                        if not reuse_text and known_page_texts:
+                            fallback_text, fallback_similarity = _find_best_reusable_text(candidate_text, known_page_texts)
+                            if fallback_text and fallback_similarity >= REUSE_TEXT_SIMILARITY_THRESHOLD:
+                                reuse_text = fallback_text
+                                reuse_similarity = fallback_similarity
+                                best_score = fallback_similarity
+                                decision = "REUSE"
+                                decision_reason = "score_above_threshold"
+                                reuse_reason = "score_above_threshold"
+                                pages_text[page_num] = clean_pdf_text(reuse_text)
+                                raw_texts[page_num] = reuse_text
+                                page_info["ocr_attempted"] = False
+                                page_info["ocr_used"] = False
+                                page_info["reason"] = ["reused_existing_text"]
+                                page_info["reused_text_similarity"] = reuse_similarity
+                                page_info["reused_text_source"] = "database"
+                                logger.info(
+                                    "Page %s: reused existing database text with similarity %.3f",
+                                    page_num + 1,
+                                    reuse_similarity,
+                                )
+                                page_details.append(page_info)
+                                if labels and page_num < len(labels) and labels[page_num] is not None:
+                                    page_labels.append(labels[page_num])
+                                else:
+                                    page_labels.append(str(page_num + 1))
+                                _log_text_reuse_decision(
+                                    page_num + 1,
+                                    candidate_count or len(known_page_texts),
+                                    reuse_similarity,
+                                    REUSE_TEXT_SIMILARITY_THRESHOLD,
+                                    decision,
+                                    decision_reason,
+                                    None,
+                                    None,
+                                )
+                                continue
+                    except Exception as exc:
+                        decision_reason = f"comparison_error:{type(exc).__name__}"
+                        reuse_reason = decision_reason
+                        logger.debug("Text reuse comparison failed for page %s: %s", page_num + 1, exc)
+                else:
+                    decision_reason = "no_candidate_text"
+                    reuse_reason = "no_candidate_text"
+
+                _log_text_reuse_decision(
+                    page_num + 1,
+                    candidate_count,
+                    best_score,
+                    REUSE_TEXT_SIMILARITY_THRESHOLD,
+                    "OCR",
+                    decision_reason,
+                    reuse_source_pdf_id,
+                    reuse_source_page,
+                )
+
                 if visual_signature and known_page_records:
                     try:
                         candidate_records = [record for record in known_page_records if record.get("visual_signature")]
@@ -1730,33 +1906,6 @@ def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None, known_page_t
                     decision,
                     decision_reason,
                 )
-
-                if known_page_texts:
-                    try:
-                        fast_text = _quick_ocr_page_text(page, timings=timings, page_num=page_num)
-                        if fast_text:
-                            reusable_text, similarity = _find_best_reusable_text(fast_text, known_page_texts)
-                            if reusable_text and similarity >= REUSE_TEXT_SIMILARITY_THRESHOLD:
-                                pages_text[page_num] = clean_pdf_text(reusable_text)
-                                raw_texts[page_num] = reusable_text
-                                page_info["ocr_attempted"] = False
-                                page_info["ocr_used"] = False
-                                page_info["reason"] = ["reused_existing_text"]
-                                page_info["reused_text_similarity"] = similarity
-                                page_info["reused_text_source"] = "database"
-                                logger.info(
-                                    "Page %s: reused existing database text with similarity %.3f",
-                                    page_num + 1,
-                                    similarity,
-                                )
-                                page_details.append(page_info)
-                                if labels and page_num < len(labels) and labels[page_num] is not None:
-                                    page_labels.append(labels[page_num])
-                                else:
-                                    page_labels.append(str(page_num + 1))
-                                continue
-                    except Exception as exc:
-                        logger.debug("Fast OCR comparison failed for page %s: %s", page_num + 1, exc)
 
                 ocr_candidates.append((page_num, page, cleaned, page_info, page_images))
 

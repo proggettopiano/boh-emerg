@@ -45,7 +45,7 @@ def test_visual_signature_similarity_distinguishes_obviously_different_pages():
     assert _visual_signature_similarity(same_a, different) == 0.0
 
 
-def test_extract_pages_reuses_visual_match_before_ocr(monkeypatch):
+def test_extract_pages_reuses_text_match_before_visual_or_ocr(monkeypatch):
     import pdf_processor
     from PIL import Image, ImageDraw
     from reportlab.lib.utils import ImageReader
@@ -72,14 +72,15 @@ def test_extract_pages_reuses_visual_match_before_ocr(monkeypatch):
     }
 
     monkeypatch.setattr(pdf_processor, "_build_visual_signature", lambda page, timings=None, page_num=None: known_signature)
-    monkeypatch.setattr(pdf_processor, "_find_best_reusable_visual_text", lambda candidate_signature, known_page_records: ("TESTO RIUSATO", 0.99))
-    monkeypatch.setattr(pdf_processor, "_quick_ocr_page_text", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fast OCR should not run when visual reuse matches")))
-    monkeypatch.setattr(pdf_processor, "_ocr_page_worker", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("full OCR should not run when visual reuse matches")))
+    monkeypatch.setattr(pdf_processor, "_find_best_reusable_visual_text", lambda candidate_signature, known_page_records: ("VISUAL_REUSE", 0.99))
+    monkeypatch.setattr(pdf_processor, "_quick_ocr_page_text", lambda *args, **kwargs: "Ero perso nel peccato")
+    monkeypatch.setattr(pdf_processor, "_ocr_page_worker", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("full OCR should not run when text reuse matches")))
+    monkeypatch.setattr(pdf_processor, "_find_best_reusable_text_record", lambda candidate_text, known_page_records: ("TESTO RIUSATO", 0.99, "pdf-1", 3))
 
     pages_text, raw_texts, total_pages, used_ocr, page_labels = pdf_processor.extract_pages(
         pdf_bytes,
         known_page_texts=["TESTO RIUSATO"],
-        known_page_records=[{"text": "TESTO RIUSATO", "visual_signature": known_signature}],
+        known_page_records=[{"text": "TESTO RIUSATO", "visual_signature": known_signature, "pdf_id": "pdf-1", "page": 3}],
     )
 
     assert total_pages == 1
