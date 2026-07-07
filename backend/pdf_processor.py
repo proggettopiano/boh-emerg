@@ -464,6 +464,34 @@ def _find_best_reusable_visual_text(candidate_signature: Dict[str, Any], known_p
     return best_text, best_score
 
 
+def _log_visual_reuse_decision(
+    page_num: int,
+    known_page_records: List[Dict[str, Any]],
+    visual_signature: Dict[str, Any],
+    comparison_started: bool,
+    candidate_count: int,
+    best_score: float,
+    threshold: float,
+    decision: str,
+    reason: str,
+) -> None:
+    known_records = len(known_page_records) if known_page_records else 0
+    records_with_signature = sum(1 for record in (known_page_records or []) if record.get("visual_signature"))
+    logger.info(
+        "VISUAL_REUSE_START page=%d known_records=%d records_with_signature=%d page_signature=%s comparison_started=%s candidate_count=%d best_score=%.3f threshold=%.3f decision=%s reason=%s",
+        page_num,
+        known_records,
+        records_with_signature,
+        "yes" if visual_signature else "no",
+        "yes" if comparison_started else "no",
+        candidate_count,
+        best_score,
+        threshold,
+        decision,
+        reason,
+    )
+
+
 def _quick_ocr_page_text(page, timings: Dict[str, Any] = None, page_num: int = None) -> str:
     """Run a low-cost OCR pass for database-assisted reuse checks before full OCR."""
     if not _init_tesseract_once():
@@ -1631,10 +1659,23 @@ def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None, known_page_t
                     "+".join(page_info["reason"]) or "unknown",
                 )
 
+                best_score = 0.0
+                comparison_started = False
+                candidate_count = 0
+                decision = "OCR"
+                decision_reason = "no_candidates"
+
                 if visual_signature and known_page_records:
                     try:
-                        reusable_text, similarity = _find_best_reusable_visual_text(visual_signature, known_page_records)
-                        if reusable_text and similarity >= VISUAL_REUSE_SIMILARITY_THRESHOLD:
+                        candidate_records = [record for record in known_page_records if record.get("visual_signature")]
+                        candidate_count = len(candidate_records)
+                        comparison_started = candidate_count > 0
+                        if candidate_count > 0:
+                            reusable_text, similarity = _find_best_reusable_visual_text(visual_signature, candidate_records)
+                            best_score = similarity
+                            if reusable_text and similarity >= VISUAL_REUSE_SIMILARITY_THRESHOLD:
+                                decision = "REUSE_TEXT"
+                                decision_reason = "score_above_threshold"
                             pages_text[page_num] = clean_pdf_text(reusable_text)
                             raw_texts[page_num] = reusable_text
                             page_info["ocr_attempted"] = False
@@ -1652,9 +1693,40 @@ def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None, known_page_t
                                 page_labels.append(labels[page_num])
                             else:
                                 page_labels.append(str(page_num + 1))
+                                _log_visual_reuse_decision(
+                                    page_num + 1,
+                                    known_page_records,
+                                    visual_signature,
+                                    comparison_started,
+                                    candidate_count,
+                                    best_score,
+                                    VISUAL_REUSE_SIMILARITY_THRESHOLD,
+                                    decision,
+                                    decision_reason,
+                                )
                             continue
+                            decision_reason = "score_below_threshold"
+                        else:
+                            decision_reason = "no_candidates_with_signature"
                     except Exception as exc:
+                        decision_reason = f"comparison_error:{type(exc).__name__}"
                         logger.debug("Visual signature comparison failed for page %s: %s", page_num + 1, exc)
+                elif not visual_signature:
+                    decision_reason = "page_signature_failed"
+                elif not known_page_records:
+                    decision_reason = "no_known_records"
+
+                _log_visual_reuse_decision(
+                    page_num + 1,
+                    known_page_records,
+                    visual_signature,
+                    comparison_started,
+                    candidate_count,
+                    best_score,
+                    VISUAL_REUSE_SIMILARITY_THRESHOLD,
+                    decision,
+                    decision_reason,
+                )
 
                 if known_page_texts:
                     try:

@@ -1736,6 +1736,12 @@ async def process_pdf_job(job_id):
                 {"_id": 0, "text": 1, "visual_signature": 1},
             ).limit(400).to_list(400)
             known_page_texts = [page.get("text", "") for page in known_page_records if page.get("text")]
+            logger.info(
+                "VISUAL_REUSE_CANDIDATES pdf=%s loaded=%d texts=%d",
+                pdf["id"],
+                len(known_page_records),
+                len(known_page_texts),
+            )
             timings: Dict[str, Any] = {"page_details": []}
             pages_text, raw_texts, total, used_ocr, page_labels = await asyncio.to_thread(
                 _extract_pages_sync,
@@ -1748,6 +1754,12 @@ async def process_pdf_job(job_id):
             
             # Batch update pages in parallel for faster indexing
             page_details = timings.get("page_details", [])
+            logger.info(
+                "VISUAL_REUSE_RESULT pdf=%s pages=%d used_ocr=%s",
+                pdf["id"],
+                len(page_details),
+                used_ocr,
+            )
 
             tasks = []
             for i, txt in enumerate(pages_text):
@@ -1757,6 +1769,16 @@ async def process_pdf_job(job_id):
                 logger.info(f"  Page {i+1}: {len(txt)} chars, preview: {txt[:80] if txt else '(empty)'}")
                 content_signature = build_content_signature(txt)
                 visual_signature = page_details[i].get("visual_signature") if i < len(page_details) else None
+                if i < len(page_details):
+                    logger.info(
+                        "VISUAL_REUSE_PAGE pdf=%s page=%d reason=%s reused_source=%s score=%s visual=%s",
+                        pdf["id"],
+                        i + 1,
+                        page_details[i].get("reason"),
+                        page_details[i].get("reused_text_source"),
+                        page_details[i].get("reused_text_similarity"),
+                        bool(visual_signature),
+                    )
                 update_doc = {
                     "text": txt,
                     "text_raw": raw,
