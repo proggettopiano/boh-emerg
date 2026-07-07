@@ -88,6 +88,28 @@ def test_extract_pages_reuses_visual_match_before_ocr(monkeypatch):
     assert used_ocr is False
 
 
+def test_text_pages_persist_visual_signature_without_ocr():
+    import io
+    from reportlab.pdfgen import canvas as reportlab_canvas
+    import pdf_processor
+
+    buf = io.BytesIO()
+    c = reportlab_canvas.Canvas(buf, pagesize=(612, 792))
+    c.setFont("Helvetica", 10)
+    c.drawString(100, 700, "Cristo mi guida ancora oggi")
+    c.showPage()
+    c.save()
+    pdf_bytes = buf.getvalue()
+
+    timings = {}
+    pages_text, raw_texts, total_pages, used_ocr, page_labels = pdf_processor.extract_pages(pdf_bytes, timings=timings)
+
+    assert total_pages == 1
+    assert used_ocr is False
+    assert pages_text[0]
+    assert timings["page_details"][0]["visual_signature"]
+
+
 def test_calculate_match_quality_prioritizes_phrase_similarity_over_single_word():
     target = "Cristo salvò col Suo prezioso sangue"
     phrase_query = "cristo salvo sangue"

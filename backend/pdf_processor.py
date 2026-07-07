@@ -8,7 +8,6 @@ import io
 import json
 import logging
 import os
-import statistics
 import re
 import shutil
 import threading
@@ -1560,6 +1559,10 @@ def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None, known_page_t
             dict_text = "\n".join(dict_text_parts).strip()
             dict_cleaned = clean_pdf_text(dict_text)
 
+            visual_signature = _build_visual_signature(page, timings=timings, page_num=page_num)
+            if visual_signature:
+                page_info["visual_signature"] = visual_signature
+
             # Also check low-level images() as a fallback (may miss inline-painted images)
             try:
                 image_xobjs = bool(page.get_images(full=True))
@@ -1628,33 +1631,30 @@ def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None, known_page_t
                     "+".join(page_info["reason"]) or "unknown",
                 )
 
-                visual_signature = _build_visual_signature(page, timings=timings, page_num=page_num)
-                if visual_signature:
-                    page_info["visual_signature"] = visual_signature
-                    if known_page_records:
-                        try:
-                            reusable_text, similarity = _find_best_reusable_visual_text(visual_signature, known_page_records)
-                            if reusable_text and similarity >= VISUAL_REUSE_SIMILARITY_THRESHOLD:
-                                pages_text[page_num] = clean_pdf_text(reusable_text)
-                                raw_texts[page_num] = reusable_text
-                                page_info["ocr_attempted"] = False
-                                page_info["ocr_used"] = False
-                                page_info["reason"] = ["reused_existing_visual_text"]
-                                page_info["reused_text_similarity"] = similarity
-                                page_info["reused_text_source"] = "database_visual"
-                                logger.info(
-                                    "Page %s: reused existing database text from visual signature with similarity %.3f",
-                                    page_num + 1,
-                                    similarity,
-                                )
-                                page_details.append(page_info)
-                                if labels and page_num < len(labels) and labels[page_num] is not None:
-                                    page_labels.append(labels[page_num])
-                                else:
-                                    page_labels.append(str(page_num + 1))
-                                continue
-                        except Exception as exc:
-                            logger.debug("Visual signature comparison failed for page %s: %s", page_num + 1, exc)
+                if visual_signature and known_page_records:
+                    try:
+                        reusable_text, similarity = _find_best_reusable_visual_text(visual_signature, known_page_records)
+                        if reusable_text and similarity >= VISUAL_REUSE_SIMILARITY_THRESHOLD:
+                            pages_text[page_num] = clean_pdf_text(reusable_text)
+                            raw_texts[page_num] = reusable_text
+                            page_info["ocr_attempted"] = False
+                            page_info["ocr_used"] = False
+                            page_info["reason"] = ["reused_existing_visual_text"]
+                            page_info["reused_text_similarity"] = similarity
+                            page_info["reused_text_source"] = "database_visual"
+                            logger.info(
+                                "Page %s: reused existing database text from visual signature with similarity %.3f",
+                                page_num + 1,
+                                similarity,
+                            )
+                            page_details.append(page_info)
+                            if labels and page_num < len(labels) and labels[page_num] is not None:
+                                page_labels.append(labels[page_num])
+                            else:
+                                page_labels.append(str(page_num + 1))
+                            continue
+                    except Exception as exc:
+                        logger.debug("Visual signature comparison failed for page %s: %s", page_num + 1, exc)
 
                 if known_page_texts:
                     try:
