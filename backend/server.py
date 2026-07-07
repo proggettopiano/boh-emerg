@@ -1707,9 +1707,19 @@ async def health():
 app.include_router(api)
 
 # ----------------- Worker -----------------
-def _extract_pages_sync(fpath_bytes: bytes, known_page_texts: Optional[List[str]] = None) -> tuple:
+def _extract_pages_sync(
+    fpath_bytes: bytes,
+    known_page_texts: Optional[List[str]] = None,
+    known_page_records: Optional[List[Dict[str, Any]]] = None,
+    timings: Optional[Dict[str, Any]] = None,
+) -> tuple:
     """Synchronous wrapper for extract_pages to run in thread pool."""
-    return extract_pages(fpath_bytes, known_page_texts=known_page_texts)
+    return extract_pages(
+        fpath_bytes,
+        timings=timings,
+        known_page_texts=known_page_texts,
+        known_page_records=known_page_records,
+    )
 
 async def process_pdf_job(job_id):
     job = await db.upload_jobs.find_one({"id": job_id})
@@ -1721,19 +1731,24 @@ async def process_pdf_job(job_id):
         if fpath.exists():
             # Run OCR in thread pool to avoid blocking event loop
             pdf_bytes = fpath.read_bytes()
-            known_page_texts = [
-                page.get("text", "")
-                for page in await db.pdf_pages.find({}, {"_id": 0, "text": 1}).limit(200).to_list(200)
-                if page.get("text")
-            ]
+            known_page_records = await db.pdf_pages.find(
+                {"text": {"$ne": ""}, "visual_signature": {"$exists": True}},
+                {"_id": 0, "text": 1, "visual_signature": 1},
+            ).limit(400).to_list(400)
+            known_page_texts = [page.get("text", "") for page in known_page_records if page.get("text")]
+            timings: Dict[str, Any] = {"page_details": []}
             pages_text, raw_texts, total, used_ocr, page_labels = await asyncio.to_thread(
                 _extract_pages_sync,
                 pdf_bytes,
                 known_page_texts,
+                known_page_records,
+                timings,
             )
             logger.info(f"PDF extraction for {pdf['id']}: {total} pages, OCR used: {used_ocr}")
             
             # Batch update pages in parallel for faster indexing
+            page_details = timings.get("page_details", [])
+
             tasks = []
             for i, txt in enumerate(pages_text):
                 raw = raw_texts[i] if i < len(raw_texts) else ""
@@ -1741,6 +1756,7 @@ async def process_pdf_job(job_id):
                 metadata = extract_page_metadata(normalized)
                 logger.info(f"  Page {i+1}: {len(txt)} chars, preview: {txt[:80] if txt else '(empty)'}")
                 content_signature = build_content_signature(txt)
+                visual_signature = page_details[i].get("visual_signature") if i < len(page_details) else None
                 update_doc = {
                     "text": txt,
                     "text_raw": raw,
@@ -1748,6 +1764,7 @@ async def process_pdf_job(job_id):
                     "text_normalized": normalized,
                     "page_label": page_labels[i],
                     "content_signature": content_signature,
+                    "visual_signature": visual_signature,
                     **metadata,
                 }
                 tasks.append(

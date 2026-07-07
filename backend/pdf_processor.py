@@ -8,6 +8,7 @@ import io
 import json
 import logging
 import os
+import statistics
 import re
 import shutil
 import threading
@@ -30,6 +31,9 @@ MAX_OCR_IMAGE_SIZE = 1400
 MAX_PARALLEL_OCR_WORKERS = 3
 REUSE_TEXT_SIMILARITY_THRESHOLD = float(os.environ.get("OCR_REUSE_TEXT_THRESHOLD", "0.92"))
 FAST_OCR_WORD_THRESHOLD = int(os.environ.get("OCR_FAST_WORD_THRESHOLD", "8"))
+VISUAL_SIGNATURE_DPI = int(os.environ.get("OCR_VISUAL_SIGNATURE_DPI", "48"))
+VISUAL_SIGNATURE_GRID = int(os.environ.get("OCR_VISUAL_SIGNATURE_GRID", "16"))
+VISUAL_REUSE_SIMILARITY_THRESHOLD = float(os.environ.get("OCR_VISUAL_REUSE_THRESHOLD", "0.96"))
 _timing_lock = threading.Lock()
 _ocr_context = threading.local()
 
@@ -316,6 +320,145 @@ def _find_best_reusable_text(candidate_text: str, known_page_texts: List[str]) -
         if not known_text:
             continue
         similarity = _estimate_text_similarity(cleaned_candidate, known_text)
+        if similarity > best_score:
+            best_score = similarity
+            best_text = clean_pdf_text(known_text)
+    return best_text, best_score
+
+
+def _build_visual_signature(page, timings: Dict[str, Any] = None, page_num: int = None) -> Dict[str, Any]:
+    """Create a fast visual fingerprint for a page without running OCR."""
+    if page is None:
+        return {}
+
+    start = time.perf_counter()
+    try:
+        from PIL import Image
+        try:
+            from PIL import ImageOps
+        except Exception:
+            ImageOps = None
+
+        pix = page.get_pixmap(alpha=False, dpi=VISUAL_SIGNATURE_DPI)
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        gray = ImageOps.grayscale(img) if ImageOps is not None else img.convert("L")
+        if ImageOps is not None:
+            gray = ImageOps.autocontrast(gray)
+
+        hash_width = 9
+        hash_height = 8
+        small = gray.resize((hash_width, hash_height), Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS)
+        pixels = list(small.getdata())
+        bits = 0
+        bit_count = 0
+        for row in range(hash_height):
+            row_offset = row * hash_width
+            for col in range(hash_width - 1):
+                bits = (bits << 1) | (1 if pixels[row_offset + col] > pixels[row_offset + col + 1] else 0)
+                bit_count += 1
+
+        grid = VISUAL_SIGNATURE_GRID
+        coarse = gray.resize((grid, grid), Image.Resampling.BILINEAR if hasattr(Image, "Resampling") else Image.BILINEAR)
+        coarse_pixels = list(coarse.getdata())
+        row_profile = []
+        for row in range(grid):
+            values = coarse_pixels[row * grid : (row + 1) * grid]
+            row_profile.append(round(sum(values) / max(1, len(values)) / 255.0, 4))
+
+        col_profile = []
+        for col in range(grid):
+            values = [coarse_pixels[row * grid + col] for row in range(grid)]
+            col_profile.append(round(sum(values) / max(1, len(values)) / 255.0, 4))
+
+        ink_density = round(1.0 - (sum(coarse_pixels) / max(1, len(coarse_pixels) * 255.0)), 4)
+        aspect_ratio = round((pix.width / pix.height), 4) if pix.height else 0.0
+        signature = {
+            "dpi": VISUAL_SIGNATURE_DPI,
+            "width": pix.width,
+            "height": pix.height,
+            "aspect_ratio": aspect_ratio,
+            "dhash": f"{bits:016x}",
+            "bit_count": bit_count,
+            "row_profile": row_profile,
+            "col_profile": col_profile,
+            "ink_density": ink_density,
+        }
+        if timings is not None:
+            _record_timing(timings, "visual_signature_ms", (time.perf_counter() - start) * 1000.0)
+        return signature
+    except Exception as exc:
+        logger.debug("Visual signature failed for page %s: %s", page_num + 1 if page_num is not None else "?", exc)
+        return {}
+
+
+def _profile_similarity(profile_a: List[float], profile_b: List[float]) -> float:
+    if not profile_a or not profile_b or len(profile_a) != len(profile_b):
+        return 0.0
+    total = 0.0
+    for left, right in zip(profile_a, profile_b):
+        total += 1.0 - min(1.0, abs(left - right))
+    return total / len(profile_a)
+
+
+def _visual_signature_similarity(signature_a: Dict[str, Any], signature_b: Dict[str, Any]) -> float:
+    if not signature_a or not signature_b:
+        return 0.0
+
+    dhash_a = signature_a.get("dhash", "")
+    dhash_b = signature_b.get("dhash", "")
+    if not dhash_a or not dhash_b:
+        return 0.0
+
+    try:
+        bits_a = int(dhash_a, 16)
+        bits_b = int(dhash_b, 16)
+    except Exception:
+        return 0.0
+
+    hamming_distance = (bits_a ^ bits_b).bit_count()
+    hamming_similarity = 1.0 - (hamming_distance / max(1, signature_a.get("bit_count", 64)))
+
+    row_similarity = _profile_similarity(signature_a.get("row_profile", []), signature_b.get("row_profile", []))
+    col_similarity = _profile_similarity(signature_a.get("col_profile", []), signature_b.get("col_profile", []))
+
+    ink_a = float(signature_a.get("ink_density", 0.0))
+    ink_b = float(signature_b.get("ink_density", 0.0))
+    ink_similarity = 1.0 - (abs(ink_a - ink_b) / max(ink_a, ink_b, 0.02))
+    ink_similarity = max(0.0, min(1.0, ink_similarity))
+
+    aspect_a = float(signature_a.get("aspect_ratio", 0.0))
+    aspect_b = float(signature_b.get("aspect_ratio", 0.0))
+    aspect_similarity = 1.0 - (abs(aspect_a - aspect_b) / max(aspect_a, aspect_b, 0.02))
+    aspect_similarity = max(0.0, min(1.0, aspect_similarity))
+
+    if hamming_similarity < 0.94 or row_similarity < 0.90 or col_similarity < 0.90:
+        return 0.0
+    if ink_similarity < 0.80 or aspect_similarity < 0.95:
+        return 0.0
+
+    score = (
+        0.50 * hamming_similarity
+        + 0.20 * row_similarity
+        + 0.20 * col_similarity
+        + 0.05 * ink_similarity
+        + 0.05 * aspect_similarity
+    )
+    return max(0.0, min(1.0, score))
+
+
+def _find_best_reusable_visual_text(candidate_signature: Dict[str, Any], known_page_records: List[Dict[str, Any]]) -> Tuple[str, float]:
+    """Return the best matching known page text for a visual fingerprint."""
+    if not candidate_signature or not known_page_records:
+        return "", 0.0
+
+    best_text = ""
+    best_score = 0.0
+    for known_page in known_page_records:
+        known_signature = known_page.get("visual_signature")
+        known_text = known_page.get("text", "")
+        if not known_signature or not known_text:
+            continue
+        similarity = _visual_signature_similarity(candidate_signature, known_signature)
         if similarity > best_score:
             best_score = similarity
             best_text = clean_pdf_text(known_text)
@@ -1353,7 +1496,7 @@ def _ocr_needs_page(page_info: Dict[str, Any]) -> bool:
     return page_info.get("ocr_attempted", False)
 
 
-def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None, known_page_texts: List[str] = None) -> Tuple[List[str], List[str], int, bool, List[str]]:
+def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None, known_page_texts: List[str] = None, known_page_records: List[Dict[str, Any]] = None) -> Tuple[List[str], List[str], int, bool, List[str]]:
     """Extract text from each page. OCR logic remains fallback-only.
     Returns (pages_text, raw_texts, total_pages, used_ocr, page_labels).
     """
@@ -1484,6 +1627,34 @@ def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None, known_page_t
                     page_images,
                     "+".join(page_info["reason"]) or "unknown",
                 )
+
+                visual_signature = _build_visual_signature(page, timings=timings, page_num=page_num)
+                if visual_signature:
+                    page_info["visual_signature"] = visual_signature
+                    if known_page_records:
+                        try:
+                            reusable_text, similarity = _find_best_reusable_visual_text(visual_signature, known_page_records)
+                            if reusable_text and similarity >= VISUAL_REUSE_SIMILARITY_THRESHOLD:
+                                pages_text[page_num] = clean_pdf_text(reusable_text)
+                                raw_texts[page_num] = reusable_text
+                                page_info["ocr_attempted"] = False
+                                page_info["ocr_used"] = False
+                                page_info["reason"] = ["reused_existing_visual_text"]
+                                page_info["reused_text_similarity"] = similarity
+                                page_info["reused_text_source"] = "database_visual"
+                                logger.info(
+                                    "Page %s: reused existing database text from visual signature with similarity %.3f",
+                                    page_num + 1,
+                                    similarity,
+                                )
+                                page_details.append(page_info)
+                                if labels and page_num < len(labels) and labels[page_num] is not None:
+                                    page_labels.append(labels[page_num])
+                                else:
+                                    page_labels.append(str(page_num + 1))
+                                continue
+                        except Exception as exc:
+                            logger.debug("Visual signature comparison failed for page %s: %s", page_num + 1, exc)
 
                 if known_page_texts:
                     try:
