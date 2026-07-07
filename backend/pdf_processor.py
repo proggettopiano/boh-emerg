@@ -1679,35 +1679,35 @@ def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None, known_page_t
                             if reusable_text and similarity >= VISUAL_REUSE_SIMILARITY_THRESHOLD:
                                 decision = "REUSE_TEXT"
                                 decision_reason = "score_above_threshold"
-                            pages_text[page_num] = clean_pdf_text(reusable_text)
-                            raw_texts[page_num] = reusable_text
-                            page_info["ocr_attempted"] = False
-                            page_info["ocr_used"] = False
-                            page_info["reason"] = ["reused_existing_visual_text"]
-                            page_info["reused_text_similarity"] = similarity
-                            page_info["reused_text_source"] = "database_visual"
-                            logger.info(
-                                "Page %s: reused existing database text from visual signature with similarity %.3f",
-                                page_num + 1,
-                                similarity,
-                            )
-                            page_details.append(page_info)
-                            if labels and page_num < len(labels) and labels[page_num] is not None:
-                                page_labels.append(labels[page_num])
-                            else:
-                                page_labels.append(str(page_num + 1))
-                            _log_visual_reuse_decision(
-                                page_num + 1,
-                                known_page_records,
-                                visual_signature,
-                                comparison_started,
-                                candidate_count,
-                                best_score,
-                                VISUAL_REUSE_SIMILARITY_THRESHOLD,
-                                decision,
-                                decision_reason,
-                            )
-                            continue
+                                pages_text[page_num] = clean_pdf_text(reusable_text)
+                                raw_texts[page_num] = reusable_text
+                                page_info["ocr_attempted"] = False
+                                page_info["ocr_used"] = False
+                                page_info["reason"] = ["reused_existing_visual_text"]
+                                page_info["reused_text_similarity"] = similarity
+                                page_info["reused_text_source"] = "database_visual"
+                                logger.info(
+                                    "Page %s: reused existing database text from visual signature with similarity %.3f",
+                                    page_num + 1,
+                                    similarity,
+                                )
+                                page_details.append(page_info)
+                                if labels and page_num < len(labels) and labels[page_num] is not None:
+                                    page_labels.append(labels[page_num])
+                                else:
+                                    page_labels.append(str(page_num + 1))
+                                _log_visual_reuse_decision(
+                                    page_num + 1,
+                                    known_page_records,
+                                    visual_signature,
+                                    comparison_started,
+                                    candidate_count,
+                                    best_score,
+                                    VISUAL_REUSE_SIMILARITY_THRESHOLD,
+                                    decision,
+                                    decision_reason,
+                                )
+                                continue
                             decision_reason = "score_below_threshold"
                         else:
                             decision_reason = "no_candidates_with_signature"

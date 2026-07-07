@@ -192,6 +192,45 @@ def test_text_only_pdf_does_not_trigger_ocr(monkeypatch):
     assert "Ciao mondo" in pages_text[0]
 
 
+def test_failed_visual_match_falls_back_to_text_reuse(monkeypatch):
+    import io
+    import pdf_processor
+    from reportlab.pdfgen import canvas as reportlab_canvas
+
+    buf = io.BytesIO()
+    c = reportlab_canvas.Canvas(buf, pagesize=(612, 792))
+    c.setFont("Helvetica", 10)
+    c.drawString(100, 700, "Ero perso nel peccato")
+    c.showPage()
+    c.save()
+    pdf_bytes = buf.getvalue()
+
+    known_signature = {
+        "dhash": "ffffffffffffffff",
+        "bit_count": 64,
+        "row_profile": [0.1] * 16,
+        "col_profile": [0.1] * 16,
+        "ink_density": 0.1,
+        "aspect_ratio": 1.0,
+    }
+
+    monkeypatch.setattr(pdf_processor, "_build_visual_signature", lambda page, timings=None, page_num=None: known_signature)
+    monkeypatch.setattr(pdf_processor, "_find_best_reusable_visual_text", lambda candidate_signature, known_page_records: ("", 0.0))
+    monkeypatch.setattr(pdf_processor, "_quick_ocr_page_text", lambda *args, **kwargs: "Ero perso nel peccato")
+    monkeypatch.setattr(pdf_processor, "_find_best_reusable_text", lambda candidate_text, known_page_texts: ("TESTO RIUSATO", 0.99))
+    monkeypatch.setattr(pdf_processor, "_ocr_page_worker", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("full OCR should not run when text reuse fallback matches")))
+
+    pages_text, raw_texts, total_pages, used_ocr, page_labels = pdf_processor.extract_pages(
+        pdf_bytes,
+        known_page_texts=["TESTO RIUSATO"],
+        known_page_records=[{"text": "TESTO RIUSATO", "visual_signature": known_signature}],
+    )
+
+    assert total_pages == 1
+    assert pages_text[0] == "TESTO RIUSATO"
+    assert used_ocr is False
+
+
 def test_calculate_match_quality_prioritizes_phrase_similarity_over_single_word():
     target = "Cristo salvò col Suo prezioso sangue"
     phrase_query = "cristo salvo sangue"
