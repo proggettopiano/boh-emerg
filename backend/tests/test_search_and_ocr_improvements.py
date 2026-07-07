@@ -110,6 +110,88 @@ def test_text_pages_persist_visual_signature_without_ocr():
     assert timings["page_details"][0]["visual_signature"]
 
 
+def test_extract_pages_logs_visual_reuse_success(monkeypatch):
+    import pdf_processor
+    from PIL import Image, ImageDraw
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas as reportlab_canvas
+
+    buf = io.BytesIO()
+    canvas = reportlab_canvas.Canvas(buf, pagesize=(300, 420))
+    image = Image.new("RGB", (180, 120), "white")
+    drawer = ImageDraw.Draw(image)
+    drawer.rectangle((10, 10, 170, 110), outline="black", width=4)
+    drawer.text((20, 40), "Ero perso nel peccato", fill="black")
+    canvas.drawImage(ImageReader(image), 60, 150, width=180, height=120)
+    canvas.showPage()
+    canvas.save()
+    pdf_bytes = buf.getvalue()
+
+    known_signature = {
+        "dhash": "ffffffffffffffff",
+        "bit_count": 64,
+        "row_profile": [0.1] * 16,
+        "col_profile": [0.1] * 16,
+        "ink_density": 0.1,
+        "aspect_ratio": 1.0,
+    }
+    log_calls = []
+
+    monkeypatch.setattr(pdf_processor, "_build_visual_signature", lambda page, timings=None, page_num=None: known_signature)
+    monkeypatch.setattr(pdf_processor, "_find_best_reusable_visual_text", lambda candidate_signature, known_page_records: ("TESTO RIUSATO", 0.99))
+    monkeypatch.setattr(pdf_processor, "_quick_ocr_page_text", lambda *args, **kwargs: "")
+    monkeypatch.setattr(pdf_processor, "_ocr_page_worker", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("full OCR should not run when visual reuse matches")))
+    monkeypatch.setattr(
+        pdf_processor,
+        "_log_visual_reuse_decision",
+        lambda page_num, known_page_records, visual_signature, comparison_started, candidate_count, best_score, threshold, decision, reason: log_calls.append({
+            "page_num": page_num,
+            "decision": decision,
+            "reason": reason,
+            "candidate_count": candidate_count,
+            "best_score": best_score,
+            "threshold": threshold,
+        }),
+    )
+
+    pages_text, raw_texts, total_pages, used_ocr, page_labels = pdf_processor.extract_pages(
+        pdf_bytes,
+        known_page_texts=["TESTO RIUSATO"],
+        known_page_records=[{"text": "TESTO RIUSATO", "visual_signature": known_signature}],
+    )
+
+    assert total_pages == 1
+    assert pages_text[0] == "TESTO RIUSATO"
+    assert used_ocr is False
+    assert log_calls and log_calls[0]["decision"] == "REUSE_TEXT"
+    assert log_calls[0]["reason"] == "score_above_threshold"
+
+
+def test_text_only_pdf_does_not_trigger_ocr(monkeypatch):
+    import io
+    import pdf_processor
+    from reportlab.pdfgen import canvas as reportlab_canvas
+
+    buf = io.BytesIO()
+    c = reportlab_canvas.Canvas(buf, pagesize=(612, 792))
+    c.setFont("Helvetica", 10)
+    c.drawString(100, 700, "Ciao mondo")
+    c.showPage()
+    c.save()
+    pdf_bytes = buf.getvalue()
+
+    monkeypatch.setattr(pdf_processor, "_page_has_images", lambda page: True)
+    monkeypatch.setattr(pdf_processor, "_quick_ocr_page_text", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("OCR should not run for text-only PDFs")))
+    monkeypatch.setattr(pdf_processor, "_ocr_page_worker", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("OCR should not run for text-only PDFs")))
+
+    pages_text, raw_texts, total_pages, used_ocr, page_labels = pdf_processor.extract_pages(pdf_bytes)
+
+    assert total_pages == 1
+    assert used_ocr is False
+    assert pages_text[0]
+    assert "Ciao mondo" in pages_text[0]
+
+
 def test_calculate_match_quality_prioritizes_phrase_similarity_over_single_word():
     target = "Cristo salvò col Suo prezioso sangue"
     phrase_query = "cristo salvo sangue"

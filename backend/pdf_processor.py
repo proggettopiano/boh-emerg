@@ -1606,17 +1606,20 @@ def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None, known_page_t
             cleaned = clean_pdf_text(raw_text)
             # Use dict_cleaned when available to evaluate native text quality.
             native_text_for_quality = dict_cleaned if dict_cleaned else cleaned
-            has_significant_text_blocks = text_blocks > 0 and _has_useful_page_text(native_text_for_quality)
+            has_useful_native_text = _has_useful_page_text(native_text_for_quality)
+            has_significant_text_blocks = text_blocks > 0 and has_useful_native_text
             has_any_text_blocks = text_blocks > 0
             has_any_image_blocks = image_blocks > 0 or image_xobjs
             # page_images indicates whether OCR should be considered because page is image-like
-            if has_significant_text_blocks:
+            if has_useful_native_text:
+                page_images = False
+            elif has_significant_text_blocks:
                 page_images = False
             elif not has_any_text_blocks and has_any_image_blocks:
                 page_images = True
             elif has_any_text_blocks and has_any_image_blocks:
                 # Mixed page: choose native if quality sufficient
-                page_images = not _has_useful_page_text(native_text_for_quality)
+                page_images = not has_useful_native_text
             else:
                 # Fallback to previous heuristic using raw cleaned text
                 page_images = _page_has_images(page)
@@ -1633,10 +1636,10 @@ def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None, known_page_t
             })
             
             needs_ocr = (
-                page_images                    # Has images that need OCR
-                or len(cleaned) < 40           # Almost empty page
-                or word_count < 3              # No meaningful text
-                or _is_noisy_page_text(cleaned) # Noisy native extraction may be improved by OCR
+                (not has_useful_native_text and page_images)  # Has images that need OCR
+                or (not has_useful_native_text and len(cleaned) < 40)           # Almost empty page
+                or (not has_useful_native_text and word_count < 3)              # No meaningful text
+                or (not has_useful_native_text and _is_noisy_page_text(cleaned)) # Noisy native extraction may be improved by OCR
             )
             
             if needs_ocr:
@@ -1693,17 +1696,17 @@ def extract_pages(pdf_bytes: bytes, timings: Dict[str, Any] = None, known_page_t
                                 page_labels.append(labels[page_num])
                             else:
                                 page_labels.append(str(page_num + 1))
-                                _log_visual_reuse_decision(
-                                    page_num + 1,
-                                    known_page_records,
-                                    visual_signature,
-                                    comparison_started,
-                                    candidate_count,
-                                    best_score,
-                                    VISUAL_REUSE_SIMILARITY_THRESHOLD,
-                                    decision,
-                                    decision_reason,
-                                )
+                            _log_visual_reuse_decision(
+                                page_num + 1,
+                                known_page_records,
+                                visual_signature,
+                                comparison_started,
+                                candidate_count,
+                                best_score,
+                                VISUAL_REUSE_SIMILARITY_THRESHOLD,
+                                decision,
+                                decision_reason,
+                            )
                             continue
                             decision_reason = "score_below_threshold"
                         else:
